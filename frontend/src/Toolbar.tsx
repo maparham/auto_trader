@@ -19,6 +19,8 @@ import {
   backtestPanelOpenSignal,
   openBacktestSettings,
   symbolSearchRequest,
+  symbolSearchCancel,
+  takeSymbolSearchCancel,
   saveDefaultTemplateRequest,
   snapshotsGalleryOpen,
 } from "./lib/signals";
@@ -480,7 +482,10 @@ export default function Toolbar({
       <SymbolChip
         symbol={symbol}
         title="Change symbol"
-        onClick={() => setSymModalOpen(true)}
+        onClick={() => {
+          symbolSearchCancel.current = null;
+          setSymModalOpen(true);
+        }}
       />
 
       <span className="tb-div" aria-hidden="true" />
@@ -905,8 +910,14 @@ export default function Toolbar({
         <SymbolSearchModal
           current={symbol}
           brokerId={brokerId}
-          onPick={onSymbol}
-          onClose={() => setSymModalOpen(false)}
+          onPick={(s) => {
+            symbolSearchCancel.current = null;
+            onSymbol(s);
+          }}
+          onClose={() => {
+            setSymModalOpen(false);
+            takeSymbolSearchCancel()?.();
+          }}
         />
       )}
 

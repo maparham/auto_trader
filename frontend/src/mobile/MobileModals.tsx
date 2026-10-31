@@ -20,6 +20,8 @@ import {
   drawingSettingsRequest,
   draftOrderSignal,
   symbolSearchRequest,
+  symbolSearchCancel,
+  takeSymbolSearchCancel,
   settingsRequest,
   settingsRequestTab,
   bumpAlerts,
@@ -285,6 +287,7 @@ export default function MobileModals() {
           onPick={(s: Instrument) => {
             const target = symbolPickTarget.value;
             symbolPickTarget.set(null);
+            symbolSearchCancel.current = null;
             if (target) target(s);
             else setMobileSymbol(s, brokerId);
             setSymModalOpen(false);
@@ -292,6 +295,7 @@ export default function MobileModals() {
           onClose={() => {
             symbolPickTarget.set(null);
             setSymModalOpen(false);
+            takeSymbolSearchCancel()?.();
           }}
         />
       )}

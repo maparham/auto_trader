@@ -10,7 +10,7 @@ import { writeSnapshotToScope } from "../lib/snapshots";
 import { saveSnapshotOfChart } from "../lib/snapshotSave";
 import { toast } from "../lib/notify";
 import { isChartReplaying } from "../lib/backtest";
-import { requestConfirm, snapshotsGalleryOpen, requestSymbolSearch } from "../lib/signals";
+import { requestConfirm, snapshotsGalleryOpen, requestSymbolSearchOrCancel } from "../lib/signals";
 import type { Instrument } from "../lib/feed";
 import {
   purgeTabScope,
@@ -63,10 +63,18 @@ export function useTabActions({
   openTab: (symbol: Instrument) => ChartTab;
 }) {
   // New tab starts on the default chart, becomes active, then immediately opens
-  // symbol search (TradingView-style "new tab" UX).
+  // symbol search (TradingView-style "new tab" UX). Dismissing the search
+  // without a pick discards the tab and returns to the one that was active;
+  // no undo offer, since the user never really opened anything.
   const addTab = () => {
-    openTab(DEFAULT_SYMBOL);
-    requestSymbolSearch();
+    const prevActive = activeId;
+    const t = openTab(DEFAULT_SYMBOL);
+    requestSymbolSearchOrCancel(() => {
+      purgeTabScope(t.id);
+      clearAlignAnchor(t.id);
+      setTabs((ts) => ts.filter((x) => x.id !== t.id));
+      setActiveId((a) => (a === t.id ? prevActive : a));
+    });
   };
 
   // Demo fallback: with nothing published (or a payload holding no tabs) a

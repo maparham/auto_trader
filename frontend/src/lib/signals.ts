@@ -803,7 +803,22 @@ export const alertNavHandler: {
 // rather than a payload — the only thing that matters is "open it now".
 export const symbolSearchRequest = new Signal<number>(0);
 export function requestSymbolSearch(): void {
+  symbolSearchCancel.current = null;
   symbolSearchRequest.set(symbolSearchRequest.value + 1);
+}
+
+// Run once when the modal opened by THIS request closes without a pick (the
+// new-tab flow discards its placeholder tab). A pick, or any later request,
+// drops it. The modal hosts read it via takeSymbolSearchCancel.
+export const symbolSearchCancel: { current: (() => void) | null } = { current: null };
+export function requestSymbolSearchOrCancel(onCancel: () => void): void {
+  requestSymbolSearch();
+  symbolSearchCancel.current = onCancel;
+}
+export function takeSymbolSearchCancel(): (() => void) | null {
+  const fn = symbolSearchCancel.current;
+  symbolSearchCancel.current = null;
+  return fn;
 }
 
 // True while the Live trading panel is open. Toggled by the toolbar's live
