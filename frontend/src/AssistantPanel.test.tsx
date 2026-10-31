@@ -103,7 +103,7 @@ describe("AssistantPanel", () => {
   });
 
   // M10: the proxy's own busy semaphore (429, body "assistant busy") and an
-  // upstream rate limit re-wrapped as a 502 (status 429, a different body)
+  // upstream rate limit re-wrapped as a 424 (status 429, a different body)
   // read as two different, plain-English messages.
   it("shows the busy wording for the proxy semaphore and hides the raw body", () => {
     state.set({ ...state.value, turns: [

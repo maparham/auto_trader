@@ -87,6 +87,9 @@ async def messages(request: Request):
         result = task.result()
     if result["ok"]:
         return JSONResponse(result["message"])
+    # 424, not 502: the Cloudflare edge replaces an origin 502/504 with its
+    # own page, which has no CORS headers, so the browser would only see
+    # "Load failed" instead of this body.
     raise HTTPException(
-        502, {"upstream_status": result["status"], "body": result["body"]}
+        424, {"upstream_status": result["status"], "body": result["body"]}
     )

@@ -23,7 +23,7 @@ const ERROR_TEXT: Record<string, string> = {
 
 // The backend's own busy-semaphore 429 carries this exact detail string
 // (api/routers/assistant.py), distinguishing it from an upstream 429 (rate
-// limit) re-wrapped as a 502 with the same `status`.
+// limit) re-wrapped as a 424 with the same `status`.
 const BUSY_BODY = "assistant busy";
 
 function upstreamText(status: number, body?: string): string {

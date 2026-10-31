@@ -102,6 +102,19 @@ async def test_key_scrubbed_from_error_body():
 
 
 @pytest.mark.anyio
+async def test_upstream_error_is_logged_scrubbed_and_trimmed(caplog):
+    import logging
+
+    c, _, _ = _client([httpx.Response(502, text=f"gateway down {KEY} " + "x" * 2000)])
+    with caplog.at_level(logging.WARNING, logger="auto_trader.core.assistant_client"):
+        await c.create_message(REQ)
+    assert "assistant upstream answered 502" in caplog.text
+    assert "gateway down ***" in caplog.text
+    assert KEY not in caplog.text
+    assert "x" * 600 not in caplog.text
+
+
+@pytest.mark.anyio
 async def test_network_error_is_scrubbed_502():
     c = AssistantClient()
 

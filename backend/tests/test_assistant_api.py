@@ -62,12 +62,14 @@ def test_post_passes_message(upstream):
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("status", [401, 403, 503])
-def test_upstream_error_502_with_body(upstream, status):
+@pytest.mark.parametrize("status", [401, 403, 502, 503])
+def test_upstream_error_424_with_body(upstream, status):
+    # 424, never 502/504: the Cloudflare edge swaps an origin 502/504 for its
+    # own CORS-less page, which the browser reports as "Load failed".
     queue, _ = upstream
     queue.append(httpx.Response(status, text=f"denied {KEY}"))
     r = client.post("/api/assistant/messages", json=BODY)
-    assert r.status_code == 502
+    assert r.status_code == 424
     detail = r.json()["detail"]
     assert detail["upstream_status"] == status
     assert KEY not in detail["body"] and "denied ***" == detail["body"]

@@ -26,6 +26,8 @@ RETRY_AFTER_CAP_S = 30.0
 RETRY_AFTER_DEFAULT_S = 2.0
 _TIMEOUT_S = 120.0
 _VERIFY_TIMEOUT_S = 20.0
+# An error body is logged for diagnosis, trimmed: gateways can echo whole pages.
+_LOGGED_BODY_CHARS = 500
 
 
 def _retry_after_seconds(value: str | None) -> float:
@@ -152,7 +154,11 @@ class AssistantClient:
             return {"ok": False, "status": 502, "body": msg}
         if res.is_success:
             return {"ok": True, "message": res.json()}
-        return {"ok": False, "status": res.status_code, "body": self._scrub(res.text)}
+        body = self._scrub(res.text)
+        log.warning(
+            "assistant upstream answered %s: %s", res.status_code, body[:_LOGGED_BODY_CHARS]
+        )
+        return {"ok": False, "status": res.status_code, "body": body}
 
 
 ASSISTANT = AssistantClient()
