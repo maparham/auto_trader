@@ -1,4 +1,4 @@
-import { test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 // Workspace roots are per broker (`auto-trader.b.<broker>.*`, see persist/core.ts).
 // The seeds write the device-local SCRATCH workspace of the broker the app boots
@@ -100,4 +100,21 @@ export async function stubCandles(page: Page, bars = 500): Promise<void> {
     r.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(rows) }),
   );
   await page.routeWebSocket(/\/ws\/candles/, () => {});
+}
+
+/** Open a new tab and keep it by picking `epic` in the symbol search it pops.
+ * Closing the search without a pick discards the new tab (useTabActions'
+ * addTab), so a spec that wants a second tab on the seeded symbol has to pick
+ * that symbol rather than dismiss the modal. */
+export async function addTabOn(page: Page, epic = "US100"): Promise<void> {
+  await page.locator(".tab-add").click();
+  const modal = page.locator(".modal.symsearch");
+  await modal.locator(".symsearch-input input").fill(epic);
+  await modal
+    .locator(".symsearch-results li", {
+      has: page.locator(".ss-epic", { hasText: new RegExp(`^${epic}$`) }),
+    })
+    .first()
+    .click();
+  await expect(modal).toHaveCount(0);
 }

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { seedSingleChartDefault, stubStateApi } from "./helpers";
+import { addTabOn, seedSingleChartDefault, stubStateApi } from "./helpers";
 
 // Pick an interval through the toolbar's caret dropdown. The quick-bar buttons
 // can't be clicked directly here: below a 1530px toolbar (the default 1280px
@@ -28,8 +28,7 @@ test("tab bar is at the top and tabs reorder by drag", async ({ page }) => {
   expect(barBox!.y).toBeLessThan(toolbarBox!.y);
 
   // Make a second tab distinguishable: change its interval to 1D.
-  await page.locator(".tab-add").click();
-  await page.locator(".modal.symsearch .modal-close").click();
+  await addTabOn(page);
   await pickInterval(page, "1D");
 
   const periods = () =>
@@ -54,8 +53,7 @@ test("tab bar is at the top and tabs reorder by drag", async ({ page }) => {
   expect(await periods()).toEqual(["1D", "1H"]);
 
   // Add a third tab so rightward moves are meaningful. Order now: [1D, 1H, 1W].
-  await page.locator(".tab-add").click();
-  await page.locator(".modal.symsearch .modal-close").click();
+  await addTabOn(page);
   await pickInterval(page, "1W");
   expect(await periods()).toEqual(["1D", "1H", "1W"]);
 
@@ -87,8 +85,7 @@ test("dragging lifts a floating chip and slides a gap open", async ({ page }) =>
   await page.goto("/");
 
   // Second, distinguishable tab (1D). Order: [1H, 1D].
-  await page.locator(".tab-add").click();
-  await page.locator(".modal.symsearch .modal-close").click();
+  await addTabOn(page);
   await pickInterval(page, "1D");
 
   const tabs = page.locator(".tab-bar .tab");

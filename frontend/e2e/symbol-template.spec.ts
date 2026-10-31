@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { seedSingleChartDefault } from "./helpers";
+import { addTabOn, seedSingleChartDefault } from "./helpers";
 
 // Per-symbol templates: saving a cell's layout (indicators + drawings) for a symbol
 // and opening a NEW tab on that SAME symbol must auto-apply the saved layout. This
@@ -157,12 +157,10 @@ test("a saved symbol template auto-applies to a new tab on the same symbol", asy
     .toContain("EMA");
 
   // --- Open a NEW tab (same default symbol) → auto-apply should fire. ---
-  await page.locator(".tab-add").click();
+  // Pick the SAME symbol as tab 1 in the search the new tab pops (closing it
+  // without a pick would discard the tab): the case auto-apply targets.
+  await addTabOn(page);
   await expect(page.locator(".tab-bar [role=tab]")).toHaveCount(2);
-  // A new tab pops the symbol-search modal (TV-style). Dismiss it with Escape so the
-  // tab keeps the DEFAULT symbol (same as tab 1) — the case auto-apply targets.
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".modal.symsearch")).toBeHidden();
   // The new tab's chart becomes the focused __chart; wait for its data, then assert
   // the template layout materialised onto this fresh cell.
   await waitForData(page);

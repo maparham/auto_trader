@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { seedSingleChartDefault, stubStateApi } from "./helpers";
+import { addTabOn, seedSingleChartDefault, stubStateApi } from "./helpers";
 
 // A new tab on a series already loaded this session pre-paints the cached bars
 // before its own candle fetch lands, and its stored drawings only rehydrate
@@ -48,8 +48,7 @@ test("a line drawn while a new tab pre-paints is saved, not lost", async ({ page
   await expect.poll(() => barCount(page), { timeout: 20000 }).toBeGreaterThan(0);
 
   hold = true;
-  await page.locator(".tab-add").click();
-  await page.locator(".modal.symsearch .modal-close").click();
+  await addTabOn(page);
   await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
   // Tab 2 shows tab 1's cached bars while its own fetch is held.
   await expect.poll(() => barCount(page)).toBeGreaterThan(0);

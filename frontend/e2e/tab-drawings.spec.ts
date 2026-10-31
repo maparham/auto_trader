@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { seedSingleChartDefault, stubStateApi } from "./helpers";
+import { addTabOn, seedSingleChartDefault, stubStateApi } from "./helpers";
 
 // Drawings rehydrate via the `overlays` singleton (a different code path than
 // indicators), so they need their own discriminating test: two tabs on the
@@ -60,8 +60,7 @@ test("tabs on the same symbol+period have independent drawings", async ({ page }
   const tab2Candles = page.waitForResponse(
     (r) => r.url().includes("/api/candles?") && r.url().includes("US100"),
   );
-  await page.locator(".tab-add").click();
-  await page.locator(".modal.symsearch .modal-close").click();
+  await addTabOn(page);
   await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
   await (await tab2Candles).finished();
   // Tab 2 starts with no drawings (independent layout).

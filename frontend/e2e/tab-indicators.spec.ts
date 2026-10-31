@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { seedSingleChartDefault, stubStateApi } from "./helpers";
+import { addTabOn, seedSingleChartDefault, stubStateApi } from "./helpers";
 
 // Read the active indicator TYPES on the focused chart from klinecharts directly.
 // The menu no longer shows a checkmark/active-state (an indicator can be added any
@@ -59,8 +59,7 @@ test("tabs on the same symbol+period have independent indicators", async ({ page
   await expect.poll(() => activeTypes(page)).toContain("MA");
 
   // Open Tab 2, keep it on the SAME symbol (cancel search) and SAME period (1H).
-  await page.locator(".tab-add").click();
-  await page.locator(".modal.symsearch .modal-close").click();
+  await addTabOn(page);
   await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
   expect(await page.locator(".tab-bar .tab .tab-period").allTextContents()).toEqual([
     "1H",

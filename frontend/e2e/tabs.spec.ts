@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { seedSingleChartDefault, stubStateApi } from "./helpers";
+import { addTabOn, seedSingleChartDefault, stubStateApi } from "./helpers";
 
 // Pick an interval through the toolbar's caret dropdown. The quick-bar buttons
 // can't be clicked directly here: below a 1530px toolbar (the default 1280px
@@ -30,16 +30,20 @@ test("chart tabs: add, switch, scope and persist", async ({ page }) => {
   // First tab defaults to the 1H quick-bar interval.
   await expect(page.locator(".tab-bar .tab").nth(0).locator(".tab-period")).toHaveText("1H");
 
-  // Open a new tab (duplicates the active view) and make it active.
+  // Closing the symbol search a new tab pops, without a pick, discards the
+  // tab and goes back to the one that was active.
   await page.locator(".tab-add").click();
-  await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
-  await expect(page.locator(".tab.on")).toHaveCount(1);
-
-  // Opening a tab prompts for a symbol; dismiss the modal to keep the default
-  // chart and continue (the new tab inherits US100·1H).
   await expect(page.locator(".modal.symsearch")).toBeVisible();
+  await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
   await page.locator(".modal.symsearch .modal-close").click();
   await expect(page.locator(".modal.symsearch")).toHaveCount(0);
+  await expect(page.locator(".tab-bar .tab")).toHaveCount(1);
+  await expect(page.locator(".tab.on .tab-symbol")).toHaveText(firstSymbol ?? "");
+
+  // Picking a symbol keeps the new tab, active (US100·1H like the first).
+  await addTabOn(page);
+  await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
+  await expect(page.locator(".tab.on")).toHaveCount(1);
 
   const tabs = page.locator(".tab-bar .tab");
   const periodBtn = (label: string) =>
