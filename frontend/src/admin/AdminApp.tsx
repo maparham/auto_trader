@@ -6,6 +6,7 @@ import UsersPanel from "./UsersPanel";
 import HealthPanel from "./HealthPanel";
 import UsagePanel from "./UsagePanel";
 import LogsPanel from "./LogsPanel";
+import AssistantKeyPanel from "./AssistantKeyPanel";
 
 export default function AdminApp() {
   const [who, setWho] = useState<AdminWhoami | null>(null);
@@ -73,6 +74,7 @@ export default function AdminApp() {
       <div className="admin-body">
         <UsersPanel refreshKey={refreshKey} onUsers={setUsers} />
         <HealthPanel refreshKey={refreshKey} />
+        <AssistantKeyPanel refreshKey={refreshKey} />
         <UsagePanel refreshKey={refreshKey} users={users} />
         <LogsPanel refreshKey={refreshKey} />
       </div>

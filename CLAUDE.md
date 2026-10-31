@@ -451,14 +451,25 @@ the selection. Spec: docs/superpowers/specs/2026-10-21-capital-account-history-d
 
 ## Admin console
 
-`/admin` is a read-only operator page (Clerk users, system health, per-user
-usage counts, recent logs). Every panel reads a gated `/api/admin/*` endpoint;
+`/admin` is an operator page (Clerk users, system health, per-user usage
+counts, recent logs), read-only apart from impersonation and the AI assistant
+key. Every panel reads a gated `/api/admin/*` endpoint;
 the gate is `deps.require_admin_console` (403 `admin access required`), which
 is separate from the dealing gate on purpose. Admin identity is unchanged:
 `ADMIN_EMAILS` / `ADMIN_USER_IDS`, with dev mode always admin.
 
 The Users panel needs `CLERK_SECRET_KEY` (Clerk Backend API, backend only);
 without it the endpoint answers `configured: false` and the panel says so.
+The AI assistant card sets the assistant's gateway key without a redeploy:
+`PUT /api/admin/assistant` sends the key to the gateway as a 1-token message
+and saves it only if the gateway accepts it (422 with the reason otherwise),
+then swaps it in live (`ASSISTANT.set_key_override`). `DELETE` reverts to
+`ASSISTANT_API_KEY`. A saved key beats the env key, `ASSISTANT_DISABLED`
+beats both, and the lifespan re-applies the saved key at startup. The store
+is `core/assistant_key_store.py` (one row, plaintext, file mode 0600, path
+from `ASSISTANT_KEY_DB`, rollback journal and not WAL because the deploy rsync
+keeps only `*.db`). Responses carry only the key's last 4 characters.
+
 Logs come from an in-process ring buffer (`core/log_buffer.py`), so they cover
 the current process only and reset on restart. Cross-user queries live in
 `core/admin_usage.py` and must not be imported anywhere else.

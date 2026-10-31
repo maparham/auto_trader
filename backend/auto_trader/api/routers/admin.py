@@ -2,7 +2,8 @@
 
 Every route is gated by deps.require_admin_console at the router level. The
 console is read-only except for /impersonate, which validates a target and
-writes an audit line; it mutates nothing else.
+writes an audit line, and /assistant, which sets or clears the assistant
+gateway key.
 
 See docs/superpowers/specs/2026-09-11-admin-console-design.md.
 """
@@ -10,6 +11,7 @@ See docs/superpowers/specs/2026-09-11-admin-console-design.md.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -17,12 +19,16 @@ from pydantic import BaseModel
 from auto_trader.core import clerk_admin, impersonation_audit
 from auto_trader.core.admin_health import collect_health
 from auto_trader.core.admin_usage import collect_usage
+from auto_trader.core.assistant_client import ASSISTANT
+from auto_trader.core.assistant_key_store import get_assistant_key_store
 from auto_trader.core.log_buffer import LOG_BUFFER
 
 from ..auth import auth_enabled
 from ..deps import current_user, require_admin_console
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_admin_console)])
+
+log = logging.getLogger("auto_trader.admin")
 
 
 @router.get("/whoami")
@@ -101,3 +107,62 @@ async def impersonate(req: ImpersonateRequest, request: Request) -> dict:
         raise HTTPException(404, f"no such user '{target}'")
     impersonation_audit.log_start(current_user(request), target)
     return {"user": user}
+
+
+def _assistant_key_view() -> dict:
+    """Where the live assistant key comes from. Never the key itself: only
+    its last 4 characters, enough to tell two keys apart."""
+    base = ASSISTANT.base_config
+    stored = get_assistant_key_store().get()
+    disabled = bool(base and base.disabled)
+    if stored and not disabled:
+        source, key = "dashboard", stored.api_key
+    elif base and base.api_key:
+        source, key = "env", base.api_key
+    else:
+        source, key = "none", ""
+    return {
+        "source": source,
+        "last4": key[-4:] if len(key) >= 8 else None,
+        "disabled": disabled,
+        "envKeySet": bool(base and base.api_key),
+        "setBy": stored.set_by if stored else None,
+        "setAt": stored.set_at * 1000 if stored else None,
+    }
+
+
+class AssistantKeyRequest(BaseModel):
+    api_key: str
+
+
+@router.get("/assistant")
+async def assistant_key() -> dict:
+    return await asyncio.to_thread(_assistant_key_view)
+
+
+@router.put("/assistant")
+async def set_assistant_key(req: AssistantKeyRequest, request: Request) -> dict:
+    """Verify the key against the gateway, then save it and switch to it
+    without a restart. A key the gateway refuses is never saved, so a typo
+    cannot take the assistant down. A refusal is a 422, never a 502: the
+    Cloudflare edge swaps origin 502s for its own CORS-less page."""
+    key = req.api_key.strip()
+    if not key:
+        raise HTTPException(422, "api_key is required")
+    ok, why = await ASSISTANT.verify_key(key)
+    if not ok:
+        raise HTTPException(422, why)
+    who = current_user(request)
+    await asyncio.to_thread(get_assistant_key_store().set, key, who)
+    ASSISTANT.set_key_override(key)
+    log.info("assistant key set from the admin console by %s", who)
+    return await asyncio.to_thread(_assistant_key_view)
+
+
+@router.delete("/assistant")
+async def clear_assistant_key(request: Request) -> dict:
+    """Drop the saved key; the assistant goes back to ASSISTANT_API_KEY."""
+    await asyncio.to_thread(get_assistant_key_store().clear)
+    ASSISTANT.set_key_override(None)
+    log.info("assistant key cleared from the admin console by %s", current_user(request))
+    return await asyncio.to_thread(_assistant_key_view)

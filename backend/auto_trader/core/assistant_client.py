@@ -9,6 +9,7 @@ the browser sends (stream, betas, tool_choice, ...) can reach the gateway.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import email.utils
 import logging
 import time
@@ -24,6 +25,7 @@ MAX_TOKENS_CAP = 4096
 RETRY_AFTER_CAP_S = 30.0
 RETRY_AFTER_DEFAULT_S = 2.0
 _TIMEOUT_S = 120.0
+_VERIFY_TIMEOUT_S = 20.0
 
 
 def _retry_after_seconds(value: str | None) -> float:
@@ -42,6 +44,8 @@ def _retry_after_seconds(value: str | None) -> float:
 
 class AssistantClient:
     def __init__(self) -> None:
+        self._base: AssistantConfig | None = None
+        self._transport: httpx.AsyncBaseTransport | None = None
         self._cfg: AssistantConfig | None = None
         self._client: httpx.AsyncClient | None = None
         self._sleep = asyncio.sleep
@@ -49,12 +53,65 @@ class AssistantClient:
     def configure(
         self, cfg: AssistantConfig, *, transport: httpx.AsyncBaseTransport | None = None
     ) -> None:
+        """Set the env-resolved config. A key saved from /admin is layered on
+        top with set_key_override and survives nothing but this call."""
+        self._base = cfg
+        self._transport = transport
+        self._activate(cfg)
+
+    def set_key_override(self, api_key: str | None) -> None:
+        """Use `api_key` instead of the env key, or go back to the env key
+        with None. ASSISTANT_DISABLED still wins. In-flight requests finish
+        on the client they started on."""
+        if self._base is None:
+            return
+        if api_key and not self._base.disabled:
+            self._activate(dataclasses.replace(self._base, api_key=api_key))
+        else:
+            self._activate(self._base)
+
+    def _activate(self, cfg: AssistantConfig) -> None:
         self._cfg = cfg if cfg.configured else None
         self._client = (
-            httpx.AsyncClient(base_url=cfg.base_url, timeout=_TIMEOUT_S, transport=transport)
+            httpx.AsyncClient(
+                base_url=cfg.base_url, timeout=_TIMEOUT_S, transport=self._transport
+            )
             if cfg.configured
             else None
         )
+
+    @property
+    def base_config(self) -> AssistantConfig | None:
+        """The env-resolved config, before any /admin override."""
+        return self._base
+
+    async def verify_key(self, api_key: str) -> tuple[bool, str]:
+        """Try `api_key` with a 1-token message. (True, "") when the gateway
+        accepts it; otherwise False and why, for the admin's error line."""
+        if self._base is None:
+            return False, "assistant not configured on this server"
+        body = {
+            "model": self._base.model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+        headers = {
+            "x-api-key": api_key,
+            "content-type": "application/json",
+            "anthropic-version": "2023-06-01",
+        }
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base.base_url, timeout=_VERIFY_TIMEOUT_S, transport=self._transport
+            ) as client:
+                res = await client.post("/v1/messages", json=body, headers=headers)
+        except httpx.HTTPError as exc:
+            return False, f"could not reach the gateway ({type(exc).__name__})"
+        if res.is_success:
+            return True, ""
+        if res.status_code in (401, 403):
+            return False, "the gateway rejected this key"
+        return False, f"could not verify the key: the gateway answered {res.status_code}"
 
     @property
     def enabled(self) -> bool:

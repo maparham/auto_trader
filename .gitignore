@@ -237,6 +237,10 @@ demo_store.db
 demo_store.db-wal
 demo_store.db-shm
 
+# Assistant gateway key saved from /admin (secret)
+assistant_key.db
+assistant_key.db-journal
+
 # Backtest run store
 backtest_runs.db
 backtest_runs.db-wal

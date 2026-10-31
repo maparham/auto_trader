@@ -259,6 +259,8 @@ class AssistantConfig:
     api_key: str
     base_url: str
     model: str
+    # ASSISTANT_DISABLED: also wins over a key saved from /admin.
+    disabled: bool = False
 
     @property
     def configured(self) -> bool:
@@ -293,7 +295,9 @@ class AssistantSettings(BaseSettings):
             pass
         key = "" if self.disabled else (self.api_key or file_key)
         url = (self.base_url or file_url or DEFAULT_ASSISTANT_BASE_URL).rstrip("/")
-        return AssistantConfig(api_key=key, base_url=url, model=self.model)
+        return AssistantConfig(
+            api_key=key, base_url=url, model=self.model, disabled=bool(self.disabled)
+        )
 
 
 assistant_settings = AssistantSettings()

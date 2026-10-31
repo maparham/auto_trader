@@ -117,3 +117,29 @@ export async function startImpersonation(
   if (!res.ok) throw new AdminHttpError(res.status, await errorDetail(res));
   return (await res.json()) as { user: ClerkUser };
 }
+
+/** The assistant gateway key, as the server reports it: never the key itself. */
+export interface AssistantKeyInfo {
+  source: "dashboard" | "env" | "none";
+  last4: string | null;
+  disabled: boolean;
+  envKeySet: boolean;
+  setBy: string | null;
+  setAt: number | null;
+}
+
+export const fetchAssistantKey = () => get<AssistantKeyInfo>("/api/admin/assistant");
+
+async function sendAssistantKey(method: "PUT" | "DELETE", body?: object): Promise<AssistantKeyInfo> {
+  const res = await apiFetch(`${API_BASE}/api/admin/assistant`, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new AdminHttpError(res.status, await errorDetail(res));
+  return (await res.json()) as AssistantKeyInfo;
+}
+
+/** Verifies the key against the gateway before saving; a 422 says why not. */
+export const saveAssistantKey = (apiKey: string) => sendAssistantKey("PUT", { api_key: apiKey });
+export const clearAssistantKey = () => sendAssistantKey("DELETE");

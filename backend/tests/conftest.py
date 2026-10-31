@@ -97,3 +97,14 @@ def _registry_for_routes(monkeypatch):
         yfinance.register(registry)
         nobitex.register(registry)
         monkeypatch.setattr(deps, "_registry", registry)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_assistant_key_store(tmp_path, monkeypatch):
+    """The lifespan reads the /admin-saved assistant key through a module
+    singleton; keep the suite off backend/assistant_key.db."""
+    import auto_trader.core.assistant_key_store as key_store_mod
+
+    monkeypatch.setattr(
+        key_store_mod, "_STORE", key_store_mod.AssistantKeyStore(str(tmp_path / "assistant_key.db"))
+    )

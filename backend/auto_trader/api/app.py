@@ -149,7 +149,11 @@ async def lifespan(app: FastAPI):
     from auto_trader.config import assistant_settings
     from auto_trader.core.assistant_client import ASSISTANT
 
+    from auto_trader.core.assistant_key_store import get_assistant_key_store
+
     ASSISTANT.configure(assistant_settings.resolved())
+    stored_key = get_assistant_key_store().get()
+    ASSISTANT.set_key_override(stored_key.api_key if stored_key else None)
     PUSH.configure(ALERT_STORE)
     ALERT_ENGINE.configure(
         store=ALERT_STORE,
