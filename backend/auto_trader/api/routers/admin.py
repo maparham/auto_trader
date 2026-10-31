@@ -149,6 +149,10 @@ async def set_assistant_key(req: AssistantKeyRequest, request: Request) -> dict:
     key = req.api_key.strip()
     if not key:
         raise HTTPException(422, "api_key is required")
+    if not (key.isascii() and key.isprintable()):
+        # It rides in an HTTP header; a pasted smart quote or zero-width
+        # space would otherwise surface as a 500 from the encoder.
+        raise HTTPException(422, "the key must be printable ASCII; check for pasted extra characters")
     ok, why = await ASSISTANT.verify_key(key)
     if not ok:
         raise HTTPException(422, why)

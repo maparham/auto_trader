@@ -152,7 +152,12 @@ async def lifespan(app: FastAPI):
     from auto_trader.core.assistant_key_store import get_assistant_key_store
 
     ASSISTANT.configure(assistant_settings.resolved())
-    stored_key = get_assistant_key_store().get()
+    # A broken key store costs the /admin key, never the whole API.
+    try:
+        stored_key = get_assistant_key_store().get()
+    except Exception:
+        log.exception("assistant key store unreadable; using the env key")
+        stored_key = None
     ASSISTANT.set_key_override(stored_key.api_key if stored_key else None)
     PUSH.configure(ALERT_STORE)
     ALERT_ENGINE.configure(

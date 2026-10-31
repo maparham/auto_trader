@@ -94,6 +94,23 @@ def test_gateway_error_is_a_422_not_a_502(gateway, monkeypatch):
     assert key_store_mod.get_assistant_key_store().get() is None
 
 
+def test_non_ascii_key_422s_before_any_gateway_call(gateway):
+    _, seen, _ = gateway
+    r = client.put("/api/admin/assistant", json={"api_key": "sk-new\u200b-2222"})
+    assert r.status_code == 422
+    assert "printable ASCII" in r.json()["detail"]
+    assert seen == []
+
+
+def test_an_unreadable_store_does_not_block_startup(monkeypatch):
+    def boom():
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(key_store_mod.get_assistant_key_store(), "get", boom)
+    with TestClient(app) as c:
+        assert c.get("/api/assistant/status").status_code == 200
+
+
 def test_blank_key_422s(gateway):
     r = client.put("/api/admin/assistant", json={"api_key": "   "})
     assert r.status_code == 422
