@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { cleanup, render, screen, fireEvent } from "@testing-library/react";
+import { act, cleanup, render, screen, fireEvent } from "@testing-library/react";
 
 // vi.mock factories are hoisted above the rest of the file, so the shared
 // fakes have to be created inside vi.hoisted (a plain `const state = ...`
@@ -41,10 +41,14 @@ vi.mock("./assistant/session", async (importOriginal) => {
 });
 
 import AssistantPanel from "./AssistantPanel";
+import { assistantSession } from "./assistant/session";
 import { collapseLabels, toBlocks } from "./assistant/format";
 
 beforeEach(() => { send.mockClear(); undoLast.mockClear(); redoLast.mockClear(); editFrom.mockClear(); });
 afterEach(cleanup);
+
+// Mirrors AUTO_RETRY_S in AssistantPanel.tsx (a component file exports only components).
+const AUTO_RETRY_S = 10;
 
 describe("AssistantPanel", () => {
   it("shows example prompts when empty and sends one on click", () => {
@@ -62,6 +66,90 @@ describe("AssistantPanel", () => {
     expect(screen.getByText("Which direction?")).toBeTruthy();
     fireEvent.click(screen.getByText("Falling"));
     expect(send).toHaveBeenCalledWith("Falling");
+  });
+
+  it("folds an ask's details behind Why?", () => {
+    state.set({ ...state.value, turns: [
+      { role: "user", text: "why" },
+      { role: "assistant", text: "It skips your line.", changes: [], undone: false,
+        ask: { question: "What now?", details: "Max Pierce is 0.1 ATR.", options: [{ label: "Allow small dips", description: "Max Pierce 0.1 to 0.6 ATR" }, { label: "Leave it as is" }] } },
+    ] });
+    render(<AssistantPanel onClose={() => {}} />);
+    const fold = screen.getByText("Why?").closest("details")!;
+    expect(fold.open).toBe(false);
+    expect(fold.textContent).toContain("Max Pierce is 0.1 ATR.");
+    fireEvent.click(screen.getByText("Allow small dips"));
+    expect(send).toHaveBeenCalledWith("Allow small dips");
+  });
+
+  it("offers Continue and Shorter answer when a reply was cut short", () => {
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "user", text: "explain" },
+      { role: "assistant", text: "Long", changes: [], undone: false, error: { kind: "max_tokens" } },
+    ] });
+    render(<AssistantPanel onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Shorter answer" }));
+    expect(send).toHaveBeenCalledWith("Answer again, shorter.");
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(send).toHaveBeenCalledWith("Continue where you stopped.");
+  });
+
+  it("retries a rate limit on its own after a countdown, and Cancel stops it", () => {
+    vi.useFakeTimers();
+    try {
+      const retry = assistantSession.retry as ReturnType<typeof vi.fn>;
+      retry.mockClear();
+      state.set({ ...state.value, busy: false, working: null, turns: [
+        { role: "assistant", text: "", changes: [], undone: false, error: { kind: "upstream", status: 429, body: "assistant busy" } },
+      ] });
+      const { unmount } = render(<AssistantPanel onClose={() => {}} />);
+      expect(screen.getByText(`Retrying in ${AUTO_RETRY_S}s`)).toBeTruthy();
+      for (let k = 0; k < AUTO_RETRY_S; k++) act(() => { vi.advanceTimersByTime(1000); });
+      expect(retry).toHaveBeenCalledTimes(1);
+      unmount();
+      retry.mockClear();
+      render(<AssistantPanel onClose={() => {}} />);
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      act(() => { vi.advanceTimersByTime(AUTO_RETRY_S * 1000); });
+      expect(retry).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops retrying on its own after three automatic retries in a row", () => {
+    vi.useFakeTimers();
+    try {
+      const retry = assistantSession.retry as ReturnType<typeof vi.fn>;
+      retry.mockClear();
+      const limited = { ...state.value, busy: false, working: null, turns: [
+        { role: "assistant", text: "", changes: [], undone: false, error: { kind: "upstream", status: 429, body: "assistant busy" } },
+      ] };
+      state.set(limited);
+      render(<AssistantPanel onClose={() => {}} />);
+      for (let n = 0; n < 3; n++) {
+        for (let k = 0; k < AUTO_RETRY_S; k++) act(() => { vi.advanceTimersByTime(1000); });
+        act(() => { state.set({ ...limited, busy: true }); });
+        act(() => { state.set({ ...limited }); });
+      }
+      expect(retry).toHaveBeenCalledTimes(3);
+      expect(screen.queryByText(/Retrying in/)).toBeNull();
+      expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers Keep going after too many steps", () => {
+    const retry = assistantSession.retry as ReturnType<typeof vi.fn>;
+    retry.mockClear();
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "assistant", text: "", changes: [], undone: false, error: { kind: "rounds" } },
+    ] });
+    render(<AssistantPanel onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Keep going" }));
+    expect(retry).toHaveBeenCalled();
   });
 
   it("offers Undo only on the newest turn with live changes", () => {

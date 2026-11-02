@@ -55,16 +55,20 @@ const LOCAL_DEFS: ToolDef[] = [
   {
     name: "ask_user",
     description:
-      "Ask the user ONE clarifying question with 2 to 5 short options, when two readings of the request would give materially different charts. The user's pick (or their own words) comes back as this tool's result.",
+      "Ask the user ONE question with 2 to 5 short options: to clarify a request, to offer fixes when something did not happen as expected, or to offer next steps after a change. The user's pick (or their own words) comes back as this tool's result.",
     input_schema: {
       type: "object", additionalProperties: false, required: ["question", "options"],
       properties: {
-        question: { type: "string" },
+        question: { type: "string", description: "one short plain sentence" },
+        details: { type: "string", description: "optional technical reasoning, hidden behind a \"Why?\" link; plain text, a few sentences" },
         options: {
           type: "array", minItems: 2, maxItems: 5,
           items: {
             type: "object", additionalProperties: false, required: ["label"],
-            properties: { label: { type: "string" }, description: { type: "string" } },
+            properties: {
+              label: { type: "string", description: "a plain action, at most five words" },
+              description: { type: "string", description: "the exact change, shown on hover" },
+            },
           },
         },
       },

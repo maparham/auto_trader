@@ -82,6 +82,32 @@ describe("session loop", () => {
     expect(content[2].content).toBe("Rising");
   });
 
+  it("a typed answer to an open ask carries the focused chart and no picked-from header", async () => {
+    const { s, bodies } = setup([
+      msg([tu("q", "ask_user", { question: "Next?", options: [{ label: "Show on 1H" }, { label: "Make a rule" }] })], "tool_use"),
+      msg([text("ok")]),
+    ]);
+    await s.send("add RSI");
+    await s.send("now switch to gold");
+    const content = lastUser(bodies).content;
+    expect(content[0]).toMatchObject({ type: "tool_result", tool_use_id: "q", content: "now switch to gold" });
+    expect(content[1]).toMatchObject({ type: "text", text: "[context] x" });
+    expect(s.state.value.turns.at(-2)).not.toHaveProperty("pickedFrom");
+  });
+
+  it("ask_user details ride on the turn, and a blank one is dropped", async () => {
+    const { s } = setup([
+      msg([tu("q", "ask_user", { question: "What now?", details: " Swing too short. ", options: [{ label: "A" }, { label: "B" }] })], "tool_use"),
+    ]);
+    await s.send("why");
+    const t = s.state.value.turns.at(-1)!;
+    expect(t.role === "assistant" && t.ask?.details).toBe("Swing too short.");
+    const blank = setup([msg([tu("q", "ask_user", { question: "Q?", details: "  ", options: [{ label: "A" }, { label: "B" }] })], "tool_use")]);
+    await blank.s.send("x");
+    const b = blank.s.state.value.turns.at(-1)!;
+    expect(b.role === "assistant" && "details" in b.ask!).toBe(false);
+  });
+
   it("pending ask survives a reload", async () => {
     const storage = mem();
     const first = setup([msg([tu("q", "ask_user", { question: "Q?", options: [{ label: "A" }, { label: "B" }] })], "tool_use")], storage);

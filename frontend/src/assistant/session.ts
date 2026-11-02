@@ -31,7 +31,7 @@ export type Turn =
     }
   | {
       role: "assistant"; text: string; changes: Change[]; undone: boolean;
-      ask?: { question: string; options: Array<{ label: string; description?: string }> };
+      ask?: { question: string; details?: string; options: Array<{ label: string; description?: string }> };
       error?: TurnError; trimmedBefore?: boolean;
     };
 export interface SessionState {
@@ -209,7 +209,7 @@ export function createSession(deps: SessionDeps) {
           if (signal.aborted) throw new DOMException("aborted", "AbortError");
           const u = uses[i];
           if (u.name === "ask_user") {
-            const input = u.input as { question?: string; options?: Array<{ label: string; description?: string }> };
+            const input = u.input as { question?: string; details?: string; options?: Array<{ label: string; description?: string }> };
             patch({
               pending: {
                 toolUseIds: uses.slice(i + 1).map((x) => x.id),
@@ -217,7 +217,10 @@ export function createSession(deps: SessionDeps) {
                 askId: u.id,
               },
             });
-            updateLastTurn((t) => ({ ...t, ask: { question: String(input.question ?? ""), options: input.options ?? [] } }));
+            const details = typeof input.details === "string" && input.details.trim() ? input.details.trim() : undefined;
+            updateLastTurn((t) => ({
+              ...t, ask: { question: String(input.question ?? ""), ...(details ? { details } : {}), options: input.options ?? [] },
+            }));
             return;
           }
           patch({ working: u.name, pending: { toolUseIds: uses.slice(i).map((x) => x.id), heldResults: [...results], askId: null } });
@@ -261,12 +264,17 @@ export function createSession(deps: SessionDeps) {
     const stoppedKind = lastAssistant(state.value.turns)?.error?.kind === "stopped";
     const reason = asked ? ASK_NOT_RUN : stoppedKind ? "stopped by the user" : "turn ended before this ran";
     const blocks = closePending({ reason, askAnswer: asked ? text : undefined });
+    const prevAsk = lastAssistant(state.value.turns)?.ask;
+    // A typed answer to an open ask may be a new request (next-step asks end
+    // most turns), so it still carries the focused chart; a picked option
+    // answers the question and needs nothing more.
+    const picked = !!asked && !!prevAsk?.options.some((o) => o.label === text);
     if (!asked) blocks.push({ type: "text", text: `${deps.context()}\n\n${text}` });
-    const prevAsk = lastAssistant(state.value.turns)?.ask?.question;
+    else if (!picked) blocks.push({ type: "text", text: deps.context() });
     save({
       ...state.value,
       pending: { ...EMPTY_PENDING },
-      turns: [...state.value.turns, { role: "user", text, rewind, ...(asked && prevAsk ? { pickedFrom: prevAsk } : {}) }],
+      turns: [...state.value.turns, { role: "user", text, rewind, ...(picked ? { pickedFrom: prevAsk!.question } : {}) }],
       messages: [...state.value.messages, { role: "user", content: blocks }],
     });
     await loop();

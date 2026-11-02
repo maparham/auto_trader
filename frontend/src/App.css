@@ -7444,6 +7444,12 @@ span.bt-leg-short { color: var(--neg); }
   background: none; color: var(--text); text-align: left; }
 .as-chip:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .as-chip-other { color: var(--text-dim); }
+/* "Why?" / "Details": the technical reasoning, folded away by default. */
+.as-why { color: var(--text-dim); font-size: 11px; }
+.as-why > summary { cursor: pointer; width: fit-content; list-style: none; }
+.as-why > summary::-webkit-details-marker { display: none; }
+.as-why > summary:hover { color: var(--text); }
+.as-why[open] > summary { margin-bottom: 4px; }
 .as-error { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
   display: flex; flex-direction: column; gap: 4px; }
 .as-error-body { margin: 0; max-height: 160px; overflow: auto; white-space: pre-wrap;

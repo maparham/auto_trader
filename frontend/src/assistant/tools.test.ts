@@ -91,4 +91,9 @@ describe("assistant tools", () => {
     expect(out.length).toBeLessThanOrEqual(RESULT_CAP + 20);
     expect(out.endsWith("…[truncated]")).toBe(true);
   });
+
+  it("ask_user takes optional details for the Why? fold", () => {
+    const ask = buildTools().find((t) => t.name === "ask_user")!;
+    expect(ask.input_schema).toMatchObject({ required: ["question", "options"], properties: { details: { type: "string" } } });
+  });
 });

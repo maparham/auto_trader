@@ -1,11 +1,11 @@
 // Right-docked Assistant panel: a transcript, option chips for ask_user, a
 // Changed list with one Undo for the newest turn, and a composer.
 // Spec: docs/superpowers/specs/2026-10-25-ai-assistant-design.md.
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Tooltip from "./components/Tooltip";
 import InfoTip from "./components/InfoTip";
 import { toBlocks, collapseLabels } from "./assistant/format";
-import { assistantSession, undoableIndex, redoableIndex, type Turn, type SessionState } from "./assistant/session";
+import { assistantSession, undoableIndex, redoableIndex, type Turn, type TurnError, type SessionState } from "./assistant/session";
 
 const EXAMPLES = [
   "Add rising trendlines on the daily",
@@ -17,7 +17,7 @@ const ERROR_TEXT: Record<string, string> = {
   network: "Could not reach the assistant.",
   refusal: "The model declined this request.",
   max_tokens: "The answer was cut short.",
-  rounds: "Stopped after too many steps.",
+  rounds: "That took more steps than allowed.",
   stopped: "Stopped.",
 };
 
@@ -30,6 +30,31 @@ function upstreamText(status: number, body?: string): string {
   if (status === 429 && body === BUSY_BODY) return "The assistant is busy, try again in a moment.";
   if (status === 429) return "Rate limited, try again shortly.";
   return `The assistant service answered ${status}.`;
+}
+
+// Busy and rate-limited answers retry on their own after this many seconds,
+// at most AUTO_RETRY_MAX times in a row; after that the user retries by hand.
+const AUTO_RETRY_S = 10;
+const AUTO_RETRY_MAX = 3;
+
+/** "Retrying in Ns" with Retry now / Cancel. Cancel (or `auto` false)
+ * leaves a plain Retry. */
+function AutoRetry({ auto, onAuto, onRetry }: { auto: boolean; onAuto: () => void; onRetry: () => void }) {
+  const [left, setLeft] = useState<number | null>(auto ? AUTO_RETRY_S : null);
+  useEffect(() => {
+    if (left === null) return;
+    if (left <= 0) { onAuto(); onRetry(); return; }
+    const id = setTimeout(() => setLeft(left - 1), 1000);
+    return () => clearTimeout(id);
+  }, [left, onAuto, onRetry]);
+  if (left === null) return <button className="as-retry" onClick={onRetry}>Retry</button>;
+  return (
+    <div className="as-edit-actions">
+      <span className="as-muted">Retrying in {left}s</span>
+      <button className="as-link" onClick={() => setLeft(null)}>Cancel</button>
+      <button className="as-retry" onClick={onRetry}>Retry now</button>
+    </div>
+  );
 }
 
 // Friendly phrases for the "Working..." label while a tool round is in
@@ -166,6 +191,29 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
     void assistantSession.send(t);
   };
 
+  const retry = useCallback(() => void assistantSession.retry(), []);
+  // Consecutive automatic retries; a turn that ends without an error resets it.
+  const autoTries = useRef(0);
+  const countAuto = useCallback(() => { autoTries.current++; }, []);
+  const last = s.turns.at(-1);
+  if (!s.busy && last?.role === "assistant" && !last.error) autoTries.current = 0;
+
+  // What the user can do about an error on the newest turn, as buttons.
+  const errorActions = (e: TurnError) => {
+    if (e.kind === "stopped" || e.kind === "refusal") return null;
+    if (e.kind === "max_tokens") {
+      return (
+        <div className="as-chips">
+          <button className="as-chip" onClick={() => submit("Continue where you stopped.")}>Continue</button>
+          <button className="as-chip" onClick={() => submit("Answer again, shorter.")}>Shorter answer</button>
+        </div>
+      );
+    }
+    if (e.kind === "rounds") return <button className="as-retry" onClick={retry}>Keep going</button>;
+    if (e.kind === "upstream" && e.status === 429) return <AutoRetry auto={autoTries.current < AUTO_RETRY_MAX} onAuto={countAuto} onRetry={retry} />;
+    return <button className="as-retry" onClick={retry}>Retry</button>;
+  };
+
   const renderTurn = (t: Turn, i: number) => {
     if (t.role === "user") {
       if (edit?.idx === i) {
@@ -260,6 +308,12 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
         {t.ask && (
           <div className="as-ask">
             <div className="as-question">{t.ask.question}</div>
+            {t.ask.details && (
+              <details className="as-why">
+                <summary>Why?</summary>
+                <Markdown text={t.ask.details} />
+              </details>
+            )}
             {pendingAsk && (
               <div className="as-chips">
                 {t.ask.options.map((o) => (
@@ -280,15 +334,16 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
               <>
                 <div>{upstreamText(t.error.status!, t.error.body)}</div>
                 {!(t.error.status === 429 && t.error.body === BUSY_BODY) && t.error.body && (
-                  <pre className="as-error-body">{t.error.body}</pre>
+                  <details className="as-why">
+                    <summary>Details</summary>
+                    <pre className="as-error-body">{t.error.body}</pre>
+                  </details>
                 )}
               </>
             ) : (
               <div>{ERROR_TEXT[t.error.kind]}{t.error.body ? ` ${t.error.body}` : ""}</div>
             )}
-            {t.error.kind !== "stopped" && t.error.kind !== "refusal" && i === s.turns.length - 1 && (
-              <button className="as-retry" onClick={() => void assistantSession.retry()}>Retry</button>
-            )}
+            {i === s.turns.length - 1 && !s.busy && errorActions(t.error)}
           </div>
         )}
       </div>

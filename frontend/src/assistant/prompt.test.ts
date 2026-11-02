@@ -17,6 +17,12 @@ describe("prompt", () => {
     expect(SYSTEM_PROMPT).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 
+  it("asks for short plain replies with choices instead of offers", () => {
+    expect(SYSTEM_PROMPT).toMatch(/at most three short sentences/);
+    expect(SYSTEM_PROMPT).toMatch(/never by its id/);
+    expect(SYSTEM_PROMPT).toMatch(/never end with "tell me if you want/);
+  });
+
   it("formats the context line", () => {
     expect(contextLine({ epic: "US100", resolution: "HOUR", indicators: [{ id: "RSI", type: "RSI" }] }))
       .toBe("[context] focused chart US100 HOUR; indicators: RSI (RSI)");
