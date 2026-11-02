@@ -1163,7 +1163,22 @@ export function stepTrendlinesBar(
   //    chart take part in a rule: a line too far, capped, standing behind a
   //    nearer member of its level, or walked past Max Trendlines reports
   //    nothing.
-  const close = closes[i];
+  points[i] = emitTrendlinesPoint(lines, i, closes[i], a, cfg);
+  st.lines = lines;
+}
+
+/** The tl_1..tl_maxLines and tl_nearest outputs of bar i, measured at
+ * `close`: the emit step's selectDrawnLines call, which the draw path makes
+ * too. The detector passes bar i's own close; a timeframe pin's newest chart
+ * row passes the chart's latest close (alignMtfTrendlines), so Max Distance
+ * and the nearest-first order there judge the live price, as the draw does. */
+export function emitTrendlinesPoint(
+  lines: readonly TrendLine[],
+  i: number,
+  close: number,
+  a: number | null | undefined,
+  cfg: TrendlinesConfig,
+): TrendlinesPoint {
   const point: TrendlinesPoint = {};
   const drawn = selectDrawnLines(poolable(lines, i, cfg), i, close, cfg.maxLines, {
     tol: mergeTolerance(cfg, a, close),
@@ -1188,8 +1203,7 @@ export function stepTrendlinesBar(
     }
   }
   if (shown) point.tl_nearest = nearestV;
-  points[i] = point;
-  st.lines = lines;
+  return point;
 }
 
 const cloneTrendLine = (l: TrendLine): TrendLine => ({
@@ -2709,6 +2723,7 @@ function setTrendlineTags(
 export function alignMtfTrendlines(
   dataList: KLineData[],
   mtf: TrendlinesMtf,
+  cfg?: TrendlinesConfig,
 ): TrendlinesCalcPoint[] {
   const ts = dataList.map((k) => k.timestamp);
   const starts = mtf.htfStarts ?? [];
@@ -2758,8 +2773,19 @@ export function alignMtfTrendlines(
       : htfBarEndMs(starts[j + 1], htfMs, mtf.timeframe ?? undefined)) <= t
   )
     j++;
+  // The newest row's values are re-selected at the CHART's latest close, not
+  // the HTF bar's: Max Distance and the nearest-first order always judge the
+  // live price, as the draw path does (it measures at dataList's last close).
+  // Selected at the HTF close, a line just inside Max Distance there but past
+  // it at the live price was emitted (tl_k, alerts, rules) and not drawn.
+  // Older rows keep the HTF bar's values: the stash holds the lines of the
+  // newest HTF bar only.
+  const live =
+    cfg && j >= 0 && mtf.htfLines?.length
+      ? emitTrendlinesPoint(mtf.htfLines, j, dataList[dataList.length - 1].close, mtf.htfAtr, cfg)
+      : null;
   out[out.length - 1] = {
-    ...out[out.length - 1],
+    ...(live ?? out[out.length - 1]),
     lines: mtf.htfLines ?? [],
     atr: mtf.htfAtr,
     // HTF bar indices, like the lines, and the draw path maps them the same
@@ -4109,7 +4135,7 @@ export const TRENDLINES_TEMPLATE: Omit<IndicatorTemplate, "name"> = {
     const ext = ind.extendData as TrendlinesExtend | undefined;
     const mtf = ext?.mtf;
     if (mtf?.timeframe && mtf.htfStarts?.length && mtf.htfMs)
-      return alignMtfTrendlines(dataList, mtf);
+      return alignMtfTrendlines(dataList, mtf, parseTrendlinesConfig(ind.calcParams, ind.extendData));
     // A pin whose HTF stash has not landed (a fresh mount, a tab switch, a
     // failed fetch awaiting retry) emits nothing. Falling through to the
     // detector here painted chart-timeframe lines under the pin's label for

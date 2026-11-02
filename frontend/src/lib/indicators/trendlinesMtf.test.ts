@@ -21,6 +21,7 @@ import {
   type TrendPivots,
 } from "./trendlines";
 import { findTrendlineSegment } from "./trendlineMarks";
+import { parseTrendlinesConfig } from "./trendlinesOutputs";
 
 const T0 = 1_700_000_000_000;
 const CHART_MS = 900_000; // 15m chart bars
@@ -155,6 +156,29 @@ describe("alignMtfTrendlines", () => {
     expect(trendlineDrawEdge(undefined, 8, toLine, 40)).toBe(8);
     // Never pulls backwards: a lastIdx already past the newest bar wins.
     expect(trendlineDrawEdge(9, 12, toLine, 40)).toBe(12);
+  });
+
+  it("re-selects the newest row at the chart's latest close, as the draw does", () => {
+    // Max Distance 10%. The line is at 96 on HTF bar 8, which the newest chart
+    // bar reads. The stash emitted it at the HTF close (100: 4 away, inside).
+    const cfg = parseTrendlinesConfig([...PARAMS, 0, 0, 0, 0, 0, 0, 0, 10]);
+    const withClose = (close: number) => {
+      const bars = chartBars();
+      bars[bars.length - 1] = { ...bars[bars.length - 1], close };
+      return alignMtfTrendlines(bars, stash(), cfg);
+    };
+    // Live price 80: the line is 16 away, past 10% of 80, so it is not drawn
+    // and must not be emitted either.
+    const far = withClose(80);
+    expect(far[far.length - 1].tl_1).toBeUndefined();
+    expect(far[far.length - 1].tl_nearest).toBeUndefined();
+    expect(far[far.length - 1].lines).toEqual([htfLine]);
+    // Live price 95: inside again.
+    const near = withClose(95);
+    expect(near[near.length - 1].tl_1).toBe(96);
+    expect(near[near.length - 1].tl_nearest).toBe(96);
+    // Older rows keep the HTF bar's own values.
+    expect(far[8].tl_1).toBe(110);
   });
 
   it("draws nothing before the first HTF bar closes", () => {
