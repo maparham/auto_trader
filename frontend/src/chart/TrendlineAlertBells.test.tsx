@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import TrendlineAlertBells from "./TrendlineAlertBells";
-import { stepPastTags } from "./lineAlertBellPlace";
+import { gapAlongLine, stepPastTags } from "./lineAlertBellPlace";
 
 describe("TrendlineAlertBells", () => {
   afterEach(cleanup);
@@ -82,5 +82,18 @@ describe("stepPastTags", () => {
     const tag = [{ x: 95, y: 10, w: 20 }];
     expect(stepPastTags(100, flat, tag, 0, 16).x).toBe(100);
     expect(stepPastTags(100, flat, tag, 40, 16).x).toBe(125);
+  });
+});
+
+describe("gapAlongLine", () => {
+  it("keeps the full gap across on a flat line", () => {
+    expect(gapAlongLine(100, 0, 24, 10)).toBe(124);
+  });
+
+  it("measures the gap along a steep line, so the bell stays near its end", () => {
+    // Slope 3: 24px along the line is ~7.6px across, floored at 10.
+    expect(gapAlongLine(100, 3, 24, 10)).toBe(110);
+    // Slope 1: 24 / sqrt(2) across.
+    expect(gapAlongLine(100, -1, 24, 10)).toBeCloseTo(100 + 24 / Math.SQRT2);
   });
 });

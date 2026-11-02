@@ -31,3 +31,14 @@ export function stepPastTags(
   }
   return { x, y };
 }
+
+/**
+ * The bell's x past a line ending at `x0`: `gap` px from the end measured
+ * ALONG the line (slope `m` in px/px), so a steep line, as every line is when
+ * zoomed out, does not carry the bell far above or below where it ends. At
+ * least `minDx` right, to stay clear of the last candle.
+ */
+export function gapAlongLine(x0: number, m: number, gap: number, minDx: number): number {
+  const dx = Number.isFinite(m) ? gap / Math.hypot(1, m) : 0;
+  return x0 + Math.max(dx, minDx);
+}

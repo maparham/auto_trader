@@ -45,7 +45,7 @@ import { loadIndicatorAlerts, loadLineAlerts } from "../lib/alertsApi";
 import { alertTimeframeOf, chartValueOf } from "../lib/indicatorAlertInstance";
 import type { IndicatorBellTag } from "./AlertTags";
 import type { LineAlertBellTag } from "./TrendlineAlertBells";
-import { stepPastTags } from "./lineAlertBellPlace";
+import { gapAlongLine, stepPastTags } from "./lineAlertBellPlace";
 import { indTypeOf } from "../lib/customIndicators";
 import { dashSliceBounds, getBacktestAggregate, tradeDashes } from "../lib/backtest";
 import { type AggPill } from "../BacktestAggMarkers";
@@ -74,7 +74,7 @@ const BA_TAG_H = 18;
 // Module-const from ChartCore: the trade-line handle radius. The spine's x is no
 // longer a constant — it tracks the axis-docked pill column (see tradeSpineX).
 const TRADE_HANDLE_R = 4.5;
-// How far past the last bar a trendline alert's bell sits on the line's extension.
+// How far past the last bar a trendline alert's bell sits, along the line's extension.
 const LINE_BELL_GAP = 24;
 // .tl-alert-bell is 14px; 2px of air between stacked bells.
 const LINE_BELL_SIZE = 16;
@@ -906,7 +906,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // Right edge of the plot, left of the price axis strip.
         const plotRight = chart.getSize(paneId, "main")?.width ?? Infinity;
         const { x, y } = stepPastTags(
-          last.x + LINE_BELL_GAP, yAt, getTrendlineTags(chart, paneId), paneTop, LINE_BELL_SIZE,
+          gapAlongLine(last.x, (q1.y - q0.y) / (q1.x - q0.x), LINE_BELL_GAP, LINE_BELL_SIZE / 2 + 2),
+          yAt, getTrendlineTags(chart, paneId), paneTop, LINE_BELL_SIZE,
         );
         // Culled rather than clamped once it would sit on the price axis (the
         // last bar flush against it): a bell pulled left would leave the line.
