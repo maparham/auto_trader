@@ -3,14 +3,18 @@
 // agent/actions/chart.ts, which imports lib/indicators.ts, which pulls in
 // klinecharts, which touches `window` at module-load time (same reason
 // tools.test.ts / undo.test.ts / describe.test.ts need it).
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { installMemStorage } from "../lib/testMemStorage";
 
 installMemStorage();
 
-import { createSession, undoableIndex, redoableIndex, MAX_ROUNDS, type Turn } from "./session";
+import { createSession, pruneSessions, undoableIndex, redoableIndex, MAX_ROUNDS, type Turn } from "./session";
 import type { AssistantMessage, ContentBlock } from "./types";
 import type { PostResult } from "./api";
+
+// The focused cell the sessions under test see; tests that switch charts set it.
+const focus = { cell: "c1" as string | null };
+beforeEach(() => { focus.cell = "c1"; });
 
 function mem() {
   const m = new Map<string, string>();
@@ -37,7 +41,7 @@ function setup(replies: Array<PostResult | (() => Promise<PostResult>)>, storage
     ok: true, ids: {} as Record<string, string>,
     changes: changes.map((c) => ({ ...c, cellId: "c1", undo: vi.fn(async () => {}) })),
   }));
-  const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: redo as never, context: () => "[context] x", storage });
+  const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: redo as never, context: () => "[context] x", cellId: "c1", focusedCell: () => focus.cell, storage });
   return { s, post, exec, undo, redo, bodies, storage };
 }
 const lastUser = (bodies: unknown[]) => {
@@ -93,6 +97,44 @@ describe("session loop", () => {
     expect(content[0]).toMatchObject({ type: "tool_result", tool_use_id: "q", content: "now switch to gold" });
     expect(content[1]).toMatchObject({ type: "text", text: "[context] x" });
     expect(s.state.value.turns.at(-2)).not.toHaveProperty("pickedFrom");
+  });
+
+  it("stops before the next tool when the user focuses another chart, and tells the model why", async () => {
+    const { s, exec, bodies } = setup([
+      msg([tu("a", "indicator_list"), tu("b", "indicator_add")], "tool_use"),
+      msg([text("ok")]),
+    ]);
+    exec.mockImplementationOnce(async () => { focus.cell = "c2"; return { content: "ok", isError: false, change: undefined }; });
+    await s.send("add rsi");
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(s.state.value.turns.at(-1)).toMatchObject({ role: "assistant", error: { kind: "stopped", cause: "switch" } });
+    focus.cell = "c1";
+    await s.send("go on");
+    const content = lastUser(bodies).content;
+    expect(content[1]).toMatchObject({ tool_use_id: "b", is_error: true, content: "stopped: the user switched to another chart" });
+  });
+
+  it("moves with its own market_select to the chart it opened", async () => {
+    const storage = mem();
+    const { s, exec } = setup([
+      msg([tu("m", "market_select", { epic: "GOLD" }), tu("b", "indicator_add")], "tool_use"),
+      msg([text("ok")]),
+    ], storage);
+    exec.mockImplementationOnce(async () => { focus.cell = "c2"; return { content: "ok", isError: false, change: undefined }; });
+    await s.send("open gold and add rsi");
+    expect(exec).toHaveBeenCalledTimes(2);
+    expect(s.cellId).toBe("c2");
+    expect(storage.getItem("auto-trader.assistant.session.c1")).toBeNull();
+    expect(storage.getItem("auto-trader.assistant.session.c2")).not.toBeNull();
+    expect(s.state.value.turns.at(-1)).not.toHaveProperty("error");
+  });
+
+  it("keeps each chart's conversation under its own key", async () => {
+    const storage = mem();
+    const one = setup([msg([text("one")])], storage);
+    await one.s.send("hi");
+    expect(storage.getItem("auto-trader.assistant.session.c1")).toContain("one");
+    expect(storage.getItem("auto-trader.assistant.session.c2")).toBeNull();
   });
 
   it("ask_user details ride on the turn, and a blank one is dropped", async () => {
@@ -198,7 +240,7 @@ describe("session loop", () => {
       ? { content: "ok", isError: false, change: { label: "Opened GOLD (nothing to go back to)", cellId: "c1", undoable: false } }
       : { content: "ok", isError: false, change: { label: "Added RSI", cellId: "c1", undo: vi.fn(async () => {}) } });
     const undo = vi.fn(async () => true);
-    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage });
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", cellId: "c1", focusedCell: () => focus.cell, storage });
     await s.send("add rsi and open gold");
     await s.undoLast();
     const note = s.state.value.messages.at(-1)!;
@@ -212,7 +254,7 @@ describe("session loop", () => {
     const undo = vi.fn(async () => false);
     const post = vi.fn(async () => msg([tu("b", "indicator_add")], "tool_use"));
     const exec = vi.fn(async () => ({ content: "ok", isError: false, change: { label: "Added RSI", cellId: "c1", undo: vi.fn(async () => {}) } }));
-    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage });
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", cellId: "c1", focusedCell: () => focus.cell, storage });
     await s.send("add");
     await s.undoLast();
     const t = s.state.value.turns.at(-1)!;
@@ -245,7 +287,7 @@ describe("session loop", () => {
     const storage = mem();
     const { s } = setup([msg([tu("b", "indicator_add")], "tool_use"), msg([text("ok")])], storage);
     await s.send("add");
-    const saved = JSON.parse(storage.getItem(`auto-trader.assistant.session`)!) as { turns: Turn[] };
+    const saved = JSON.parse(storage.getItem(`auto-trader.assistant.session.c1`)!) as { turns: Turn[] };
     const t = saved.turns.at(-1)!;
     expect(t.role === "assistant" && t.changes[0]).toMatchObject({ label: "Added RSI", cellId: "c1" });
     expect(t.role === "assistant" && (t.changes[0] as { undo?: unknown }).undo).toBeUndefined();
@@ -294,7 +336,7 @@ describe("session loop", () => {
         : msg([text("ok")]);
     });
     const undo = vi.fn(async () => true);
-    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage: mem() });
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", cellId: "c1", focusedCell: () => focus.cell, storage: mem() });
     const p = s.send("go");
     await startedPromise;
     s.stop();
@@ -324,7 +366,7 @@ describe("session loop", () => {
     });
     const post = vi.fn(async () => msg([tu("a", "indicator_list"), tu("b", "indicator_list"), tu("c", "indicator_list")], "tool_use"));
     const undo = vi.fn(async () => true);
-    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage: mem() });
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", cellId: "c1", focusedCell: () => focus.cell, storage: mem() });
     const p = s.send("go");
     await startedPromise;
     s.stop();
@@ -345,7 +387,7 @@ describe("session loop", () => {
       return postCalls === 1 ? msg([tu("b", "indicator_add")], "tool_use") : msg([text("ok")]);
     });
     const exec = vi.fn(async () => ({ content: "ok", isError: false, change: { label: "Added RSI", cellId: "c1", undo: vi.fn(async () => {}) } }));
-    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage });
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", cellId: "c1", focusedCell: () => focus.cell, storage });
     await s.send("add");
     const p1 = s.undoLast();
     const p2 = s.undoLast();
@@ -384,7 +426,7 @@ describe("session loop", () => {
         : msg([text("done")]);
     });
     const undo = vi.fn(async () => true);
-    ref.current = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage: mem() });
+    ref.current = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", cellId: "c1", focusedCell: () => focus.cell, storage: mem() });
     await ref.current.send("go");
     expect(capturedRef).toBeDefined();
     expect((capturedRef as unknown[]).length).toBe(1);
@@ -415,7 +457,7 @@ describe("session loop", () => {
         : msg([text("ok")]);
     });
     const undo = vi.fn(async () => true);
-    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", storage: mem() });
+    const s = createSession({ post: post as never, tools: () => [], exec: exec as never, undo, redo: vi.fn() as never, context: () => "[context] x", cellId: "c1", focusedCell: () => focus.cell, storage: mem() });
     const p = s.send("go");
     await startedPromise;
     s.stop();
@@ -565,5 +607,21 @@ describe("session loop", () => {
     const { s } = setup([]);
     s.state.set({ ...s.state.value, turns: [{ role: "user", text: "old" }] });
     expect(await s.editFrom(0, "new")).toBe("invalid");
+  });
+});
+
+describe("pruneSessions", () => {
+  it("drops chats of closed charts and the old global chat, keeps open ones and other keys", () => {
+    const st = window.sessionStorage;
+    st.clear();
+    st.setItem("auto-trader.assistant.session", "{}");
+    st.setItem("auto-trader.assistant.session.c1", "{}");
+    st.setItem("auto-trader.assistant.session.gone", "{}");
+    st.setItem("auto-trader.other", "x");
+    pruneSessions(["c1"], st);
+    expect(st.getItem("auto-trader.assistant.session")).toBeNull();
+    expect(st.getItem("auto-trader.assistant.session.gone")).toBeNull();
+    expect(st.getItem("auto-trader.assistant.session.c1")).toBe("{}");
+    expect(st.getItem("auto-trader.other")).toBe("x");
   });
 });

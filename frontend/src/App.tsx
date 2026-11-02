@@ -1131,7 +1131,12 @@ export default function App() {
             />
           )}
           {assistantOpen && !isDemoMode() && (
-            <AssistantPanel onClose={() => assistantPanelOpen.set(false)} />
+            <AssistantPanel
+              cellId={focusedCell && symbol ? focusedCell.id : null}
+              cellIds={tabs.flatMap((t) => t.cells.map((c) => c.id))}
+              chart={symbol && focusedCell ? { epic: symbol.epic, resolution: focusedCell.period.resolution } : null}
+              onClose={() => assistantPanelOpen.set(false)}
+            />
           )}
         </main>
         {/* Panel is toggled by the toolbar bell; closed = chart uses full width. */}

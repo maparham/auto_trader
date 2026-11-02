@@ -1,11 +1,15 @@
 // Right-docked Assistant panel: a transcript, option chips for ask_user, a
 // Changed list with one Undo for the newest turn, and a composer.
 // Spec: docs/superpowers/specs/2026-10-25-ai-assistant-design.md.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import Tooltip from "./components/Tooltip";
 import InfoTip from "./components/InfoTip";
 import { toBlocks, collapseLabels } from "./assistant/format";
-import { assistantSession, undoableIndex, redoableIndex, type Turn, type TurnError, type SessionState } from "./assistant/session";
+import { tfLabel } from "./lib/timeframe";
+import {
+  sessionToShow, pruneSessions, undoableIndex, redoableIndex,
+  type Session, type Turn, type TurnError, type SessionState,
+} from "./assistant/session";
 
 const EXAMPLES = [
   "Add rising trendlines on the daily",
@@ -20,6 +24,7 @@ const ERROR_TEXT: Record<string, string> = {
   rounds: "That took more steps than allowed.",
   stopped: "Stopped.",
 };
+const SWITCHED_TEXT = "Stopped: you switched charts. Come back to this chart to continue.";
 
 // The backend's own busy-semaphore 429 carries this exact detail string
 // (api/routers/assistant.py), distinguishing it from an upstream 429 (rate
@@ -108,11 +113,16 @@ function newestRevertibleIndex(turns: Turn[]): number {
   return -1;
 }
 
-function useSession(): SessionState {
-  const [s, setS] = useState(assistantSession.state.value);
-  useEffect(() => assistantSession.state.subscribe(setS), []);
-  return s;
+/** The shown session's state; re-subscribes when the panel swaps chats. */
+function useSession(session: Session | null): SessionState | null {
+  const [, bump] = useState(0);
+  useEffect(() => session?.state.subscribe(() => bump((n) => n + 1)), [session]);
+  return session?.state.value ?? null;
 }
+
+const EMPTY_STATE: SessionState = {
+  turns: [], messages: [], pending: { toolUseIds: [], heldResults: [], askId: null }, busy: false, working: null,
+};
 
 /** Inline Markdown the model actually writes: **bold**, *italic* and
  * `code`. Anything else stays literal text (never HTML). */
@@ -154,8 +164,24 @@ function Markdown({ text }: { text: string }) {
   );
 }
 
-export default function AssistantPanel({ onClose }: { onClose: () => void }) {
-  const s = useSession();
+export default function AssistantPanel({ cellId = null, cellIds, chart = null, onClose }: {
+  /** The focused chart cell: each cell has its own chat. */
+  cellId?: string | null;
+  /** Every open cell, so chats of closed ones are dropped. */
+  cellIds?: string[];
+  /** The focused chart the next request acts on, shown above the composer. */
+  chart?: { epic: string; resolution: string } | null;
+  onClose: () => void;
+}) {
+  // The busy session in the middle of its own market_select wins over the
+  // focused cell's own chat (sessionToShow), so read it on every render.
+  const session = cellId ? sessionToShow(cellId) : null;
+  const s = useSession(session) ?? EMPTY_STATE;
+  const cellKey = (cellIds ?? []).join(",");
+  useEffect(() => {
+    if (cellIds) pruneSessions(cellIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- cellKey is cellIds' identity
+  }, [cellKey]);
   const [draft, setDraft] = useState("");
   // The earlier message being edited: its turn index, the new text, and
   // whether a rewind was refused because later changes can't be reverted.
@@ -176,22 +202,36 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [draft]);
 
-  // New chat (or a rewind) can remove the message being edited.
+  // New chat (or a rewind) can remove the message being edited, and a
+  // swap to another chart's chat leaves it behind.
   useEffect(() => {
     if (edit && s.turns[edit.idx]?.role !== "user") setEdit(null);
   }, [edit, s.turns]);
+  useEffect(() => { setEdit(null); }, [session]);
 
   const undoIdx = undoableIndex(s.turns);
   const redoIdx = redoableIndex(s.turns);
   const revertibleIdx = newestRevertibleIndex(s.turns);
   const submit = (text: string) => {
     const t = text.trim();
-    if (!t || s.busy) return;
+    if (!t || s.busy || !session) return;
     setDraft("");
-    void assistantSession.send(t);
+    void session.send(t);
   };
 
-  const retry = useCallback(() => void assistantSession.retry(), []);
+  // The open question's options, pickable with 1..n while the composer is empty.
+  const lastTurn = s.turns.at(-1);
+  const openOptions = !s.busy && lastTurn?.role === "assistant" && lastTurn.ask ? lastTurn.ask.options : [];
+  const pickByKey = (e: KeyboardEvent) => {
+    if (draft || e.altKey || e.ctrlKey || e.metaKey) return false;
+    const n = Number(e.key);
+    if (!Number.isInteger(n) || n < 1 || n > openOptions.length) return false;
+    e.preventDefault();
+    submit(openOptions[n - 1].label);
+    return true;
+  };
+
+  const retry = useCallback(() => void session?.retry(), [session]);
   // Consecutive automatic retries; a turn that ends without an error resets it.
   const autoTries = useRef(0);
   const countAuto = useCallback(() => { autoTries.current++; }, []);
@@ -200,6 +240,9 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
 
   // What the user can do about an error on the newest turn, as buttons.
   const errorActions = (e: TurnError) => {
+    if (e.kind === "stopped" && e.cause === "switch") {
+      return chart ? <button className="as-retry" onClick={retry}>Continue</button> : null;
+    }
     if (e.kind === "stopped" || e.kind === "refusal") return null;
     if (e.kind === "max_tokens") {
       return (
@@ -218,7 +261,7 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
     if (t.role === "user") {
       if (edit?.idx === i) {
         const go = async (force: boolean) => {
-          const r = await assistantSession.editFrom(i, edit.text, { force, onCut: () => setEdit(null) });
+          const r = await session?.editFrom(i, edit.text, { force, onCut: () => setEdit(null) });
           if (r === "blocked") setEdit({ ...edit, blocked: true });
           else if (r === "sent") setEdit(null);
         };
@@ -280,13 +323,13 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
         {t.text && <Markdown text={t.text} />}
         {t.changes.length > 0 && (
           <div className={`as-changes${t.undone ? " as-changes-undone" : ""}`}>
-            <div className="as-changes-head">
-              <span className="as-changes-title">Changed</span>
+            <ul>{collapseLabels(t.changes.map((c) => c.label)).map((l, j) => <li key={j}>{l}</li>)}</ul>
+            <div className="as-changes-act">
               {t.undone ? (
                 i === redoIdx ? (
                   <span className="as-undone">
                     <span className="as-muted">Undone</span>
-                    <button className="as-undo" disabled={s.busy} onClick={() => void assistantSession.redoLast()}>
+                    <button className="as-undo" disabled={s.busy} onClick={() => void session?.redoLast()}>
                       Redo
                     </button>
                   </span>
@@ -295,21 +338,22 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
                 )
               ) : i === revertibleIdx ? (
                 i === undoIdx ? (
-                  <button className="as-undo" onClick={() => void assistantSession.undoLast()}>
-                    Undo this turn
-                  </button>
+                  <Tooltip content="Undo this turn's changes">
+                    <button className="as-undo" aria-label="Undo this turn" onClick={() => void session?.undoLast()}>
+                      Undo
+                    </button>
+                  </Tooltip>
                 ) : (
                   <Tooltip content="Undo is lost on reload">
-                    <button className="as-undo" disabled>Undo this turn</button>
+                    <button className="as-undo" aria-label="Undo this turn" disabled>Undo</button>
                   </Tooltip>
                 )
               ) : null}
             </div>
-            <ul>{collapseLabels(t.changes.map((c) => c.label)).map((l, j) => <li key={j}>{l}</li>)}</ul>
           </div>
         )}
         {t.ask && (
-          <div className="as-ask">
+          <div className={`as-ask${pendingAsk ? " as-ask-pending" : ""}`}>
             {t.ask.lead && !t.text.includes(t.ask.lead) && <p className="as-p"><Inline text={t.ask.lead} /></p>}
             <div className="as-question">{t.ask.question}</div>
             {t.ask.details && (
@@ -328,9 +372,11 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
             )}
             {pendingAsk && (
               <div className="as-chips">
-                {t.ask.options.map((o) => (
+                {t.ask.options.map((o, k) => (
                   <Tooltip key={o.label} content={o.description ?? o.label}>
-                    <button className="as-chip" onClick={() => submit(o.label)}>{o.label}</button>
+                    <button className={`as-chip${k === 0 ? " as-chip-primary" : ""}`} onClick={() => submit(o.label)}>
+                      <span className="as-chip-num" aria-hidden="true">{k + 1}</span><span>{o.label}</span>
+                    </button>
                   </Tooltip>
                 ))}
                 <button className="as-chip as-chip-other" onClick={() => inputRef.current?.focus()}>
@@ -353,7 +399,10 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
                 )}
               </>
             ) : (
-              <div>{ERROR_TEXT[t.error.kind]}{t.error.body ? ` ${t.error.body}` : ""}</div>
+              <div>
+                {t.error.cause === "switch" ? SWITCHED_TEXT : ERROR_TEXT[t.error.kind]}
+                {t.error.body ? ` ${t.error.body}` : ""}
+              </div>
             )}
             {i === s.turns.length - 1 && !s.busy && errorActions(t.error)}
           </div>
@@ -375,7 +424,7 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
         ]} />
         <Tooltip content="New chat">
           <button className="modal-close as-new" aria-label="New chat" disabled={s.busy || s.turns.length === 0}
-            onClick={() => assistantSession.reset()}>
+            onClick={() => session?.reset()}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
               strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M8 2.5H3.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V8" />
@@ -388,7 +437,9 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
         </Tooltip>
       </div>
       <div className="as-body" ref={bodyRef}>
-        {s.turns.length === 0 ? (
+        {!session ? (
+          <div className="as-muted">Open a chart to use the assistant.</div>
+        ) : s.turns.length === 0 ? (
           <div className="as-empty">
             <div className="as-muted">Try one of these:</div>
             {EXAMPLES.map((e) => (
@@ -401,13 +452,22 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
         {s.busy && <div className="as-working">Working…{s.working ? ` ${workingLabel(s.working)}` : ""}</div>}
       </div>
       <div className="as-composer">
+        {chart && (
+          <div className="as-target">
+            <Tooltip content={["This chat belongs to this chart.", "Each chart has its own chat."]}>
+              <span className="as-target-chip">{chart.epic} · {tfLabel(chart.resolution)}</span>
+            </Tooltip>
+          </div>
+        )}
         <textarea
           ref={inputRef}
           value={draft}
-          placeholder="Describe what you want…"
+          placeholder={session ? "Describe what you want…" : "Open a chart first"}
+          disabled={!session}
           rows={2}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
+            if (pickByKey(e)) return;
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(draft); }
           }}
         />
@@ -415,7 +475,7 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
           // Undoing, redoing and rewinding aren't abortable (there is no in-flight fetch/action the
           // Stop button would cancel), so it is hidden rather than shown inert.
           s.working !== "Undoing" && s.working !== "Redoing" && s.working !== "Rewinding" && (
-            <button className="as-send" onClick={() => assistantSession.stop()}>Stop</button>
+            <button className="as-send" onClick={() => session?.stop()}>Stop</button>
           )
         ) : (
           draft.trim() && <button className="as-send" onClick={() => submit(draft)}>Send</button>

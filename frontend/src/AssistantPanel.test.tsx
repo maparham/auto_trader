@@ -7,7 +7,7 @@ import { act, cleanup, render, screen, fireEvent } from "@testing-library/react"
 // above the vi.mock call still throws "Cannot access before initialization",
 // since the mock factory runs first once hoisted). A minimal inline
 // Signal-alike avoids importing ./lib/signals here too, for the same reason.
-const { state, send, undoLast, redoLast, editFrom } = vi.hoisted(() => {
+const { state, send, undoLast, redoLast, editFrom, fakeSession, shown } = vi.hoisted(() => {
   class FakeSignal<T> {
     value: T;
     private listeners = new Set<(v: T) => void>();
@@ -21,27 +21,29 @@ const { state, send, undoLast, redoLast, editFrom } = vi.hoisted(() => {
       return () => this.listeners.delete(fn);
     }
   }
-  return {
-    state: new FakeSignal<any>({ turns: [], messages: [], pending: { toolUseIds: [], heldResults: [], askId: null }, busy: false, working: null }),
-    send: vi.fn(async () => {}),
-    undoLast: vi.fn(async () => {}),
-    redoLast: vi.fn(async () => {}),
-    editFrom: vi.fn(async (_i?: number, _t?: string, _o?: { onCut?: () => void; force?: boolean }): Promise<string> => "sent"),
-  };
+  const state = new FakeSignal<any>({ turns: [], messages: [], pending: { toolUseIds: [], heldResults: [], askId: null }, busy: false, working: null });
+  const send = vi.fn(async () => {});
+  const undoLast = vi.fn(async () => {});
+  const redoLast = vi.fn(async () => {});
+  const editFrom = vi.fn(async (_i?: number, _t?: string, _o?: { onCut?: () => void; force?: boolean }): Promise<string> => "sent");
+  const fakeSession = { state, send, undoLast, redoLast, editFrom, retry: vi.fn(), stop: vi.fn(), reset: vi.fn(), cellId: "c1" };
+  // Which cell each render asked for, and a per-cell override for swap tests.
+  const shown = { cells: [] as string[], byCell: new Map<string, any>() };
+  return { state, send, undoLast, redoLast, editFrom, fakeSession, shown };
 });
-// Only the live session singleton is faked; `undoableIndex` comes through
+// Only the per-cell session lookup is faked; `undoableIndex` comes through
 // from the real module (importActual) so the panel test exercises the real
 // rule (undoable !== false AND a live undo closure), not a simplified stand-in.
 vi.mock("./assistant/session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./assistant/session")>();
   return {
     ...actual,
-    assistantSession: { state, send, retry: vi.fn(), stop: vi.fn(), undoLast, redoLast, editFrom, reset: vi.fn() },
+    sessionToShow: (cellId: string) => { shown.cells.push(cellId); return shown.byCell.get(cellId) ?? fakeSession; },
+    pruneSessions: vi.fn(),
   };
 });
 
 import AssistantPanel from "./AssistantPanel";
-import { assistantSession } from "./assistant/session";
 import { collapseLabels, toBlocks } from "./assistant/format";
 
 beforeEach(() => { send.mockClear(); undoLast.mockClear(); redoLast.mockClear(); editFrom.mockClear(); });
@@ -52,7 +54,7 @@ const AUTO_RETRY_S = 10;
 
 describe("AssistantPanel", () => {
   it("shows example prompts when empty and sends one on click", () => {
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     fireEvent.click(screen.getByText("Add rising trendlines on the daily"));
     expect(send).toHaveBeenCalledWith("Add rising trendlines on the daily");
   });
@@ -62,7 +64,7 @@ describe("AssistantPanel", () => {
       { role: "user", text: "trendlines" },
       { role: "assistant", text: "", changes: [], undone: false, ask: { question: "Which direction?", options: [{ label: "Rising" }, { label: "Falling" }] } },
     ] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(screen.getByText("Which direction?")).toBeTruthy();
     fireEvent.click(screen.getByText("Falling"));
     expect(send).toHaveBeenCalledWith("Falling");
@@ -74,7 +76,7 @@ describe("AssistantPanel", () => {
       { role: "assistant", text: "", changes: [], undone: false,
         ask: { lead: "It skips your line.", question: "What now?", details: "Max Pierce is 0.1 ATR.", options: [{ label: "Allow small dips", description: "Max Pierce 0.1 to 0.6 ATR" }, { label: "Leave it as is" }] } },
     ] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(screen.getByText("It skips your line.")).toBeTruthy();
     const fold = screen.getByText("Why?").closest("details")!;
     expect(fold.open).toBe(false);
@@ -90,7 +92,7 @@ describe("AssistantPanel", () => {
       { role: "user", text: "Allow dips", pickedFrom: "What now?" },
       { role: "assistant", text: "Done.", changes: [], undone: false },
     ] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(screen.getAllByText("What now?")).toHaveLength(1);
     const pick = screen.getByRole("button", { name: "Allow dips", pressed: true }) as HTMLButtonElement;
     expect(pick.disabled).toBe(true);
@@ -98,12 +100,76 @@ describe("AssistantPanel", () => {
     expect(screen.queryByText("Something else…")).toBeNull();
   });
 
+  it("picks an open question's option with its number key while the composer is empty", () => {
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "assistant", text: "", changes: [], undone: false,
+        ask: { lead: "Done.", question: "Next?", options: [{ label: "Show on 1H" }, { label: "Leave it as is" }] } },
+    ] });
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
+    expect(screen.getByRole("button", { name: "Show on 1H" }).className).toContain("as-chip-primary");
+    const input = screen.getByPlaceholderText("Describe what you want…");
+    fireEvent.keyDown(input, { key: "3" });
+    expect(send).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "2" });
+    expect(send).toHaveBeenCalledWith("Leave it as is");
+  });
+
+  it("types a digit normally once the composer has text", () => {
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "assistant", text: "", changes: [], undone: false,
+        ask: { question: "Next?", options: [{ label: "A" }, { label: "B" }] } },
+    ] });
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
+    const input = screen.getByPlaceholderText("Describe what you want…");
+    fireEvent.change(input, { target: { value: "switch to " } });
+    fireEvent.keyDown(input, { key: "1" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("names the focused chart above the composer", () => {
+    state.set({ ...state.value, busy: false, working: null, turns: [] });
+    render(<AssistantPanel cellId="c1" chart={{ epic: "US100", resolution: "HOUR_4" }} onClose={() => {}} />);
+    expect(screen.getByText("US100 · 4H")).toBeTruthy();
+  });
+
+  it("asks for a chart when none is focused", () => {
+    render(<AssistantPanel cellId={null} onClose={() => {}} />);
+    expect(screen.getByText("Open a chart to use the assistant.")).toBeTruthy();
+    expect((screen.getByPlaceholderText("Open a chart first") as HTMLTextAreaElement).disabled).toBe(true);
+  });
+
+  it("shows the focused chart's own chat and swaps when focus moves", () => {
+    const other = { ...fakeSession, state: { value: { ...state.value, turns: [{ role: "user", text: "gold chat" }] }, subscribe: () => () => {} } };
+    shown.byCell.set("c2", other);
+    try {
+      state.set({ ...state.value, busy: false, working: null, turns: [{ role: "user", text: "us100 chat" }] });
+      const { rerender } = render(<AssistantPanel cellId="c1" onClose={() => {}} />);
+      expect(screen.getByText("us100 chat")).toBeTruthy();
+      rerender(<AssistantPanel cellId="c2" onClose={() => {}} />);
+      expect(screen.getByText("gold chat")).toBeTruthy();
+      expect(screen.queryByText("us100 chat")).toBeNull();
+    } finally {
+      shown.byCell.clear();
+    }
+  });
+
+  it("explains a switch-stop and offers Continue on the chart", () => {
+    fakeSession.retry.mockClear();
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "assistant", text: "", changes: [], undone: false, error: { kind: "stopped", cause: "switch" } },
+    ] });
+    render(<AssistantPanel cellId="c1" chart={{ epic: "US100", resolution: "HOUR" }} onClose={() => {}} />);
+    expect(screen.getByText(/you switched charts/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(fakeSession.retry).toHaveBeenCalled();
+  });
+
   it("offers Continue and Shorter answer when a reply was cut short", () => {
     state.set({ ...state.value, busy: false, working: null, turns: [
       { role: "user", text: "explain" },
       { role: "assistant", text: "Long", changes: [], undone: false, error: { kind: "max_tokens" } },
     ] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Shorter answer" }));
     expect(send).toHaveBeenCalledWith("Answer again, shorter.");
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -113,18 +179,18 @@ describe("AssistantPanel", () => {
   it("retries a rate limit on its own after a countdown, and Cancel stops it", () => {
     vi.useFakeTimers();
     try {
-      const retry = assistantSession.retry as ReturnType<typeof vi.fn>;
+      const retry = fakeSession.retry as ReturnType<typeof vi.fn>;
       retry.mockClear();
       state.set({ ...state.value, busy: false, working: null, turns: [
         { role: "assistant", text: "", changes: [], undone: false, error: { kind: "upstream", status: 429, body: "assistant busy" } },
       ] });
-      const { unmount } = render(<AssistantPanel onClose={() => {}} />);
+      const { unmount } = render(<AssistantPanel cellId="c1" onClose={() => {}} />);
       expect(screen.getByText(`Retrying in ${AUTO_RETRY_S}s`)).toBeTruthy();
       for (let k = 0; k < AUTO_RETRY_S; k++) act(() => { vi.advanceTimersByTime(1000); });
       expect(retry).toHaveBeenCalledTimes(1);
       unmount();
       retry.mockClear();
-      render(<AssistantPanel onClose={() => {}} />);
+      render(<AssistantPanel cellId="c1" onClose={() => {}} />);
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
       act(() => { vi.advanceTimersByTime(AUTO_RETRY_S * 1000); });
       expect(retry).not.toHaveBeenCalled();
@@ -137,13 +203,13 @@ describe("AssistantPanel", () => {
   it("stops retrying on its own after three automatic retries in a row", () => {
     vi.useFakeTimers();
     try {
-      const retry = assistantSession.retry as ReturnType<typeof vi.fn>;
+      const retry = fakeSession.retry as ReturnType<typeof vi.fn>;
       retry.mockClear();
       const limited = { ...state.value, busy: false, working: null, turns: [
         { role: "assistant", text: "", changes: [], undone: false, error: { kind: "upstream", status: 429, body: "assistant busy" } },
       ] };
       state.set(limited);
-      render(<AssistantPanel onClose={() => {}} />);
+      render(<AssistantPanel cellId="c1" onClose={() => {}} />);
       for (let n = 0; n < 3; n++) {
         for (let k = 0; k < AUTO_RETRY_S; k++) act(() => { vi.advanceTimersByTime(1000); });
         act(() => { state.set({ ...limited, busy: true }); });
@@ -158,12 +224,12 @@ describe("AssistantPanel", () => {
   });
 
   it("offers Keep going after too many steps", () => {
-    const retry = assistantSession.retry as ReturnType<typeof vi.fn>;
+    const retry = fakeSession.retry as ReturnType<typeof vi.fn>;
     retry.mockClear();
     state.set({ ...state.value, busy: false, working: null, turns: [
       { role: "assistant", text: "", changes: [], undone: false, error: { kind: "rounds" } },
     ] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Keep going" }));
     expect(retry).toHaveBeenCalled();
   });
@@ -173,7 +239,7 @@ describe("AssistantPanel", () => {
       { role: "assistant", text: "a", changes: [{ label: "Added RSI", cellId: "c1", undo: async () => {} }], undone: false },
       { role: "assistant", text: "b", changes: [{ label: "Added EMA", cellId: "c1", undo: async () => {} }], undone: false },
     ] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     const buttons = screen.getAllByRole("button", { name: /undo this turn/i });
     expect(buttons).toHaveLength(1);
     fireEvent.click(buttons[0]);
@@ -184,7 +250,7 @@ describe("AssistantPanel", () => {
     state.set({ ...state.value, turns: [
       { role: "assistant", text: "", changes: [], undone: false, error: { kind: "upstream", status: 403, body: "{\"error\":\"forbidden\"}" } },
     ] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(screen.getByText(/403/)).toBeTruthy();
     expect(screen.getByText("{\"error\":\"forbidden\"}")).toBeTruthy();
   });
@@ -197,7 +263,7 @@ describe("AssistantPanel", () => {
     state.set({ ...state.value, turns: [
       { role: "assistant", text: "a", changes: [{ label: "Added RSI", cellId: "c1" }], undone: false },
     ] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     const btn = screen.getByRole("button", { name: /undo this turn/i }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     fireEvent.focus(btn.parentElement!);
@@ -213,7 +279,7 @@ describe("AssistantPanel", () => {
     state.set({ ...state.value, turns: [
       { role: "assistant", text: "", changes: [], undone: false, error: { kind: "upstream", status: 429, body: "assistant busy" } },
     ] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(screen.getByText("The assistant is busy, try again in a moment.")).toBeTruthy();
     expect(screen.queryByText("assistant busy")).toBeNull();
   });
@@ -222,7 +288,7 @@ describe("AssistantPanel", () => {
     state.set({ ...state.value, turns: [
       { role: "assistant", text: "", changes: [], undone: false, error: { kind: "upstream", status: 429, body: "{\"type\":\"rate_limit_error\"}" } },
     ] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(screen.getByText("Rate limited, try again shortly.")).toBeTruthy();
     expect(screen.getByText("{\"type\":\"rate_limit_error\"}")).toBeTruthy();
   });
@@ -230,14 +296,14 @@ describe("AssistantPanel", () => {
   // M10: Undo is not abortable, so Stop is hidden while undoLast is running.
   it("hides Stop while undoing, but shows a readable working label", () => {
     state.set({ ...state.value, busy: true, working: "Undoing", turns: [] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(screen.queryByRole("button", { name: /^stop$/i })).toBeNull();
     expect(screen.getByText(/undoing the last turn/i)).toBeTruthy();
   });
 
   it("shows a readable tool label while a round is in flight", () => {
     state.set({ ...state.value, busy: true, working: "indicator_add", turns: [] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(screen.getByRole("button", { name: /^stop$/i })).toBeTruthy();
     expect(screen.getByText(/adding an indicator/i)).toBeTruthy();
   });
@@ -246,7 +312,7 @@ describe("AssistantPanel", () => {
     state.set({ ...state.value, busy: false, working: null, turns: [
       { role: "assistant", text: "I changed:\n- **Max Trendlines**: 3 to 6\n- `minTouches` 2", changes: [], undone: false },
     ] });
-    const { container } = render(<AssistantPanel onClose={() => {}} />);
+    const { container } = render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(container.querySelector("strong")?.textContent).toBe("Max Trendlines");
     expect(container.querySelectorAll("ul.as-list li")).toHaveLength(2);
     expect(container.textContent).not.toContain("**");
@@ -265,7 +331,7 @@ describe("AssistantPanel", () => {
     state.set({ ...state.value, busy: false, working: null, turns: [
       { role: "user", text: "hi" },
     ] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(screen.queryByRole("button", { name: /^send$/i })).toBeNull();
     fireEvent.change(screen.getByPlaceholderText(/describe what you want/i), { target: { value: "x" } });
     expect(screen.getByRole("button", { name: /^send$/i })).toBeTruthy();
@@ -276,12 +342,12 @@ describe("AssistantPanel", () => {
     const undone = { role: "assistant", text: "a", undone: true,
       changes: [{ label: "Drew a ray", cellId: "c1", undoable: false, replay: { tool: "drawing_add", input: {} } }] };
     state.set({ ...state.value, busy: false, working: null, turns: [undone] });
-    const { unmount } = render(<AssistantPanel onClose={() => {}} />);
+    const { unmount } = render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: /^redo$/i }));
     expect(redoLast).toHaveBeenCalled();
     unmount();
     state.set({ ...state.value, turns: [undone, { role: "user", text: "next" }] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(screen.queryByRole("button", { name: /^redo$/i })).toBeNull();
     expect(screen.getByText("Undone")).toBeTruthy();
   });
@@ -292,7 +358,7 @@ describe("AssistantPanel", () => {
       { role: "assistant", text: "ok", changes: [], undone: false },
       { role: "user", text: "legacy" },
     ] });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(screen.getAllByRole("button", { name: /edit message/i })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: /edit message/i }));
     const box = screen.getByDisplayValue("first");
@@ -315,7 +381,7 @@ describe("AssistantPanel", () => {
       await new Promise<void>((r) => { finish = r; });
       return "sent";
     });
-    render(<AssistantPanel onClose={() => {}} />);
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: /edit message/i }));
     fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
     await vi.waitFor(() => expect(screen.queryByDisplayValue("first")).toBeNull());

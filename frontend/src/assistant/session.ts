@@ -1,5 +1,7 @@
-// The assistant's conversation loop. One session per browser tab, mirrored to
-// sessionStorage. Invariant: no new user content is ever appended while the
+// The assistant's conversation loop. One session per chart cell (sessionFor),
+// mirrored to sessionStorage under that cell's key; it acts only while its
+// own cell is focused, and moves with the assistant when its own
+// market_select lands on another cell. Invariant: no new user content is ever appended while the
 // last assistant message holds a tool_use without a result (closePending is
 // the one place that invariant gets restored, from send/retry/undoLast alike).
 import { Signal } from "../lib/signals";
@@ -21,6 +23,8 @@ const ASK_NOT_RUN = "not run: the assistant stopped to ask the user";
 export type TurnError = {
   kind: "upstream" | "network" | "refusal" | "max_tokens" | "rounds" | "stopped";
   status?: number; body?: string;
+  /** For "stopped": "switch" when the user focused another chart mid-reply. */
+  cause?: "switch";
 };
 export type Turn =
   | {
@@ -49,6 +53,12 @@ export interface SessionDeps {
   redo: typeof redoTurn;
   context: () => string;
   storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
+  /** The chart cell this conversation belongs to. */
+  cellId: string;
+  /** The cell focused right now (null when none): tools only run on our own. */
+  focusedCell: () => string | null;
+  /** Called after the session moved itself to another cell. */
+  onRebind?: (from: string, to: string) => void;
 }
 
 /**
@@ -93,13 +103,22 @@ const fresh = (): SessionState => ({ turns: [], messages: [], pending: { ...EMPT
 const result = (id: string, content: string, isError = false): ToolResultBlock =>
   ({ type: "tool_result", tool_use_id: id, content, ...(isError ? { is_error: true } : {}) });
 
+/** What a closed-but-never-run tool use tells the model, given the turn's error. */
+function stopReason(err: TurnError | undefined): string {
+  if (err?.kind !== "stopped") return "turn ended before this ran";
+  return err.cause === "switch" ? "stopped: the user switched to another chart" : "stopped by the user";
+}
+
+export const sessionKey = (cellId: string) => `${KEY}.${cellId}`;
+
 export function createSession(deps: SessionDeps) {
+  let cell = deps.cellId;
   const state = new Signal<SessionState>(load());
   let abort: AbortController | null = null;
 
   function load(): SessionState {
     try {
-      const raw = deps.storage.getItem(KEY);
+      const raw = deps.storage.getItem(sessionKey(cell));
       if (!raw) return fresh();
       const s = JSON.parse(raw) as SessionState;
       return { ...s, busy: false, working: null };
@@ -110,10 +129,21 @@ export function createSession(deps: SessionDeps) {
   function save(s: SessionState) {
     state.set(s);
     try {
-      deps.storage.setItem(KEY, JSON.stringify({ ...s, busy: false, working: null }));
+      deps.storage.setItem(sessionKey(cell), JSON.stringify({ ...s, busy: false, working: null }));
     } catch { /* storage full or blocked: the session still works in memory */ }
   }
   const patch = (p: Partial<SessionState>) => save({ ...state.value, ...p });
+
+  /** The assistant's own market_select focused another cell: the conversation
+   * goes with it, so the next tool's focus check passes and the panel keeps
+   * showing it there. */
+  function rebind(to: string) {
+    const from = cell;
+    deps.storage.removeItem(sessionKey(from));
+    cell = to;
+    save(state.value);
+    deps.onRebind?.(from, to);
+  }
 
   /**
    * The ONE place that restores the transcript invariant: every tool_use in
@@ -229,8 +259,19 @@ export function createSession(deps: SessionDeps) {
             }));
             return;
           }
+          if (deps.focusedCell() !== cell) {
+            // The user focused another chart: every tool acts on the focused
+            // one, so stop here; the rest closes as not run on the next send.
+            patch({ pending: { toolUseIds: uses.slice(i).map((x) => x.id), heldResults: [...results], askId: null } });
+            updateLastTurn((t) => ({ ...t, error: { kind: "stopped", cause: "switch" } }));
+            return;
+          }
           patch({ working: u.name, pending: { toolUseIds: uses.slice(i).map((x) => x.id), heldResults: [...results], askId: null } });
           const r = await deps.exec(u.name, u.input, { progress: () => {}, signal });
+          if (u.name === "market_select" && !r.isError) {
+            const now = deps.focusedCell();
+            if (now && now !== cell) rebind(now);
+          }
           // A tool that completes (normally or with its own error) always
           // gets its real result recorded and its change kept on the turn,
           // even if Stop fired while it was running - only THEN do we check
@@ -267,8 +308,7 @@ export function createSession(deps: SessionDeps) {
     const { pending } = state.value;
     const rewind = { msgIndex: state.value.messages.length, pending };
     const asked = pending.askId;
-    const stoppedKind = lastAssistant(state.value.turns)?.error?.kind === "stopped";
-    const reason = asked ? ASK_NOT_RUN : stoppedKind ? "stopped by the user" : "turn ended before this ran";
+    const reason = asked ? ASK_NOT_RUN : stopReason(lastAssistant(state.value.turns)?.error);
     const blocks = closePending({ reason, askAnswer: asked ? text : undefined });
     const prevAsk = lastAssistant(state.value.turns)?.ask;
     // A typed answer to an open ask may be a new request (next-step asks end
@@ -288,8 +328,7 @@ export function createSession(deps: SessionDeps) {
 
   async function retry() {
     if (state.value.busy) return;
-    const err = lastAssistant(state.value.turns)?.error;
-    const reason = err?.kind === "stopped" ? "stopped by the user" : "turn ended before this ran";
+    const reason = stopReason(lastAssistant(state.value.turns)?.error);
     const hadAsk = state.value.pending.askId !== null;
     // Closing is a no-op (empty blocks) when pending is already empty, which
     // is exactly the "nothing dangling" case (typically an upstream/network
@@ -447,12 +486,16 @@ export function createSession(deps: SessionDeps) {
 
   function reset() {
     abort?.abort();
-    deps.storage.removeItem(KEY);
+    deps.storage.removeItem(sessionKey(cell));
     state.set(fresh());
   }
 
-  return { state, send, retry, stop, undoLast, redoLast, editFrom, reset };
+  return {
+    state, send, retry, stop, undoLast, redoLast, editFrom, reset,
+    get cellId() { return cell; },
+  };
 }
+export type Session = ReturnType<typeof createSession>;
 
 function liveContext(): string {
   try {
@@ -467,12 +510,52 @@ function liveContext(): string {
   }
 }
 
-export const assistantSession = createSession({
-  post: postMessages,
-  tools: buildTools,
-  exec: executeTool,
-  undo: undoTurn,
-  redo: redoTurn,
-  context: liveContext,
-  storage: typeof sessionStorage !== "undefined" ? sessionStorage : { getItem: () => null, setItem: () => {}, removeItem: () => {} },
-});
+function focusedCellId(): string | null {
+  try { return focusedChart().cellId; } catch { return null; }
+}
+
+const browserStorage: SessionDeps["storage"] =
+  typeof sessionStorage !== "undefined" ? sessionStorage : { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+
+const sessions = new Map<string, Session>();
+
+/** The conversation of one chart cell, created on first use. */
+export function sessionFor(cellId: string): Session {
+  let s = sessions.get(cellId);
+  if (!s) {
+    s = createSession({
+      post: postMessages, tools: buildTools, exec: executeTool, undo: undoTurn, redo: redoTurn,
+      context: liveContext, storage: browserStorage, cellId, focusedCell: focusedCellId,
+      onRebind: (from, to) => {
+        const moved = sessions.get(from);
+        sessions.delete(from);
+        if (moved) sessions.set(to, moved);
+      },
+    });
+    sessions.set(cellId, s);
+  }
+  return s;
+}
+
+/** The session the panel shows for the focused cell. A session in the middle
+ * of its own market_select wins: focus has already moved to the target cell,
+ * and the session rebinds there once the call returns. */
+export function sessionToShow(cellId: string): Session {
+  for (const s of sessions.values()) {
+    if (s.state.value.busy && s.state.value.working === "market_select") return s;
+  }
+  return sessionFor(cellId);
+}
+
+/** Drop saved conversations of cells that no longer exist, and the one
+ * global conversation from before chats were per chart. */
+export function pruneSessions(liveCellIds: Iterable<string>, storage: Storage | undefined = globalThis.sessionStorage): void {
+  if (!storage) return;
+  const keep = new Set([...liveCellIds].map(sessionKey));
+  const drop: string[] = [];
+  for (let i = 0; i < storage.length; i++) {
+    const k = storage.key(i);
+    if (k && (k === KEY || (k.startsWith(`${KEY}.`) && !keep.has(k)))) drop.push(k);
+  }
+  for (const k of drop) storage.removeItem(k);
+}

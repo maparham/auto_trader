@@ -314,7 +314,36 @@ describe("executeTool", () => {
   });
 });
 
+describe("chart focus during a call", () => {
+  it("stamps a change with the chart the call started on", async () => {
+    clearRegistryForTest();
+    reg("drawing.add", () => { focus.cellId = "c2"; focus.epic = "GOLD"; return { id: "d1", tool: "segment" }; });
+    const r = await executeTool("drawing_add", { tool: "segment", points: [] }, ctx);
+    expect(r.change).toMatchObject({ cellId: "c1", epic: "US100" });
+  });
+
+  it("writes no backtest config when another chart is focused between read and write", async () => {
+    clearRegistryForTest();
+    reg("backtest.config.get", () => { focus.cellId = "c2"; return { costs: { quantity: 1 } }; });
+    reg("backtest.config.set", (a) => a.patch);
+    const r = await executeTool("backtest_config_set", { patch: { costs: { quantity: 2 } } }, ctx);
+    expect(r.isError).toBe(true);
+    expect(r.content).toMatch(/FOCUS_CHANGED/);
+    expect(calls.map((c) => c[0])).toEqual(["backtest.config.get"]);
+  });
+});
+
 describe("redoTurn", () => {
+  it("stops when the user focuses another chart between steps", async () => {
+    clearRegistryForTest();
+    reg("drawing.add", () => { focus.cellId = "c2"; return { id: "d1", tool: "segment" }; });
+    const step = (n: number) => ({ label: `Drew ${n}`, cellId: "c1", epic: "US100", replay: { tool: "drawing_add", input: { tool: "segment", points: [] } } });
+    const r = await redoTurn([step(1), step(2)]);
+    expect(r.ok).toBe(false);
+    expect(r.changes).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+  });
+
   it("replays recorded calls in order and remaps an id the add hands back differently", async () => {
     const changes = [
       { label: "Added RSI", cellId: "c1", epic: "US100", createdId: "RSI7", replay: { tool: "indicator_add", input: { type: "RSI" } } },

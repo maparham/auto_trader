@@ -175,7 +175,11 @@ function indicatorValues(input: Record<string, unknown>): ExecResult {
   return { content: body(), isError: false };
 }
 
-async function local(tool: string, input: Record<string, unknown>, ctx: ActionContext): Promise<ExecResult> {
+/** Where a call starts: its change belongs to this cell and epic, even if the
+ * user focuses another chart while it runs. */
+type At = { cellId: string; epic: string };
+
+async function local(tool: string, input: Record<string, unknown>, ctx: ActionContext, at: At): Promise<ExecResult> {
   if (tool === "describe_indicator") {
     return { content: budgetResult(tool, describeIndicator(String(input.type))), isError: false };
   }
@@ -223,8 +227,7 @@ async function local(tool: string, input: Record<string, unknown>, ctx: ActionCo
       isError: false,
       change: {
         label: `${titleOf(live.type)}: ${bits || "settings changed"}`,
-        cellId: cellNow(),
-        epic: epicNow(),
+        ...at,
         undo: async () => { await run("indicator.set", { id, calcParams: prev }, NOOP_CTX(new AbortController().signal)); },
       },
     };
@@ -235,8 +238,9 @@ async function local(tool: string, input: Record<string, unknown>, ctx: ActionCo
 export async function executeTool(
   tool: string, input: Record<string, unknown>, ctx: ActionContext,
 ): Promise<ExecResult> {
+  const at: At = { cellId: cellNow(), epic: epicNow() };
   try {
-    if (LOCAL_EXEC.has(tool)) return await local(tool, input, ctx);
+    if (LOCAL_EXEC.has(tool)) return await local(tool, input, ctx, at);
     const action = actionFor(tool);
     if (!action) return { content: `UNKNOWN_TOOL: ${tool} is not available`, isError: true };
     const args = prepareInput(tool, input);
@@ -259,7 +263,7 @@ export async function executeTool(
             label: collided
               ? `Added ${titleOf(out.type)} (${out.id}); cannot undo (id collided with an existing pane)`
               : `Added ${title}`,
-            cellId: cellNow(), epic: epicNow(), createdId: out.id,
+            ...at, createdId: out.id,
             // Explicitly non-undoable (the label already says so), not a capture
             // failure: undoTurn must skip it, not block the rest of the turn.
             ...(collided
@@ -280,7 +284,7 @@ export async function executeTool(
         if (args.timeframe !== undefined) undoArgs.timeframe = prevPin ?? "chart";
         return {
           content: budgetResult(tool, out), isError: false,
-          change: { label: `Changed ${live ? titleOf(live.type) : id} settings`, cellId: cellNow(), epic: epicNow(),
+          change: { label: `Changed ${live ? titleOf(live.type) : id} settings`, ...at,
             undo: async () => { await run("indicator.set", undoArgs, undoCtx()); } },
         };
       }
@@ -308,7 +312,7 @@ export async function executeTool(
             label: canUndo
               ? `Removed ${titleOf(type as string)} (undo re-adds it under a new id; alerts and rules on the old id are not restored)`
               : `Removed ${type ?? id}; cannot undo (its settings could not be recovered)`,
-            cellId: cellNow(), epic: epicNow(),
+            ...at,
             // Explicitly non-undoable (the label already says so), not a capture
             // failure: undoTurn must skip it, not block the rest of the turn.
             ...(canUndo
@@ -331,7 +335,7 @@ export async function executeTool(
         const out = (await run(action, args, ctx)) as { id: string; tool: string };
         return {
           content: budgetResult(tool, out), isError: false,
-          change: { label: `Drew ${article(toolLabel(out.tool).toLowerCase())}`, cellId: cellNow(), epic: epicNow(), createdId: out.id,
+          change: { label: `Drew ${article(toolLabel(out.tool).toLowerCase())}`, ...at, createdId: out.id,
             undo: async () => { await run("drawing.remove", { id: out.id }, undoCtx()); } },
         };
       }
@@ -340,18 +344,22 @@ export async function executeTool(
         const out = await run(action, args, ctx);
         return {
           content: budgetResult(tool, out), isError: false,
-          change: { label: `Removed ${article(snap ? toolLabel(snap.name).toLowerCase() : "drawing")}`, cellId: cellNow(), epic: epicNow(),
+          change: { label: `Removed ${article(snap ? toolLabel(snap.name).toLowerCase() : "drawing")}`, ...at,
             undo: snap ? async () => focusedDrawings().overlays.placeDrawing(snap) ?? undefined : undefined },
         };
       }
       case "backtest.config.set": {
         const before = (await run("backtest.config.get", {}, ctx)) as Record<string, unknown>;
+        // Read and write are two calls: never restore one chart's config onto another.
+        if (cellNow() !== at.cellId || epicNow() !== at.epic) {
+          return { content: "FOCUS_CHANGED: another chart was focused during the call; nothing was written.", isError: true };
+        }
         const keys = Object.keys((args.patch ?? {}) as object);
         const restore = Object.fromEntries(keys.map((k) => [k, before[k]]));
         const out = await run(action, args, ctx);
         return {
           content: budgetResult(tool, out), isError: false,
-          change: { label: `Updated backtest: ${keys.map(backtestKeyLabel).join(", ")}`, cellId: cellNow(), epic: epicNow(),
+          change: { label: `Updated backtest: ${keys.map(backtestKeyLabel).join(", ")}`, ...at,
             undo: async () => { await run("backtest.config.set", { patch: restore }, undoCtx()); } },
         };
       }
@@ -362,7 +370,7 @@ export async function executeTool(
         const settled = await settleFocus(() => focusedChart().resolution === target, SETTLE_TIMEOUT_MS, ctx.signal);
         return {
           content: budgetResult(tool, out) + (settled ? "" : SETTLE_WARNING), isError: false,
-          change: { label: `Timeframe ${tfLabel(prev)} to ${tfLabel(String(target ?? args.resolution))}`, cellId: cellNow(), epic: epicNow(),
+          change: { label: `Timeframe ${tfLabel(prev)} to ${tfLabel(String(target ?? args.resolution))}`, ...at,
             undo: async () => {
               await run("chart.timeframe.set", { resolution: prev }, undoCtx());
               await settleFocus(() => focusedChart().resolution === prev, SETTLE_TIMEOUT_MS, undoCtx().signal);
@@ -390,6 +398,8 @@ export async function executeTool(
           content: budgetResult(tool, out) + (settled ? "" : SETTLE_WARNING), isError: false,
           change: {
             label: `Opened ${args.epic} (a tab it opened stays open)`,
+            // Stamped AFTER the switch, unlike every other change: the session
+            // moves to the cell it opened, and this undo runs from there.
             cellId: cellNow(), epic: epicNow(),
             // No prior epic (nothing was focused before) means there is
             // nothing to go back to — that's a legitimate non-undoable
@@ -411,7 +421,7 @@ export async function executeTool(
           content: budgetResult(tool, out), isError: false,
           change: {
             label: action === "backtest.run" ? "Ran the backtest" : "Moved the visible range",
-            cellId: cellNow(), epic: epicNow(), undoable: false,
+            ...at, undoable: false,
           },
         };
       }
@@ -479,7 +489,14 @@ export async function redoTurn(changes: Change[]): Promise<RedoResult> {
     toast("Focus the chart this change was made on, then redo.");
     return { ok: false, changes: out, ids };
   }
+  // Every step acts on the focused chart, so a switch mid-redo stops it; the
+  // replayed market_select is the one step that moves focus on purpose.
+  let expected = cellNow();
   for (const c of steps) {
+    if (cellNow() !== expected) {
+      toast("You switched charts, so redo stopped.");
+      return { ok: false, changes: out, ids };
+    }
     const { tool } = c.replay!;
     // A remove whose undo re-created its target under a new id must now
     // remove that one; this rename is internal, not news for the model.
@@ -490,6 +507,7 @@ export async function redoTurn(changes: Change[]): Promise<RedoResult> {
       Object.entries(c.replay!.input).map(([k, v]) => [k, typeof v === "string" && local[v] ? local[v] : v]),
     );
     const r = await executeTool(tool, input, NOOP_CTX(new AbortController().signal));
+    if (tool === "market_select") expected = cellNow();
     if (r.isError) {
       toast(`Redo stopped at "${c.label}": ${r.content}`);
       return { ok: false, changes: out, ids };
