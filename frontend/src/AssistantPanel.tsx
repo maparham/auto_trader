@@ -358,7 +358,7 @@ export default function AssistantPanel({ cellId = null, cellIds, chart = null, o
             <div className="as-question">{t.ask.question}</div>
             {t.ask.details && (
               <details className="as-why">
-                <summary>Why?</summary>
+                <summary>More</summary>
                 <Markdown text={t.ask.details} />
               </details>
             )}

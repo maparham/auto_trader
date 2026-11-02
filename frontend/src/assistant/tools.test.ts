@@ -45,10 +45,10 @@ describe("assistant tools", () => {
     expect(names).not.toContain("drawing_clear");
   });
 
-  it("includes the six local tools", () => {
+  it("includes every local tool", () => {
     const names = buildTools().map((t) => t.name);
     for (const t of LOCAL_TOOLS) expect(names).toContain(t);
-    expect(LOCAL_TOOLS).toHaveLength(7);
+    expect(LOCAL_TOOLS).toHaveLength(8);
   });
 
   it("closes schemas and keeps required", () => {
@@ -92,7 +92,7 @@ describe("assistant tools", () => {
     expect(out.endsWith("…[truncated]")).toBe(true);
   });
 
-  it("ask_user requires a lead and takes optional details for the Why? fold", () => {
+  it("ask_user requires a lead and takes optional details for the More fold", () => {
     const ask = buildTools().find((t) => t.name === "ask_user")!;
     expect(ask.input_schema).toMatchObject({ required: ["lead", "question", "options"], properties: { details: { type: "string" } } });
   });

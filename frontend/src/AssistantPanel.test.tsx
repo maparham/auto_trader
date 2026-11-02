@@ -70,7 +70,7 @@ describe("AssistantPanel", () => {
     expect(send).toHaveBeenCalledWith("Falling");
   });
 
-  it("folds an ask's details behind Why?", () => {
+  it("folds an ask's details behind More", () => {
     state.set({ ...state.value, turns: [
       { role: "user", text: "why" },
       { role: "assistant", text: "", changes: [], undone: false,
@@ -78,7 +78,7 @@ describe("AssistantPanel", () => {
     ] });
     render(<AssistantPanel cellId="c1" onClose={() => {}} />);
     expect(screen.getByText("It skips your line.")).toBeTruthy();
-    const fold = screen.getByText("Why?").closest("details")!;
+    const fold = screen.getByText("More").closest("details")!;
     expect(fold.open).toBe(false);
     expect(fold.textContent).toContain("Max Pierce is 0.1 ATR.");
     fireEvent.click(screen.getByText("Allow small dips"));

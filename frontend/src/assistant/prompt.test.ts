@@ -20,7 +20,20 @@ describe("prompt", () => {
   it("asks for short plain replies with choices instead of offers", () => {
     expect(SYSTEM_PROMPT).toMatch(/at most three short sentences/);
     expect(SYSTEM_PROMPT).toMatch(/never by its id/);
-    expect(SYSTEM_PROMPT).toMatch(/never end with "tell me if you want/);
+    expect(SYSTEM_PROMPT).toMatch(/never end with an offer/);
+  });
+
+  it("asks for evidence over guesses", () => {
+    expect(SYSTEM_PROMPT).toMatch(/only from tool results/);
+    expect(SYSTEM_PROMPT).toMatch(/never guess one/);
+    expect(SYSTEM_PROMPT).toMatch(/never use internal terms/i);
+  });
+
+  it("stays general: no indicator-specific rules and no quoted examples", () => {
+    for (const t of ["TRENDLINES", "Trendlines", "RSI", "Balanced", "ATR", "Max Pierce", "treasury"])
+      expect(SYSTEM_PROMPT).not.toContain(t);
+    // A quoted example is a double-quoted phrase; the prompt has none left.
+    expect(SYSTEM_PROMPT).not.toMatch(/"[^"{}]+"/);
   });
 
   it("formats the context line", () => {

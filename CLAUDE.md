@@ -405,8 +405,8 @@ Tool allowlist: the assistant can only call what `tools.ts`'s `TOOL_TO_ACTION`
 maps to an agent-registry action (the same handlers the MCP bridge drives).
 A new registry action is NOT exposed to the model until it is added there.
 `LOCAL_TOOLS` (`ask_user`, `describe_indicator`, `indicator_configure`,
-`describe_rules`, `validate_rule`, `indicator_values`, `symbol_search`) run
-locally instead of through the registry; `ask_user` ends the turn with chips.
+`describe_rules`, `validate_rule`, `indicator_values`, `symbol_search`,
+`trendlines_explain_line`) run locally instead of through the registry; `ask_user` ends the turn with chips.
 `market_select` only opens an epic the broker's own search returns
 (`symbol_search` finds it), so a guessed epic never opens an empty tab.
 

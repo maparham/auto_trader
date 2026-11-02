@@ -7455,7 +7455,7 @@ span.bt-leg-short { color: var(--neg); }
 .as-chips-answered .as-chip:hover { background: none; }
 .as-chips-answered .as-chip-picked { color: var(--text); border-color: var(--text-dim);
   background: color-mix(in srgb, var(--text) 8%, transparent); }
-/* "Why?" / "Details": the technical reasoning, folded away by default. */
+/* "More" / "Details": the technical reasoning, folded away by default. */
 .as-why { color: var(--text-dim); font-size: 11px; }
 .as-why > summary { cursor: pointer; width: fit-content; list-style: none; }
 .as-why > summary::-webkit-details-marker { display: none; }

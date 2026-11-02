@@ -1,5 +1,5 @@
 // The assistant's tool surface: an allowlist over the agent action registry
-// (same handlers the MCP bridge drives) plus five assistant-only tools that
+// (same handlers the MCP bridge drives) plus assistant-only tools that
 // run locally (assistant/describe.ts, assistant/session.ts).
 import { listActions } from "../agent/registry";
 import { VALID_TYPES } from "../agent/actions/indicators";
@@ -27,7 +27,7 @@ const ACTION_TO_TOOL = Object.fromEntries(Object.entries(TOOL_TO_ACTION).map(([t
 
 export const LOCAL_TOOLS = [
   "ask_user", "describe_indicator", "indicator_configure", "describe_rules", "validate_rule",
-  "indicator_values", "symbol_search",
+  "indicator_values", "symbol_search", "trendlines_explain_line",
 ] as const;
 
 export function actionFor(tool: string): string | null {
@@ -61,7 +61,7 @@ const LOCAL_DEFS: ToolDef[] = [
       properties: {
         lead: { type: "string", description: "one plain sentence shown above the question: the cause or the outcome" },
         question: { type: "string", description: "one short plain sentence" },
-        details: { type: "string", description: "optional technical reasoning, hidden behind a \"Why?\" link; plain text, a few sentences" },
+        details: { type: "string", description: "optional technical reasoning, hidden behind a \"More\" link; plain text, a few sentences" },
         options: {
           type: "array", minItems: 2, maxItems: 5,
           items: {
@@ -109,6 +109,22 @@ const LOCAL_DEFS: ToolDef[] = [
         bars: { type: "number", description: "how many bars, newest last (default 60, max 300)" },
         from: { type: "number", description: "window start, ms" },
         to: { type: "number", description: "window end, ms" },
+      },
+    },
+  },
+  {
+    name: "trendlines_explain_line",
+    description:
+      "Read-only. For a Trendlines indicator on the focused chart: whether it draws a given line (a drawing's id, or two points), which settings block it with the measured value and the limit, and the smallest settings change verified to draw it, with how many other lines that change adds or removes. Use it when the user asks why a line is missing or how to get one; pass the fix's keys to indicator_configure.",
+    input_schema: {
+      type: "object", additionalProperties: false, required: ["id"],
+      properties: {
+        id: { type: "string", description: "Trendlines indicator id from indicator_list" },
+        drawingId: { type: "string", description: "a line drawing's id from drawing_list" },
+        t1: { type: "number", description: "first point time, ms" },
+        p1: { type: "number", description: "first point price" },
+        t2: { type: "number", description: "second point time, ms" },
+        p2: { type: "number", description: "second point price" },
       },
     },
   },

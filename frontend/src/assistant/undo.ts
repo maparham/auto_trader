@@ -16,6 +16,7 @@ import { searchInstruments } from "../lib/feed/instruments";
 import { DEFAULT_BROKER } from "../lib/feed/common";
 import { actionFor, prepareInput, budgetResult, RESULT_CAP } from "./tools";
 import { describeIndicator, configureParams, describeRules, validateRule } from "./describe";
+import { explainTrendline } from "./trendlinesExplain";
 
 // `epic`: captured alongside `cellId` at the same point, since a cell can be
 // re-pointed at a different symbol (market.select) without its id changing —
@@ -52,7 +53,7 @@ export interface ExecResult { content: string; isError: boolean; change?: Change
 
 const NOOP_CTX = (signal: AbortSignal): ActionContext => ({ progress: () => {}, signal });
 // Local tools executeTool runs itself. ask_user is the session's (it ends the turn).
-const LOCAL_EXEC = new Set(["describe_indicator", "describe_rules", "validate_rule", "indicator_configure", "indicator_values", "symbol_search"]);
+const LOCAL_EXEC = new Set(["describe_indicator", "describe_rules", "validate_rule", "indicator_configure", "indicator_values", "symbol_search", "trendlines_explain_line"]);
 
 const SETTLE_TIMEOUT_MS = 2000;
 const SETTLE_WARNING = "\nwarning: the chart did not switch within 2 s; check chart_state before editing.";
@@ -191,6 +192,13 @@ async function local(tool: string, input: Record<string, unknown>, ctx: ActionCo
   }
   if (tool === "indicator_values") {
     return indicatorValues(input);
+  }
+  if (tool === "trendlines_explain_line") {
+    const r = await explainTrendline(input, {
+      chart: focusedChart().chart,
+      drawingPoints: (id) => focusedDrawings().overlays.getDrawing(id)?.points ?? null,
+    }, ctx.signal);
+    return "error" in r ? { content: r.error, isError: true } : { content: budgetResult(tool, r.out), isError: false };
   }
   if (tool === "describe_rules") {
     return { content: budgetResult(tool, describeRules(liveExprInstances(focusedChart().chart))), isError: false };
