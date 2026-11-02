@@ -31,7 +31,7 @@ export type Turn =
     }
   | {
       role: "assistant"; text: string; changes: Change[]; undone: boolean;
-      ask?: { question: string; details?: string; options: Array<{ label: string; description?: string }> };
+      ask?: { lead?: string; question: string; details?: string; options: Array<{ label: string; description?: string }> };
       error?: TurnError; trimmedBefore?: boolean;
     };
 export interface SessionState {
@@ -209,7 +209,7 @@ export function createSession(deps: SessionDeps) {
           if (signal.aborted) throw new DOMException("aborted", "AbortError");
           const u = uses[i];
           if (u.name === "ask_user") {
-            const input = u.input as { question?: string; details?: string; options?: Array<{ label: string; description?: string }> };
+            const input = u.input as { lead?: string; question?: string; details?: string; options?: Array<{ label: string; description?: string }> };
             patch({
               pending: {
                 toolUseIds: uses.slice(i + 1).map((x) => x.id),
@@ -217,9 +217,15 @@ export function createSession(deps: SessionDeps) {
                 askId: u.id,
               },
             });
-            const details = typeof input.details === "string" && input.details.trim() ? input.details.trim() : undefined;
+            const opt = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+            const lead = opt(input.lead);
+            const details = opt(input.details);
             updateLastTurn((t) => ({
-              ...t, ask: { question: String(input.question ?? ""), ...(details ? { details } : {}), options: input.options ?? [] },
+              ...t,
+              ask: {
+                ...(lead ? { lead } : {}), question: String(input.question ?? ""),
+                ...(details ? { details } : {}), options: input.options ?? [],
+              },
             }));
             return;
           }

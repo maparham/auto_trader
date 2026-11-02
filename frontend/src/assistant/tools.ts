@@ -57,8 +57,9 @@ const LOCAL_DEFS: ToolDef[] = [
     description:
       "Ask the user ONE question with 2 to 5 short options: to clarify a request, to offer fixes when something did not happen as expected, or to offer next steps after a change. The user's pick (or their own words) comes back as this tool's result.",
     input_schema: {
-      type: "object", additionalProperties: false, required: ["question", "options"],
+      type: "object", additionalProperties: false, required: ["lead", "question", "options"],
       properties: {
+        lead: { type: "string", description: "one plain sentence shown above the question: the cause or the outcome" },
         question: { type: "string", description: "one short plain sentence" },
         details: { type: "string", description: "optional technical reasoning, hidden behind a \"Why?\" link; plain text, a few sentences" },
         options: {

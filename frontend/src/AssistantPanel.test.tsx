@@ -71,15 +71,31 @@ describe("AssistantPanel", () => {
   it("folds an ask's details behind Why?", () => {
     state.set({ ...state.value, turns: [
       { role: "user", text: "why" },
-      { role: "assistant", text: "It skips your line.", changes: [], undone: false,
-        ask: { question: "What now?", details: "Max Pierce is 0.1 ATR.", options: [{ label: "Allow small dips", description: "Max Pierce 0.1 to 0.6 ATR" }, { label: "Leave it as is" }] } },
+      { role: "assistant", text: "", changes: [], undone: false,
+        ask: { lead: "It skips your line.", question: "What now?", details: "Max Pierce is 0.1 ATR.", options: [{ label: "Allow small dips", description: "Max Pierce 0.1 to 0.6 ATR" }, { label: "Leave it as is" }] } },
     ] });
     render(<AssistantPanel onClose={() => {}} />);
+    expect(screen.getByText("It skips your line.")).toBeTruthy();
     const fold = screen.getByText("Why?").closest("details")!;
     expect(fold.open).toBe(false);
     expect(fold.textContent).toContain("Max Pierce is 0.1 ATR.");
     fireEvent.click(screen.getByText("Allow small dips"));
     expect(send).toHaveBeenCalledWith("Allow small dips");
+  });
+
+  it("keeps an answered question's options, greyed, with the pick marked and no echo", () => {
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "assistant", text: "It skips your line.", changes: [], undone: false,
+        ask: { question: "What now?", options: [{ label: "Allow dips" }, { label: "Leave it as is" }] } },
+      { role: "user", text: "Allow dips", pickedFrom: "What now?" },
+      { role: "assistant", text: "Done.", changes: [], undone: false },
+    ] });
+    render(<AssistantPanel onClose={() => {}} />);
+    expect(screen.getAllByText("What now?")).toHaveLength(1);
+    const pick = screen.getByRole("button", { name: "Allow dips", pressed: true }) as HTMLButtonElement;
+    expect(pick.disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Leave it as is", pressed: false }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText("Something else…")).toBeNull();
   });
 
   it("offers Continue and Shorter answer when a reply was cut short", () => {

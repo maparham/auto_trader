@@ -7407,7 +7407,6 @@ span.bt-leg-short { color: var(--neg); }
 .as-edit-warn { display: flex; flex-direction: column; gap: 6px; color: var(--text-dim); font-size: 11px; }
 .as-link { padding: 2px 6px; font-size: 11px; border: 0; background: none; color: var(--text-dim); cursor: pointer; }
 .as-link:hover { color: var(--text); }
-.as-picked { color: var(--text-dim); font-size: 11px; margin-bottom: 2px; }
 .as-assistant { display: flex; flex-direction: column; gap: 6px; }
 .as-p { margin: 0; line-height: 1.45; }
 .as-list { margin: 0; padding-left: 18px; line-height: 1.45; display: flex;
@@ -7444,6 +7443,11 @@ span.bt-leg-short { color: var(--neg); }
   background: none; color: var(--text); text-align: left; }
 .as-chip:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .as-chip-other { color: var(--text-dim); }
+/* An answered question: options stay readable but inert, the pick marked. */
+.as-chips-answered .as-chip { cursor: default; color: var(--text-dim); }
+.as-chips-answered .as-chip:hover { background: none; }
+.as-chips-answered .as-chip-picked { color: var(--text); border-color: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 8%, transparent); }
 /* "Why?" / "Details": the technical reasoning, folded away by default. */
 .as-why { color: var(--text-dim); font-size: 11px; }
 .as-why > summary { cursor: pointer; width: fit-content; list-style: none; }

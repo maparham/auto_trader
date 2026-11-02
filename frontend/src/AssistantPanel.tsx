@@ -254,7 +254,6 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
       }
       return (
         <div key={i} className="as-user">
-          {t.pickedFrom && <div className="as-picked">{t.pickedFrom}</div>}
           {t.text}
           {t.rewind && !s.busy && !edit && (
             <Tooltip content="Edit and continue from here">
@@ -271,6 +270,10 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
       );
     }
     const pendingAsk = t.ask && i === s.turns.length - 1 && !s.busy;
+    // An answered ask keeps its options on screen, greyed, with the one the
+    // user clicked marked (the next user turn records the pick).
+    const next = s.turns[i + 1];
+    const picked = next?.role === "user" && next.pickedFrom ? next.text : null;
     return (
       <div key={i} className="as-assistant">
         {t.trimmedBefore && <div className="as-muted">Earlier messages were trimmed from the model's view.</div>}
@@ -307,12 +310,21 @@ export default function AssistantPanel({ onClose }: { onClose: () => void }) {
         )}
         {t.ask && (
           <div className="as-ask">
+            {t.ask.lead && !t.text.includes(t.ask.lead) && <p className="as-p"><Inline text={t.ask.lead} /></p>}
             <div className="as-question">{t.ask.question}</div>
             {t.ask.details && (
               <details className="as-why">
                 <summary>Why?</summary>
                 <Markdown text={t.ask.details} />
               </details>
+            )}
+            {!pendingAsk && t.ask.options.length > 0 && i < s.turns.length - 1 && (
+              <div className="as-chips as-chips-answered">
+                {t.ask.options.map((o) => (
+                  <button key={o.label} disabled aria-pressed={o.label === picked}
+                    className={`as-chip${o.label === picked ? " as-chip-picked" : ""}`}>{o.label}</button>
+                ))}
+              </div>
             )}
             {pendingAsk && (
               <div className="as-chips">

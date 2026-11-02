@@ -97,11 +97,12 @@ describe("session loop", () => {
 
   it("ask_user details ride on the turn, and a blank one is dropped", async () => {
     const { s } = setup([
-      msg([tu("q", "ask_user", { question: "What now?", details: " Swing too short. ", options: [{ label: "A" }, { label: "B" }] })], "tool_use"),
+      msg([tu("q", "ask_user", { lead: " It skips your line. ", question: "What now?", details: " Swing too short. ", options: [{ label: "A" }, { label: "B" }] })], "tool_use"),
     ]);
     await s.send("why");
     const t = s.state.value.turns.at(-1)!;
     expect(t.role === "assistant" && t.ask?.details).toBe("Swing too short.");
+    expect(t.role === "assistant" && t.ask?.lead).toBe("It skips your line.");
     const blank = setup([msg([tu("q", "ask_user", { question: "Q?", details: "  ", options: [{ label: "A" }, { label: "B" }] })], "tool_use")]);
     await blank.s.send("x");
     const b = blank.s.state.value.turns.at(-1)!;
