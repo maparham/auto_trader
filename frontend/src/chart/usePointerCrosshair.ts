@@ -424,8 +424,15 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
         return;
       }
       // Snapped onto a trade line: draw that line across the whole pane, since it
-      // replaces the (suppressed) crosshair line, same as a snapped alert.
-      setSnapTradeKey(!overTradePillNow && snapTarget?.isTrade ? snapTarget.tradeKey ?? null : null);
+      // replaces the (suppressed) crosshair line, same as a snapped alert. Over a
+      // trade pill, that pill's line spans the pane instead, so grabbing an SL/TP by
+      // its pill shows the level against past price action (the key survives the
+      // drag, since moveAt returns early while one is active).
+      setSnapTradeKey(
+        overTradePillNow
+          ? `${pillHit.id}:${pillHit.field}`
+          : snapTarget?.isTrade ? snapTarget.tradeKey ?? null : null,
+      );
       // A trade pill is an opaque chip on top of everything (same rule as the
       // trade-line band above): inside its rect no alert line beneath may take
       // the hover — neither via this snap auto-hover nor via klinecharts' native
@@ -547,7 +554,9 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       setPlusCrosshair(null);
       setPointerPx(null); // drop the Δ-label hover-enlarge as the cursor leaves
       if (snapActiveRef.current) { overlays.setSuppressNativeLine(false); snapActiveRef.current = false; }
-      setSnapTradeKey(null);
+      // A trade-line drag runs on window listeners past the chart's edge: keep the
+      // dragged line spanning the pane until the drop.
+      if (!tradeDragActiveRef.current()) setSnapTradeKey(null);
       // Drop a snap-driven alert hover as the cursor leaves (klinecharts' own
       // onMouseLeave covers the on-line case; this covers the wider magnet band).
       if (snapHoverRef.current && !alertDragActiveRef.current()) {
