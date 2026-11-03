@@ -363,9 +363,20 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
       const chart = chartRef.current;
       if (!chart || p.moved || overlays.isDrawing()) return;
       if (p.touch && e.timeStamp - p.t > TAP_MS) return;
-      const hit = hitAt(e.clientX, e.clientY, p.touch);
-      pickTrendline(chart, hit ? { paneId: hit.paneId, name: hit.name, key: hit.seg.key } : null);
-      if (hit) onDebugPickRef.current?.(hit, e.clientX, e.clientY);
+      const { clientX, clientY } = e;
+      // After klinecharts' own mouseup/tap has run (pointerup comes first):
+      // a click a drawing or alert line took is that overlay's, so a drawing
+      // copied onto the line stays selectable on top of it.
+      setTimeout(() => {
+        if (chartRef.current !== chart) return;
+        if (overlays.clickedOverlayId()) {
+          pickTrendline(chart, null);
+          return;
+        }
+        const hit = hitAt(clientX, clientY, p.touch);
+        pickTrendline(chart, hit ? { paneId: hit.paneId, name: hit.name, key: hit.seg.key } : null);
+        if (hit) onDebugPickRef.current?.(hit, clientX, clientY);
+      }, 0);
     };
     const onCancel = () => {
       press = null;

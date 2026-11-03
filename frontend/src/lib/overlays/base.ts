@@ -473,6 +473,13 @@ export abstract class OverlayManagerBase {
   // real ChartImp method absent from the public typings, hence the cast; if a
   // future klinecharts drops it we fall back to the event-driven mirror untouched.
   syncDrawingSelectionFromClick(): void {
+    const id = this.clickedOverlayId();
+    if (id === undefined) return; // store API unavailable
+    this.selectDrawing(id != null && this.entries.get(id) === "drawing" ? id : null);
+  }
+  // The overlay klinecharts' last click landed on (null: empty space), set
+  // from its mouseup. undefined when the store API is unavailable.
+  clickedOverlayId(): string | null | undefined {
     const store = (
       this.chart as unknown as {
         getChartStore?: () => {
@@ -481,9 +488,8 @@ export abstract class OverlayManagerBase {
       } | null
     )?.getChartStore?.();
     const info = store?.getClickOverlayInfo?.();
-    if (info === undefined) return; // store API unavailable
-    const id = info?.overlay?.id ?? null;
-    this.selectDrawing(id != null && this.entries.get(id) === "drawing" ? id : null);
+    if (info === undefined) return undefined;
+    return info?.overlay?.id ?? null;
   }
   // The epic whose overlays are currently materialized (set only at the end of
   // rehydrate()). Navigation from the alerts sidebar uses this as the "safe to
