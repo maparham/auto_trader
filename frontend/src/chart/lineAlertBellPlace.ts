@@ -1,5 +1,5 @@
-// Placement of a trendline alert's bell (TrendlineAlertBells) around the
-// Trendlines end tags; a separate module so the component file only exports
+// Placement of an alert's bell (AlertCurveBells) past its curve's end and
+// around the Trendlines end tags; a separate module so the component file only exports
 // components (fast refresh).
 
 /** Half the height of a Trendlines end tag (10px text). */
@@ -41,4 +41,22 @@ export function stepPastTags(
 export function gapAlongLine(x0: number, m: number, gap: number, minDx: number): number {
   const dx = Number.isFinite(m) ? gap / Math.hypot(1, m) : 0;
   return x0 + Math.max(dx, minDx);
+}
+
+/**
+ * A bell of `size` px past a curve ending at `last` (an indicator line's
+ * value at the last bar), `gap` px along the extension of its last segment
+ * from `prev` (flat without one), then walked past any end tag in its way.
+ */
+export function bellPastCurveEnd(
+  prev: { x: number; y: number } | null,
+  last: { x: number; y: number },
+  gap: number,
+  size: number,
+  tags: readonly { x: number; y: number; w: number }[],
+  paneTop: number,
+): { x: number; y: number } {
+  const m = prev && last.x !== prev.x ? (last.y - prev.y) / (last.x - prev.x) : 0;
+  const yAt = (x: number) => last.y + m * (x - last.x);
+  return stepPastTags(gapAlongLine(last.x, m, gap, size / 2 + 2), yAt, tags, paneTop, size);
 }

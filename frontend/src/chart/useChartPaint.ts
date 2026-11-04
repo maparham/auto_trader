@@ -43,9 +43,8 @@ import { getTrendlineTags } from "../lib/indicators/trendlines";
 import { getIndicatorById, getIndicatorsByPane } from "../lib/indicators";
 import { loadIndicatorAlerts, loadLineAlerts } from "../lib/alertsApi";
 import { alertTimeframeOf, chartValueOf } from "../lib/indicatorAlertInstance";
-import type { IndicatorBellTag } from "./AlertTags";
-import type { LineAlertBellTag } from "./TrendlineAlertBells";
-import { gapAlongLine, stepPastTags } from "./lineAlertBellPlace";
+import type { AlertCurveBellTag } from "./AlertCurveBells";
+import { bellPastCurveEnd, gapAlongLine, stepPastTags } from "./lineAlertBellPlace";
 import { indTypeOf } from "../lib/customIndicators";
 import { dashSliceBounds, getBacktestAggregate, tradeDashes } from "../lib/backtest";
 import { type AggPill } from "../BacktestAggMarkers";
@@ -74,7 +73,7 @@ const BA_TAG_H = 18;
 // Module-const from ChartCore: the trade-line handle radius. The spine's x is no
 // longer a constant — it tracks the axis-docked pill column (see tradeSpineX).
 const TRADE_HANDLE_R = 4.5;
-// How far past the last bar a trendline alert's bell sits, along the line's extension.
+// How far past the last bar an alert's curve bell sits, along the line's extension.
 const LINE_BELL_GAP = 24;
 // .tl-alert-bell is 14px; 2px of air between stacked bells.
 const LINE_BELL_SIZE = 16;
@@ -116,10 +115,9 @@ export interface ChartPaintDeps {
   setBidTag: React.Dispatch<React.SetStateAction<BaTag>>;
   setAskTag: React.Dispatch<React.SetStateAction<BaTag>>;
   setAlertTags: React.Dispatch<React.SetStateAction<AlertTag[]>>;
-  // Bells for this cell's "price vs line" indicator alerts, on the line's last value.
-  setIndicatorBells: React.Dispatch<React.SetStateAction<IndicatorBellTag[]>>;
-  // Bells for frozen-trendline (`line`) alerts, on their line past the last bar.
-  setLineAlertBells: React.Dispatch<React.SetStateAction<LineAlertBellTag[]>>;
+  // Bells for frozen-trendline (`line`) alerts and "price vs line" indicator
+  // alerts, on the curve they watch just past the last bar.
+  setLineAlertBells: React.Dispatch<React.SetStateAction<AlertCurveBellTag[]>>;
   setTradePills: React.Dispatch<React.SetStateAction<TradePill[]>>;
   /** Width of the price-axis column — the trade pills dock against its left edge. */
   setAxisW: React.Dispatch<React.SetStateAction<number>>;
@@ -195,7 +193,6 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     setBidTag,
     setAskTag,
     setAlertTags,
-    setIndicatorBells,
     setLineAlertBells,
     setTradePills,
     setAxisW,
@@ -672,7 +669,6 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       // object/array is built per redraw: the redraw runs on every pan frame,
       // and a fresh-but-equal identity would re-render the whole cell tree.
       setAlertTags((prev) => stableArray(prev, []));
-      setIndicatorBells((prev) => stableArray(prev, []));
       setLineAlertBells((prev) => stableArray(prev, []));
       handle.paintSeparatorRef.current();
       return;
@@ -838,11 +834,14 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     setAlertTags((prev) => stableArray(prev, tags));
 
     // "Price crosses the curve" indicator alerts (e.g. price crosses EMA 50): no line of
-    // their own, just a bell on the indicator's line at its latest value. Only
-    // the linked cell, on the alert's timeframe, while the eye shows alert lines
-    // and the indicator itself is shown (visible covers Hide indicators and the
+    // their own, just a bell on the indicator's line just past the last bar,
+    // continuing its last segment, like a trendline alert's. Only the linked
+    // cell, on the alert's timeframe, while the eye shows alert lines and the
+    // indicator itself is shown (visible covers Hide indicators and the
     // per-resolution visibility model, applyIndicatorVisibility).
-    const bells: IndicatorBellTag[] = [];
+    const lineBells: AlertCurveBellTag[] = [];
+    const candleRight = chart.getSize("candle_pane", "main")?.width ?? Infinity;
+    const candleTags = getTrendlineTags(chart, "candle_pane");
     for (const a of overlays.getAlertsHidden() ? [] : loadIndicatorAlerts(epicRef.current, brokerIdRef.current)) {
       const p = a.params;
       if (p.target !== "price" || !p.link || p.link.scope !== scope) continue;
@@ -852,12 +851,26 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       const ext = ind.extendData as Record<string, unknown> | undefined;
       if (p.timeframe !== alertTimeframeOf(ext, resRef.current)) continue;
       const res = (ind.result ?? []) as Array<Record<string, number | undefined>>;
-      const v = chartValueOf(res[res.length - 1], p.output);
+      const dl = chart.getDataList();
+      const n = Math.min(res.length, dl.length);
+      const v = n > 0 ? chartValueOf(res[n - 1], p.output) : null;
       if (v == null) continue;
-      const y = yOf(v);
-      if (y != null) bells.push({ id: a.id, y });
+      const vPrev = n > 1 ? chartValueOf(res[n - 2], p.output) : null;
+      const px = chart.convertToPixel(
+        [
+          { timestamp: dl[n - 1].timestamp, value: v },
+          ...(vPrev != null ? [{ timestamp: dl[n - 2].timestamp, value: vPrev }] : []),
+        ],
+        { paneId: "candle_pane", absolute: true },
+      ) as Array<{ x: number; y: number }>;
+      const [last, prev] = px;
+      if (!last) continue;
+      const { x, y } = bellPastCurveEnd(prev ?? null, last, LINE_BELL_GAP, LINE_BELL_SIZE, candleTags, 0);
+      // Culled at the price axis, as a trendline alert's bell is.
+      if (x + LINE_BELL_SIZE / 2 > candleRight) continue;
+      if (Number.isFinite(x) && Number.isFinite(y))
+        lineBells.push({ id: a.id, x: Math.round(x), y: Math.round(y), kind: "indicator" });
     }
-    setIndicatorBells((prev) => stableArray(prev, bells));
 
     // Line alerts (a frozen trendline): a bell on the alert's own line just
     // past the last bar, where its dashed segment ends. Not the axis, and not
@@ -866,7 +879,6 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // dashed line draws (the chart's own timeframe, or a finer chart under
     // a pin to the alert's), and while the eye shows alert lines, whether or
     // not the indicator itself is shown.
-    const lineBells: LineAlertBellTag[] = [];
     // Picked-line clones end at the last bar too; not gated by the alert eye.
     controller.pickedLineClones.refresh();
     if (!overlays.getAlertsHidden()) {
@@ -912,10 +924,10 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // Culled rather than clamped once it would sit on the price axis (the
         // last bar flush against it): a bell pulled left would leave the line.
         if (x + LINE_BELL_SIZE / 2 > plotRight) continue;
-        if (Number.isFinite(y)) lineBells.push({ id: a.id, x: Math.round(x), y: Math.round(y) });
+        if (Number.isFinite(y)) lineBells.push({ id: a.id, x: Math.round(x), y: Math.round(y), kind: "line" });
       }
     }
-    // Converging lines put bells on top of each other: step each one down
+    // Converging lines and curves put bells on top of each other: step each one down
     // until it clears the one above.
     lineBells.sort((p, q) => p.y - q.y);
     for (let i = 1; i < lineBells.length; i++) {

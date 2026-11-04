@@ -4,34 +4,37 @@ import ContextMenu from "../ContextMenu";
 import Tooltip from "../components/Tooltip";
 import { BellIcon, MenuIcons } from "../lib/menuIcons";
 
-// A frozen-trendline (`line`) alert's bell, on its line just past the last
-// bar, not on the axis.
+// An alert's bell on the curve it watches, just past the last bar, not on the
+// axis: a frozen-trendline (`line`) alert's dashed line, or the indicator line
+// of a "price crosses the curve" indicator alert (`indicator`).
 // A type alias, not an interface: stableArray needs the implicit index signature.
-export type LineAlertBellTag = { id: string; x: number; y: number };
+export type AlertCurveBellTag = { id: string; x: number; y: number; kind: "line" | "indicator" };
+
+const LABEL = { line: "Trendline alert", indicator: "Indicator alert" } as const;
 
 interface Props {
-  bells: LineAlertBellTag[];
+  bells: AlertCurveBellTag[];
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
 }
 
 /**
- * On-chart bells for frozen-trendline alerts, at the end of the alert's
- * dashed line rather than on the price axis. A double click opens the edit
+ * On-chart bells for trendline and indicator-curve alerts, at the end of the
+ * curve the alert watches rather than on the price axis. A double click opens the edit
  * dialog; a right click opens an Edit / Delete menu. Pure props-in, like
  * AlertTags.
  */
-export default function TrendlineAlertBells({ bells, onEdit, onDelete }: Props) {
+export default function AlertCurveBells({ bells, onEdit, onDelete }: Props) {
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   return (
     <>
       {bells.map((b) => (
-        <Tooltip key={b.id} asChild content="Trendline alert">
+        <Tooltip key={b.id} asChild content={LABEL[b.kind]}>
           <button
             type="button"
             className="tl-alert-bell"
             style={{ left: b.x, top: b.y }}
-            aria-label="Trendline alert"
+            aria-label={LABEL[b.kind]}
             // Enter/Space on the focused bell (a click with no pointer
             // detail) edits too; a mouse edits on double click only.
             onClick={(e) => {

@@ -12,7 +12,7 @@
 // first anchor to the chart's last bar and stops there, so it lies on the
 // trendline while that is drawn and still shows what the alert watches once
 // the trendline is gone; the bell past its end (useChartPaint/
-// TrendlineAlertBells) marks it.
+// AlertCurveBells) marks it.
 import type { Chart, KLineData } from "klinecharts";
 import { alertTimeframeOf } from "../indicatorAlertInstance";
 import { loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert, type LineAlertParams } from "../alertsApi";

@@ -270,8 +270,8 @@ import { useChartPaint } from "./chart/useChartPaint";
 import { useIndicatorCommands } from "./chart/useIndicatorCommands";
 import { useLineDrag, type TradeLinePx } from "./chart/useLineDrag";
 import { usePointerCrosshair } from "./chart/usePointerCrosshair";
-import AlertTags, { type IndicatorBellTag } from "./chart/AlertTags";
-import TrendlineAlertBells, { type LineAlertBellTag } from "./chart/TrendlineAlertBells";
+import AlertTags from "./chart/AlertTags";
+import AlertCurveBells, { type AlertCurveBellTag } from "./chart/AlertCurveBells";
 import AxisPriceTags, { WithPriceTag, type BaTag, type PriceTag } from "./chart/AxisPriceTags";
 import { signalSetter } from "./lib/signalHooks";
 import TradePills from "./chart/TradePills";
@@ -1205,8 +1205,7 @@ export default function ChartCore({
   const [setPriceTag] = useState(() => signalSetter(priceTagSig));
   const [setBidTag] = useState(() => signalSetter(bidTagSig));
   const [setAskTag] = useState(() => signalSetter(askTagSig));
-  const [indicatorBells, setIndicatorBells] = useState<IndicatorBellTag[]>([]);
-  const [lineAlertBells, setLineAlertBells] = useState<LineAlertBellTag[]>([]);
+  const [lineAlertBells, setLineAlertBells] = useState<AlertCurveBellTag[]>([]);
   const [alertTags, setAlertTags] = useState<
     Array<{
       id: string;
@@ -4928,7 +4927,6 @@ export default function ChartCore({
     setBidTag,
     setAskTag,
     setAlertTags,
-    setIndicatorBells,
     setLineAlertBells,
     setTradePills,
     setAxisW,
@@ -6178,20 +6176,18 @@ export default function ChartCore({
         {(priceTag) => (
           <AlertTags
             tags={alertTags}
-            bells={indicatorBells}
-            onBellClick={(id) => requestAlertEdit(id)}
             priceTag={priceTag}
             precision={precision}
           />
         )}
       </WithPriceTag>
 
-      <TrendlineAlertBells
+      <AlertCurveBells
         bells={lineAlertBells}
         onEdit={(id) => requestAlertEdit(id)}
         onDelete={(id) =>
           requestConfirm({
-            message: `Delete this trendline alert on ${symbol.epic}?`,
+            message: `Delete this alert on ${symbol.epic}?`,
             onConfirm: () => deleteIndicatorAlert(id),
           })
         }

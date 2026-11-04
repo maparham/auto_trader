@@ -3400,11 +3400,7 @@
    label (50) so the selected alert reads clearly; otherwise it stays at 45, below
    the price label, which always wins. Mirrors .alert-pill.selected. */
 .alert-tag.selected { z-index: 51; }
-/* An indicator "price vs line" alert's bell: the tag without a price, and
-   clickable (opens the alert's edit dialog). */
-.alert-tag.ind-bell { pointer-events: auto; cursor: pointer; padding: 0 4px; font: inherit; }
-
-/* A frozen-trendline alert's bell, past the end of its dashed line (left/top,
+/* A trendline or indicator-curve alert's bell, past the end of its curve (left/top,
    not axis-docked, so it needs its own centered transform rather than
    .alert-tag's translateY(-50%)). Double click edits. */
 .tl-alert-bell {

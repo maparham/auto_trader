@@ -1,16 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import TrendlineAlertBells from "./TrendlineAlertBells";
-import { gapAlongLine, stepPastTags } from "./lineAlertBellPlace";
+import AlertCurveBells from "./AlertCurveBells";
+import { bellPastCurveEnd, gapAlongLine, stepPastTags } from "./lineAlertBellPlace";
 
-describe("TrendlineAlertBells", () => {
+describe("AlertCurveBells", () => {
   afterEach(cleanup);
 
   it("renders a bell at its pixel and edits on double click", () => {
     const onDoubleClick = vi.fn();
     const { container, getByLabelText } = render(
-      <TrendlineAlertBells bells={[{ id: "al-l", x: 120, y: 55 }]} onEdit={onDoubleClick} onDelete={vi.fn()} />,
+      <AlertCurveBells bells={[{ id: "al-l", x: 120, y: 55, kind: "line" }]} onEdit={onDoubleClick} onDelete={vi.fn()} />,
     );
     const bell = container.querySelector(".tl-alert-bell") as HTMLElement;
     expect(bell).not.toBeNull();
@@ -24,24 +24,31 @@ describe("TrendlineAlertBells", () => {
     expect(onDoubleClick).toHaveBeenCalledWith("al-l");
   });
 
+  it("names an indicator-curve bell for its kind", () => {
+    const { getByLabelText } = render(
+      <AlertCurveBells bells={[{ id: "al-i", x: 0, y: 0, kind: "indicator" }]} onEdit={vi.fn()} onDelete={vi.fn()} />,
+    );
+    expect(getByLabelText("Indicator alert")).not.toBeNull();
+  });
+
   it("edits on keyboard activation (a click with no pointer detail)", () => {
     const onDoubleClick = vi.fn();
     const { getByLabelText } = render(
-      <TrendlineAlertBells bells={[{ id: "al-l", x: 0, y: 0 }]} onEdit={onDoubleClick} onDelete={vi.fn()} />,
+      <AlertCurveBells bells={[{ id: "al-l", x: 0, y: 0, kind: "line" }]} onEdit={onDoubleClick} onDelete={vi.fn()} />,
     );
     fireEvent.click(getByLabelText("Trendline alert"), { detail: 0 });
     expect(onDoubleClick).toHaveBeenCalledWith("al-l");
   });
 });
 
-describe("TrendlineAlertBells context menu", () => {
+describe("AlertCurveBells context menu", () => {
   afterEach(cleanup);
 
   it("right click opens Edit / Delete, each calling back with the bell's id", () => {
     const onEdit = vi.fn();
     const onDelete = vi.fn();
     const { getByLabelText, getByText, queryByText } = render(
-      <TrendlineAlertBells bells={[{ id: "al-l", x: 0, y: 0 }]} onEdit={onEdit} onDelete={onDelete} />,
+      <AlertCurveBells bells={[{ id: "al-l", x: 0, y: 0, kind: "line" }]} onEdit={onEdit} onDelete={onDelete} />,
     );
     expect(queryByText("Edit")).toBeNull();
     fireEvent.contextMenu(getByLabelText("Trendline alert"));
@@ -95,5 +102,23 @@ describe("gapAlongLine", () => {
     expect(gapAlongLine(100, 3, 24, 10)).toBe(110);
     // Slope 1: 24 / sqrt(2) across.
     expect(gapAlongLine(100, -1, 24, 10)).toBeCloseTo(100 + 24 / Math.SQRT2);
+  });
+});
+
+describe("bellPastCurveEnd", () => {
+  it("continues the curve's last segment past its end", () => {
+    // Rising 10px per 10px: 24px along the line is 24/sqrt(2) across.
+    const out = bellPastCurveEnd({ x: 90, y: 110 }, { x: 100, y: 100 }, 24, 16, [], 0);
+    expect(out.x).toBeCloseTo(100 + 24 / Math.SQRT2);
+    expect(out.y).toBeCloseTo(100 - 24 / Math.SQRT2);
+  });
+
+  it("goes flat with no previous point", () => {
+    expect(bellPastCurveEnd(null, { x: 100, y: 50 }, 24, 16, [], 0)).toEqual({ x: 124, y: 50 });
+  });
+
+  it("steps past an end tag in its way", () => {
+    const out = bellPastCurveEnd(null, { x: 100, y: 50 }, 24, 16, [{ x: 115, y: 50, w: 20 }], 0);
+    expect(out).toEqual({ x: 115 + 20 + 8 + 2, y: 50 });
   });
 });
