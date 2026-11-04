@@ -480,16 +480,39 @@ export abstract class OverlayManagerBase {
   // The overlay klinecharts' last click landed on (null: empty space), set
   // from its mouseup. undefined when the store API is unavailable.
   clickedOverlayId(): string | null | undefined {
-    const store = (
+    const info = this.klineStore()?.getClickOverlayInfo?.();
+    if (info === undefined) return undefined;
+    return info?.overlay?.id ?? null;
+  }
+  private klineStore() {
+    return (
       this.chart as unknown as {
         getChartStore?: () => {
           getClickOverlayInfo?: () => { overlay?: { id: string } | null } | null;
+          getHoverOverlayInfo?: () => { overlay?: { id: string } | null } | null;
         };
       } | null
     )?.getChartStore?.();
+  }
+  // klinecharts' click record itself, read at a press so clickTookOwnOverlay
+  // can tell whether the release's click changed it. The store replaces the
+  // object only when a click lands on another overlay or figure.
+  clickToken(): unknown {
+    return this.klineStore()?.getClickOverlayInfo?.();
+  }
+  // Whether the click that just ran (klinecharts handles it on mouseup) landed
+  // on an overlay this manager owns (a drawing, a price alert line), not an
+  // app-owned one such as an alert's ray. `before` is clickToken() at the press.
+  // klinecharts fires no click for a release 5px (Manhattan) from its press or
+  // for the second click of a pair, and leaves the record as it was, so an
+  // unchanged record counts only while the pointer is still over that overlay.
+  clickTookOwnOverlay(before: unknown): boolean {
+    const store = this.klineStore();
     const info = store?.getClickOverlayInfo?.();
-    if (info === undefined) return undefined;
-    return info?.overlay?.id ?? null;
+    const id = info?.overlay?.id;
+    if (id == null || !this.entries.has(id)) return false;
+    if (info !== before) return true;
+    return store?.getHoverOverlayInfo?.()?.overlay?.id === id;
   }
   // The epic whose overlays are currently materialized (set only at the end of
   // rehydrate()). Navigation from the alerts sidebar uses this as the "safe to

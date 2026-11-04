@@ -309,7 +309,9 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    let press: { x: number; y: number; t: number; touch: boolean; moved: boolean; fingers: number } | null = null;
+    let press: {
+      x: number; y: number; t: number; touch: boolean; moved: boolean; fingers: number; click: unknown;
+    } | null = null;
     const clearHold = () => {
       if (holdRef.current != null) clearTimeout(holdRef.current);
       holdRef.current = null;
@@ -323,7 +325,7 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
         clearHold();
         return;
       }
-      press = { x: e.clientX, y: e.clientY, t: e.timeStamp, touch, moved: false, fingers: 1 };
+      press = { x: e.clientX, y: e.clientY, t: e.timeStamp, touch, moved: false, fingers: 1, click: overlays.clickToken() };
       clearHold();
       if (!touch) return;
       const { clientX, clientY } = e;
@@ -365,11 +367,12 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
       if (p.touch && e.timeStamp - p.t > TAP_MS) return;
       const { clientX, clientY } = e;
       // After klinecharts' own mouseup/tap has run (pointerup comes first):
-      // a click a drawing or alert line took is that overlay's, so a drawing
-      // copied onto the line stays selectable on top of it.
+      // a click a drawing or price alert line took is that overlay's, so a
+      // drawing copied onto the line stays selectable on top of it. An alert's
+      // own ray lies on its line and is not one of those.
       setTimeout(() => {
         if (chartRef.current !== chart) return;
-        if (overlays.clickedOverlayId()) {
+        if (overlays.clickTookOwnOverlay(p.click)) {
           pickTrendline(chart, null);
           return;
         }

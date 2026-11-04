@@ -183,8 +183,9 @@ class FakeChart {
   // visible anchor handles. syncDrawingSelectionFromClick reads it through
   // getChartStore() (a real ChartImp method, absent from the public typings).
   clickInfo: { overlay: { id: string } | null } = { overlay: null };
+  hoverInfo: { overlay: { id: string } | null } = { overlay: null };
   getChartStore() {
-    return { getClickOverlayInfo: () => this.clickInfo };
+    return { getClickOverlayInfo: () => this.clickInfo, getHoverOverlayInfo: () => this.hoverInfo };
   }
 }
 
@@ -1976,6 +1977,33 @@ describe("OverlayManager rehydrate teardown vs re-entrant reconcile (TF-switch d
 // held the click-selection and kept drawing the anchor handles, so the drawing
 // LOOKED selected while getSelectedDrawingId() was null and Delete no-oped.
 // syncDrawingSelectionFromClick mirrors klinecharts' own click state instead.
+describe("OverlayManager clickTookOwnOverlay (a drawing over a trendline)", () => {
+  it("a click that moved klinecharts' record onto a drawing took it", () => {
+    const { chart, m } = setup();
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    const before = m.clickToken();
+    chart.clickInfo = { overlay: { id } };
+    expect(m.clickTookOwnOverlay(before)).toBe(true);
+  });
+
+  it("a stale record (klinecharts fired no click) does not, once the pointer left the drawing", () => {
+    const { chart, m } = setup();
+    const id = m.addDrawing("segment", [{ value: 1 }, { value: 2 }])!;
+    chart.clickInfo = { overlay: { id } };
+    const before = m.clickToken();
+    expect(m.clickTookOwnOverlay(before)).toBe(false);
+    chart.hoverInfo = { overlay: { id } };
+    expect(m.clickTookOwnOverlay(before)).toBe(true);
+  });
+
+  it("an overlay the manager does not own (an alert's ray) never takes the click", () => {
+    const { chart, m } = setup();
+    const before = m.clickToken();
+    chart.clickInfo = { overlay: { id: "tl-alert-ray:a1" } };
+    expect(m.clickTookOwnOverlay(before)).toBe(false);
+  });
+});
+
 describe("OverlayManager syncDrawingSelectionFromClick (Delete-key desync)", () => {
   const alertCfg = { condition: "crossing" as const, trigger: "every" as const, message: "" };
 

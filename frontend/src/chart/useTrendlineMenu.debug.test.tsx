@@ -120,14 +120,14 @@ describe("useTrendlineMenu line notes", () => {
 describe("useTrendlineMenu click pick", () => {
   afterEach(() => { cleanup(); vi.useRealTimers(); });
   beforeEach(() => { hit.seg.key = "1:2"; vi.useFakeTimers(); });
-  function click(clicked: string | null) {
+  function click(took: boolean) {
     const el = document.createElement("div");
     const pick = vi.fn(() => true);
     renderHook(() =>
       useTrendlineMenu({
         chartRef: { current: { getIndicators: () => [{ name: "TL", paneId: "candle_pane", extendData: {} }] } as never },
         containerRef: { current: el }, scope: "s", epicRef: { current: "E" }, onDebugPick: pick,
-        overlays: { isDrawing: () => false, peekOverlayRightClick: () => false, clickedOverlayId: () => clicked } as never,
+        overlays: { isDrawing: () => false, peekOverlayRightClick: () => false, clickToken: () => null, clickTookOwnOverlay: () => took } as never,
       }),
     );
     fireEvent.pointerDown(el, { button: 0, clientX: 10, clientY: 10, pointerType: "mouse" });
@@ -136,9 +136,9 @@ describe("useTrendlineMenu click pick", () => {
     return pick;
   }
   it("picks the line under a plain click", () => {
-    expect(click(null)).toHaveBeenCalledWith(hit, 10, 10);
+    expect(click(false)).toHaveBeenCalledWith(hit, 10, 10);
   });
   it("yields to a drawing klinecharts took the click for", () => {
-    expect(click("drawing-1")).not.toHaveBeenCalled();
+    expect(click(true)).not.toHaveBeenCalled();
   });
 });
