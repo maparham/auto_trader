@@ -539,6 +539,13 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
     // Over the legend the pointer belongs to the legend alone: drop every chart
     // hover once on the way in (same as leaving the chart) and skip hit-testing.
     let overLegend = false;
+    let dropOutsidePending = false;
+    const onDropOutside = () => {
+      dropOutsidePending = false;
+      window.removeEventListener("mouseup", onDropOutside);
+      if (wrapRef.current?.matches(":hover")) return;
+      setSnapTradeKey(null);
+    };
     const onMove = (e: MouseEvent) => {
       if (isOverLegend(e.target)) {
         if (!overLegend) {
@@ -555,8 +562,15 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       setPointerPx(null); // drop the Δ-label hover-enlarge as the cursor leaves
       if (snapActiveRef.current) { overlays.setSuppressNativeLine(false); snapActiveRef.current = false; }
       // A trade-line drag runs on window listeners past the chart's edge: keep the
-      // dragged line spanning the pane until the drop.
+      // dragged line spanning the pane until the drop. A drop OUTSIDE the chart
+      // fires no further onMove/onLeave here, so clear the key on that mouseup
+      // (bubble phase, after useLineDrag's capture-phase onUp ends the drag)
+      // unless the cursor came back in, where moveAt owns it again.
       if (!tradeDragActiveRef.current()) setSnapTradeKey(null);
+      else if (!dropOutsidePending) {
+        dropOutsidePending = true;
+        window.addEventListener("mouseup", onDropOutside);
+      }
       // Drop a snap-driven alert hover as the cursor leaves (klinecharts' own
       // onMouseLeave covers the on-line case; this covers the wider magnet band).
       if (snapHoverRef.current && !alertDragActiveRef.current()) {
@@ -628,6 +642,7 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       el.removeEventListener("mousemove", onMove);
       el.removeEventListener("pointerdown", onPointer, true);
       el.removeEventListener("pointermove", onPointer, true);
+      window.removeEventListener("mouseup", onDropOutside);
       offWrites();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
