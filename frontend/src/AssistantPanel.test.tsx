@@ -59,6 +59,26 @@ describe("AssistantPanel", () => {
     expect(send).toHaveBeenCalledWith("Add rising trendlines on the daily");
   });
 
+  it("changes the chat text size from the head and remembers it", () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v); },
+    });
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
+    const panel = screen.getByLabelText("Assistant");
+    expect(panel.style.getPropertyValue("--as-font")).toBe("12px");
+    fireEvent.click(screen.getByLabelText("Larger text"));
+    fireEvent.click(screen.getByLabelText("Larger text"));
+    expect(panel.style.getPropertyValue("--as-font")).toBe("14px");
+    cleanup();
+    render(<AssistantPanel cellId="c1" onClose={() => {}} />);
+    expect(screen.getByLabelText("Assistant").style.getPropertyValue("--as-font")).toBe("14px");
+    fireEvent.click(screen.getByLabelText("Smaller text"));
+    expect(screen.getByLabelText("Assistant").style.getPropertyValue("--as-font")).toBe("13px");
+    vi.unstubAllGlobals();
+  });
+
   it("renders option chips for a pending question and answers with the label", () => {
     state.set({ ...state.value, turns: [
       { role: "user", text: "trendlines" },
