@@ -53,6 +53,7 @@ import { type ExitPill } from "../TradeExitAggMarkers";
 import { mergeTradeLevels, isBreakeven, isBreakevenTarget, getLivePrice, type OrderSide } from "../lib/trading";
 import { type TradeLineField } from "../lib/signals";
 import { bracketLabels } from "../lib/positionLines";
+import { chartLatestAtr, exitAtrLength } from "../lib/exitAtr";
 import { hexToRgba, DASH_DASHED, DASH_DOTTED } from "../lib/lineStyle";
 import { UP, DOWN } from "../lib/chartTheme";
 import { isSynthetic } from "../lib/syntheticRegistry";
@@ -104,6 +105,7 @@ type TradePill = {
   level: number;
   pl: number | null;
   pct: number | null; // SL/TP: side-aware % price move entry → level; null on entry pills
+  atr: { mult: number; length: number } | null; // SL/TP: entry → level distance in ATRs; null on entry pills
   changed: boolean;
   expiresAt: number | null; // resting order good-till-date epoch ms; null = GTC/position
   breakevenField?: "stop" | "takeProfit";
@@ -950,6 +952,15 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     const hiddenSet = new Set(tradeUiRef.current.hidden);
     const pills: TradePill[] = [];
     if (!positionsHiddenRef.current && !snapViewRef.current) {
+      // ATR(length) of the bars this chart shows (the order ticket's ATR length),
+      // so an SL/TP pill can say how far its level sits in ATRs. Read on the
+      // first SL/TP pill only: a chart without exits never computes it.
+      const atrLength = exitAtrLength();
+      let atrNow: number | null | undefined;
+      const atrAt = (from: number, lvl: number) => {
+        if (atrNow === undefined) atrNow = chartLatestAtr(chart.getDataList(), atrLength);
+        return atrNow != null ? { mult: Math.abs(lvl - from) / atrNow, length: atrLength } : null;
+      };
       for (const t of tradesRef.current) {
         if (t.epic !== epicRef.current) continue;
         if (hiddenSet.has(t.id) && t.id !== uiHov && t.id !== uiSel) continue;
@@ -976,14 +987,14 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // the merged level's own pill is suppressed at breakeven, so its Apply/Discard
         // affordance must surface here, or a dragged-to-entry SL/TP would strand un-commit-able.
         if (yP != null)
-          pills.push({ ...common, field: "price", y: yP, level: priceLvl, pl: t.kind === "position" ? t.upnl : null, pct: null, changed: pend.price !== undefined || (beField != null && pend[beField] !== undefined), breakevenField: beField });
+          pills.push({ ...common, field: "price", y: yP, level: priceLvl, pl: t.kind === "position" ? t.upnl : null, pct: null, atr: null, changed: pend.price !== undefined || (beField != null && pend[beField] !== undefined), breakevenField: beField });
         if (merged.stop != null && !stopBE) {
           const y = yOf(merged.stop);
-          if (y != null) pills.push({ ...common, field: "stop", y, level: merged.stop, pl: plAt(merged.stop), pct: pctAt(merged.stop), changed: pend.stop !== undefined });
+          if (y != null) pills.push({ ...common, field: "stop", y, level: merged.stop, pl: plAt(merged.stop), pct: pctAt(merged.stop), atr: atrAt(t.priceLevel, merged.stop), changed: pend.stop !== undefined });
         }
         if (merged.takeProfit != null && !tpBE) {
           const y = yOf(merged.takeProfit);
-          if (y != null) pills.push({ ...common, field: "tp", y, level: merged.takeProfit, pl: plAt(merged.takeProfit), pct: pctAt(merged.takeProfit), changed: pend.takeProfit !== undefined });
+          if (y != null) pills.push({ ...common, field: "tp", y, level: merged.takeProfit, pl: plAt(merged.takeProfit), pct: pctAt(merged.takeProfit), atr: atrAt(t.priceLevel, merged.takeProfit), changed: pend.takeProfit !== undefined });
         }
       }
     }

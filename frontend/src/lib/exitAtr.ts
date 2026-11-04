@@ -78,6 +78,23 @@ export function latestAtr(candles: KLineData[], length: number): number | null {
   return null;
 }
 
+// Last chartLatestAtr result per bars array (one per chart cell), keyed on
+// what the value depends on. The chart repaints every frame while scrolling;
+// the series only changes on a new bar or a tick on the last one.
+const atrMemo = new WeakMap<KLineData[], { n: number; t: number; c: number; length: number; v: number | null }>();
+
+/** latestAtr over a chart's own bars, recomputed only when the last bar,
+ *  the bar count or the length changed. */
+export function chartLatestAtr(bars: KLineData[], length: number): number | null {
+  const last = bars[bars.length - 1];
+  if (!last) return null;
+  const m = atrMemo.get(bars);
+  if (m && m.n === bars.length && m.t === last.timestamp && m.c === last.close && m.length === length) return m.v;
+  const v = latestAtr(bars, length);
+  atrMemo.set(bars, { n: bars.length, t: last.timestamp, c: last.close, length, v });
+  return v;
+}
+
 /** The focused chart's loaded bars plus the stamp saying which series they
  *  are (chart/seriesStamp.ts); `stamp` is absent while a load is in flight. */
 export interface ChartBars {
@@ -128,6 +145,11 @@ function refreshPrefs(): void {
   if (stored === undefined) return;
   const fresh = parsePrefs(stored);
   if (!samePrefs(fresh, prefsStore().value)) prefsStore().set(fresh);
+}
+
+/** The shared ATR length, read outside React (the chart's trade pills). */
+export function exitAtrLength(): number {
+  return prefsStore().value.length;
 }
 
 export function useExitAtrPrefs(): [ExitAtrPrefs, (p: Partial<ExitAtrPrefs>) => void] {

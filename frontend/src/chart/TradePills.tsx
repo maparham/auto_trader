@@ -23,6 +23,9 @@ export interface TradePillItem {
   // positive). The COMPACT face shows this instead of the money figure; null on
   // entry pills (and on a zero entry level, where no percent is computable).
   pct: number | null;
+  // SL/TP only: distance from entry to this level in ATR(length) of the chart's
+  // bars; null on entry pills and while no ATR is computable.
+  atr: { mult: number; length: number } | null;
   changed: boolean; // this line has an un-applied drag → show Apply/Discard
   // entry pill only: which level merged into the entry at breakeven (SL or TP sits
   // at entry) → show a "BE" chip; the field says which pending edit Discard clears.
@@ -481,6 +484,11 @@ export default function TradePills({
             {!isEntry && p.pl != null && (
               <Tooltip asChild content="P&L if this level is hit">
                 <span className="tp-plhint">{sign(p.pl)}</span>
+              </Tooltip>
+            )}
+            {!isEntry && p.atr != null && (
+              <Tooltip asChild content={`Distance from entry in ATR(${p.atr.length})`}>
+                <span className="tp-plhint">{p.atr.mult.toFixed(2)} ATR</span>
               </Tooltip>
             )}
             {p.changed && (

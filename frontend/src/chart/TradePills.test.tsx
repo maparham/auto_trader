@@ -54,6 +54,7 @@ const pill = (tradeId: string, field: TradePillItem["field"]): TradePillItem => 
   expiresAt: null,
   pl: null,
   pct: null,
+  atr: null,
   changed: false,
 });
 
@@ -331,6 +332,18 @@ describe("TradePills compact axis-docked face", () => {
     const node = container.querySelector<HTMLElement>(".trade-pill")!;
     expect(node.className).not.toContain("compact");
     expect(node.textContent).toContain("\u221212.40");
+  });
+
+  it("shows the ATR distance on the EXPANDED SL/TP face only", () => {
+    const atr = { mult: 1.234, length: 14 };
+    const expanded = renderPills({
+      pills: [{ ...pill("A", "stop"), pl: -12.4, pct: -1.234, atr }],
+      tradesRef: { current: [tradeView()] },
+      hoveredPillKey: "A:stop",
+    });
+    expect(expanded.container.querySelector<HTMLElement>(".trade-pill")!.textContent).toContain("1.23 ATR");
+    const compact = renderPills({ pills: [{ ...pill("B", "stop"), pl: -12.4, pct: -1.234, atr }] });
+    expect(compact.container.querySelector<HTMLElement>(".trade-pill")!.textContent).not.toContain("ATR");
   });
 
   it("renders a resting order entry compact with its GTC status", () => {

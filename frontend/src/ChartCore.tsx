@@ -1238,6 +1238,7 @@ export default function ChartCore({
       pct: number | null; // SL/TP: side-aware % price move entry → level; null on entry pills
       changed: boolean; // this line has an un-applied drag → show Apply/Discard
       expiresAt: number | null; // resting order good-till-date epoch ms; null = GTC/position
+      atr: { mult: number; length: number } | null; // SL/TP: entry → level distance in ATRs; null on entry pills
       // entry pill only: which level merged into the entry at breakeven (SL or TP sits
       // at entry) → show a "BE" chip; the field says which pending edit Discard clears.
       breakevenField?: "stop" | "takeProfit";
