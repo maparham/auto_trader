@@ -92,6 +92,9 @@ export interface LiveMarketDataDeps {
   setStatus: (s: LiveStatus) => void;
   setLastPrice: (p: number | null) => void;
   setHasData: (v: boolean) => void;
+  // True while a series SWITCH (epic, timeframe, side or broker) is fetching its
+  // first bars, so the cell can say it is loading instead of looking stuck.
+  setSeriesLoading: (v: boolean) => void;
   setLoadError: (v: string | null) => void;
   // Why the last failed load failed, by status (see noDataPolicy.classifyLoadFailure):
   // lets the no-data banner name a dead session instead of blaming the broker.
@@ -183,6 +186,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     setStatus,
     setLastPrice,
     setHasData,
+    setSeriesLoading,
     setLoadError,
     setLoadFailure,
     setDegraded,
@@ -561,6 +565,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     // previous series' "sign in again" (or broker-down) wording.
     setLoadFailure("unknown");
     setErrorOpen(false);
+    setSeriesLoading(!sameSeriesRerun);
 
     (async () => {
       // A REPLAYING cell owns its own bars: it paints only what is closed at the
@@ -578,20 +583,17 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // fresh load will land, and let that load merge over them when it
       // arrives. Live/native series only: replay owns its own bars, detached
       // paints a deep window, and a retry re-run has this series painted already.
-      // A timeframe switch pre-paints too: the bars on screen are the OLD
-      // timeframe's, and switching back to one seen this session would
-      // otherwise wait out the whole round trip for bars already in memory.
+      // Any series switch pre-paints too: the bars on screen are the OLD
+      // series' (blanked below), and switching back to one seen this session
+      // would otherwise wait out the whole round trip for bars already in
+      // memory. (An epic switch has no held center, so coversCenter passes.)
       let prePainted = false;
-      if (
-        !replaying &&
-        !detachedMode &&
-        (chart.getDataList().length === 0 || (isResChange && !isEpicChange))
-      ) {
+      if (!replaying && !detachedMode && (chart.getDataList().length === 0 || !sameSeriesRerun)) {
         const cached = getCachedBars(seriesKey);
         // On a TF switch whose held center lies before the cached bars, the
         // pre-paint would clamp and then jump once the cover below pages the
-        // center in, the two-stage switch that cover exists to avoid. Keep the
-        // old timeframe's bars on screen instead, as before.
+        // center in, the two-stage switch that cover exists to avoid. Skip it;
+        // the chart stays blank until the covered load lands (below).
         const coversCenter =
           centerTargetTs == null ||
           chart.getDataList().length === 0 ||
@@ -607,6 +609,15 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
           prePainted = true;
           paintedLiveBars = true;
         }
+      }
+      // A series switch never leaves the OLD series on screen while the new one
+      // loads: a slow fetch then looked like the click did nothing, and users
+      // took the unchanged chart for a dead broker. Blank it (the cell shows a
+      // loading pill) unless the cache pre-painted the new series above. Not on
+      // a same-series re-run (a retry keeps what is painted, see keepPainted),
+      // nor replay/detached, which own their bars.
+      if (!prePainted && !replaying && !detachedMode && !sameSeriesRerun && chart.getDataList().length > 0) {
+        dataFacade.setBars([], false);
       }
       let bars: KLineData[];
       let degraded: string | null = null;
@@ -789,6 +800,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // below flips hasData true. Native intervals with no history are genuinely
       // empty until proven otherwise.
       setHasData(bars.length > 0);
+      setSeriesLoading(false);
       if (!shouldRetryHistory(bars.length, degraded)) {
         retryAttemptRef.current = 0;
       } else if (

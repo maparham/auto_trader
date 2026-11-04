@@ -1147,6 +1147,8 @@ export default function ChartCore({
   const [lastPrice, setLastPrice] = useState<number | null>(null);
   // True once the chart has candles to show (history loaded or a live tick arrived).
   const [hasData, setHasData] = useState(false);
+  // A series switch is fetching its first bars (see useLiveMarketData).
+  const [seriesLoading, setSeriesLoading] = useState(false);
   // Chart instance exists (init effect ran). State, not a ref read in render, so the
   // quick-range bar enables the moment the chart is live even on a static frame.
   const [chartReady, setChartReady] = useState(false);
@@ -1236,9 +1238,9 @@ export default function ChartCore({
       level: number;
       pl: number | null; // entry: uPnL; SL/TP: P/L if that level is hit
       pct: number | null; // SL/TP: side-aware % price move entry → level; null on entry pills
+      atr: { mult: number; length: number } | null; // SL/TP: entry → level distance in ATRs; null on entry pills
       changed: boolean; // this line has an un-applied drag → show Apply/Discard
       expiresAt: number | null; // resting order good-till-date epoch ms; null = GTC/position
-      atr: { mult: number; length: number } | null; // SL/TP: entry → level distance in ATRs; null on entry pills
       // entry pill only: which level merged into the entry at breakeven (SL or TP sits
       // at entry) → show a "BE" chip; the field says which pending edit Discard clears.
       breakevenField?: "stop" | "takeProfit";
@@ -1564,7 +1566,8 @@ export default function ChartCore({
   // normal load (history lands in ~1-2s) never shows it; a switch resets hasData
   // false → this re-arms. Cleared the instant data arrives.
   useEffect(() => {
-    if (hasData) {
+    // While a switch is still fetching, the cell says "Loading", not "No data".
+    if (hasData || seriesLoading) {
       setNoData(null);
       return;
     }
@@ -1577,7 +1580,7 @@ export default function ChartCore({
       setNoData(classifyNoData(painted));
     }, 6000);
     return () => clearTimeout(t);
-  }, [hasData, symbol.epic, period.resolution, brokerId]);
+  }, [hasData, seriesLoading, symbol.epic, period.resolution, brokerId]);
   // Authoritative display precision fetched per epic. Symbols persisted from the
   // bulk markets list can lack pricePrecision (e.g. oil), so we don't trust the
   // stored value: fetch the platform's own decimals and prefer them.
@@ -4533,6 +4536,7 @@ export default function ChartCore({
     setStatus,
     setLastPrice,
     setHasData,
+    setSeriesLoading,
     setLoadError,
     setLoadFailure,
     setDegraded,
@@ -5775,6 +5779,13 @@ export default function ChartCore({
         )}
       </WithPriceTag>
       <HistoryJumpPill cellId={cellId} />
+      {/* A series switch blanks the chart until its bars land; say so. Same
+          pill style (and fade-in delay, so a fast load never flashes it). */}
+      {seriesLoading && !hasData && (
+        <div className="chart-history-jump" role="status">
+          Loading {period.label} candles…
+        </div>
+      )}
       {/* Data-unavailable banner: no candles after a grace period (broker maintenance,
           auth failure, offline, or an unknown epic). The headline names the cause
           only when the failed response's status actually identified one (see
