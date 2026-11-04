@@ -1,15 +1,33 @@
 // Right-docked Assistant panel: a transcript, option chips for ask_user, a
 // Changed list with one Undo for the newest turn, and a composer.
 // Spec: docs/superpowers/specs/2026-10-25-ai-assistant-design.md.
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import Tooltip from "./components/Tooltip";
 import InfoTip from "./components/InfoTip";
 import { toBlocks, collapseLabels } from "./assistant/format";
 import { tfLabel } from "./lib/timeframe";
+import { PREFIX } from "./lib/workspaceKeys";
 import {
   sessionToShow, pruneSessions, undoableIndex, redoableIndex,
   type Session, type Turn, type TurnError, type SessionState,
 } from "./assistant/session";
+
+// Chat text size, per browser: the transcript and composer scale from it.
+const FONT_KEY = `${PREFIX}.assistant.fontSize`;
+const FONT_MIN = 10;
+const FONT_MAX = 20;
+const FONT_DEFAULT = 12;
+
+function loadFontSize(): number {
+  try {
+    const n = Number(localStorage.getItem(FONT_KEY));
+    return n >= FONT_MIN && n <= FONT_MAX ? n : FONT_DEFAULT;
+  } catch { return FONT_DEFAULT; }
+}
+
+function saveFontSize(n: number): void {
+  try { localStorage.setItem(FONT_KEY, String(n)); } catch { /* storage unavailable */ }
+}
 
 const EXAMPLES = [
   "Add rising trendlines on the daily",
@@ -89,6 +107,7 @@ const TOOL_WORKING_LABEL: Record<string, string> = {
   describe_indicator: "looking up indicator settings",
   describe_rules: "looking up rule syntax",
   validate_rule: "checking a rule",
+  trendlines_explain_line: "explaining the line",
 };
 
 function workingLabel(working: string): string {
@@ -183,6 +202,12 @@ export default function AssistantPanel({ cellId = null, cellIds, chart = null, o
     // eslint-disable-next-line react-hooks/exhaustive-deps -- cellKey is cellIds' identity
   }, [cellKey]);
   const [draft, setDraft] = useState("");
+  const [fontSize, setFontSize] = useState(loadFontSize);
+  const changeFont = (d: number) => setFontSize((n) => {
+    const next = Math.min(FONT_MAX, Math.max(FONT_MIN, n + d));
+    saveFontSize(next);
+    return next;
+  });
   // The earlier message being edited: its turn index, the new text, and
   // whether a rewind was refused because later changes can't be reverted.
   const [edit, setEdit] = useState<{ idx: number; text: string; blocked: boolean } | null>(null);
@@ -412,7 +437,8 @@ export default function AssistantPanel({ cellId = null, cellIds, chart = null, o
   };
 
   return (
-    <aside className="assistant-panel" aria-label="Assistant">
+    <aside className="assistant-panel" aria-label="Assistant"
+      style={{ "--as-font": `${fontSize}px` } as CSSProperties}>
       <div className="sc-head">
         <span className="sc-mark">✦</span>
         <span className="sc-title">Assistant</span>
@@ -422,6 +448,16 @@ export default function AssistantPanel({ cellId = null, cellIds, chart = null, o
           "It may ask a question first. Undo reverts its last turn.",
           "It never places orders.",
         ]} />
+        <span className="as-size">
+          <Tooltip content="Smaller text">
+            <button className="modal-close as-size-btn" aria-label="Smaller text"
+              disabled={fontSize <= FONT_MIN} onClick={() => changeFont(-1)}>A−</button>
+          </Tooltip>
+          <Tooltip content="Larger text">
+            <button className="modal-close as-size-btn as-size-up" aria-label="Larger text"
+              disabled={fontSize >= FONT_MAX} onClick={() => changeFont(1)}>A+</button>
+          </Tooltip>
+        </span>
         <Tooltip content="New chat">
           <button className="modal-close as-new" aria-label="New chat" disabled={s.busy || s.turns.length === 0}
             onClick={() => session?.reset()}>
