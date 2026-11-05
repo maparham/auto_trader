@@ -1237,20 +1237,6 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
-        key: "showStats",
-        label: "Pivot◦ & crossing• counts",
-        type: "boolean",
-        source: "extend",
-        field: "showStats",
-        tab: "style",
-        group: "lineMarks",
-        default: TRENDLINES_EXTEND_DEFAULTS.showStats,
-        tip: [
-          "Writes each line's pivot count and crossings at its right end.",
-          "Crossings are left out when there are none.",
-        ],
-      },
-      {
         key: "fanEdges",
         label: "Fan edges only",
         type: "boolean",
@@ -1262,6 +1248,22 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: [
           "Where several drawn lines meet at one swing, the steepest and the flattest keep full strength.",
           "The lines between them are dimmed. Rules still read them.",
+        ],
+      },
+      {
+        key: "showStats",
+        label: "Show pivot◦ & crossing• counts",
+        type: "boolean",
+        source: "extend",
+        field: "showStats",
+        tab: "style",
+        // Its own group, so it takes a full-width row: the label is too long
+        // for a half-width cell beside the other marks.
+        group: "lineStats",
+        default: TRENDLINES_EXTEND_DEFAULTS.showStats,
+        tip: [
+          "Writes each line's pivot count and crossings at its right end.",
+          "Crossings are left out when there are none.",
         ],
       },
       {

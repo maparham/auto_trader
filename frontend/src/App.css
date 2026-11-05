@@ -2837,6 +2837,8 @@
 /* The checkbox label takes the cell; the ⓘ keeps its own width beside it, outside the
    hit area, so reading the tip cannot toggle the setting. */
 .ind-pair2-bool > .ind-field > .ind-bool-check { flex: 1 1 auto; min-width: 0; }
+/* A lone checkbox in its own group spans both columns, for a label too long for half. */
+.ind-pair2-bool > .ind-field:only-child { grid-column: 1 / -1; }
 
 /* A PAIRED boolean: a plain tick box with its name beside it. The tick box
    keeps its native look, role and keyboard behaviour; the label is part of
