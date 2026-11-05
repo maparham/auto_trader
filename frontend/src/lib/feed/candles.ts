@@ -32,6 +32,8 @@ export type CandlesResult = {
   /** Who a degraded serve is on (X-Failure-Cause), when the backend said. */
   cause: FailureCause | null;
   partial: FillProgress | null;
+  /** The backend's Server-Timing breakdown (recent reads only; diagnostic). */
+  serverTiming?: string | null;
 };
 
 function degradedHeader(res: Response): string | null {
@@ -131,6 +133,7 @@ async function fetchRecentUncoalesced(
       degraded: degradedHeader(res),
       cause: failureCause(res),
       partial: partialHeader(res),
+      serverTiming: res.headers?.get("Server-Timing") ?? null,
     };
   }
   // 404 = no data for this epic (unknown / no history) — empty, not an error.

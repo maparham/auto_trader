@@ -46,6 +46,7 @@ from auto_trader.core.candle_aggregate import (
     fold,
     is_derived,
 )
+from auto_trader.core import candle_timing
 from auto_trader.core.candle_cache import CANDLE_CACHE
 from auto_trader.core.timeframe import canonicalize
 from auto_trader.core.models import Candle, Resolution
@@ -407,6 +408,16 @@ def _reject_symbol_fetch_on_compute_host(epic: str, resolution: str) -> None:
         )
 
 
+async def _timed_guarded(
+    broker_id: str, factory: Callable[[], Awaitable[T]], label: str
+) -> T:
+    """guarded(), timed into the current /api/candles record as "broker"
+    (candle_timing; it includes any login and rate-limiter wait, which are
+    also reported on their own)."""
+    with candle_timing.span("broker"):
+        return await guarded(broker_id, factory, label)
+
+
 async def _fetch_symbol_candles(
     broker_id: str,
     epic: str,
@@ -470,14 +481,14 @@ async def _fetch_symbol_candles(
             )
 
         async def fetch_range(start_dt, end_dt):
-            return await guarded(
+            return await _timed_guarded(
                 broker_id,
                 lambda: broker.get_candles(epic, base, start_dt, end_dt, price_side),
                 "data fetch",
             )
 
         async def fetch_recent(n):
-            return await guarded(
+            return await _timed_guarded(
                 broker_id,
                 lambda: broker.get_recent_candles(epic, base, n, price_side),
                 "data fetch",
@@ -523,14 +534,14 @@ async def _fetch_symbol_candles(
     async def fetch_range(start_dt, end_dt):
         # Keep the circuit breaker around the actual broker call so one down broker
         # can't starve the others (see guarded()).
-        return await guarded(
+        return await _timed_guarded(
             broker_id,
             lambda: broker.get_candles(epic, resolution, start_dt, end_dt, price_side),
             "data fetch",
         )
 
     async def fetch_recent(n):
-        return await guarded(
+        return await _timed_guarded(
             broker_id,
             lambda: broker.get_recent_candles(epic, resolution, n, price_side),
             "data fetch",

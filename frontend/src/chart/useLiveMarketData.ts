@@ -19,6 +19,7 @@ import {
 import { coverHistoryRangeParallel } from "../lib/historyPaging";
 import { getCachedBars, mergeFreshWindow, putCachedBars } from "../lib/barCache";
 import { PERF_DIAG_ON, recordTick } from "../lib/perfDiag";
+import { reportSwitchTiming } from "../lib/switchTiming";
 import { detachedWindows, type DetachedTarget } from "./detachedView";
 import { jumpToLive } from "../lib/liveEdge";
 import type { PriceSide } from "../theme";
@@ -566,6 +567,9 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
     setLoadFailure("unknown");
     setErrorOpen(false);
     setSeriesLoading(!sameSeriesRerun);
+    // Diagnostic click-to-paint timing for this series switch (switchTiming.ts).
+    const switchT0 = performance.now();
+    const switchTiming: { fetchMs?: number; serverTiming?: string | null; coverMs?: number; setBarsMs?: number } = {};
 
     (async () => {
       // A REPLAYING cell owns its own bars: it paints only what is closed at the
@@ -660,7 +664,10 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         // it and persist() stays gated on the stale epic forever, silently dropping
         // every alert/drawing the user adds until they switch symbol again.
         try {
+          const fetchT0 = performance.now();
           const loaded = await fetchRecentWithStatus(symbol.epic, period.resolution, 500, priceSide, brokerId);
+          switchTiming.fetchMs = Math.round(performance.now() - fetchT0);
+          switchTiming.serverTiming = loaded.serverTiming ?? null;
           bars = loaded.bars;
           degraded = loaded.degraded;
           degradedCause = loaded.cause;
@@ -722,6 +729,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         // typical viewport (the cover just fetches a window more than needed).
         const padBars = Math.ceil((priorViewBars || 280) / 2) + 8;
         let merged = bars;
+        const coverT0 = performance.now();
         await coverHistoryRangeParallel<KLineData>({
           fromTs: centerTargetTs - padBars * resSec * 1000,
           toTs: bars[0].timestamp,
@@ -742,6 +750,7 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
             merged = m;
           },
         });
+        switchTiming.coverMs = Math.round(performance.now() - coverT0);
         if (cancelled || !handle.chartRef.current) return;
         bars = merged;
       }
@@ -783,7 +792,9 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
         // flag translation; onLoadRequest answers the loads). Live-only (seconds)
         // intervals have no history, so disable scroll-back there to avoid firing
         // empty fetchRange windows that walk back for nothing.
+        const setT0 = performance.now();
         dataFacade.setBars(bars, !period.liveOnly);
+        switchTiming.setBarsMs = Math.round(performance.now() - setT0);
       }
       stampChartSeries(handle.chartRef.current, {
         epic: symbol.epic,
@@ -801,6 +812,27 @@ export function useLiveMarketData(handle: ChartHandle, deps: LiveMarketDataDeps)
       // empty until proven otherwise.
       setHasData(bars.length > 0);
       setSeriesLoading(false);
+      if (!replaying && !detachedMode && !sameSeriesRerun) {
+        const barCount = bars.length;
+        // Two frames: the first runs before paint, the second after it.
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() =>
+            reportSwitchTiming({
+              epic: symbol.epic,
+              resolution: period.resolution,
+              broker: brokerId,
+              prePainted,
+              bars: barCount,
+              totalMs: Math.round(performance.now() - switchT0),
+              fetchMs: switchTiming.fetchMs ?? null,
+              coverMs: switchTiming.coverMs ?? null,
+              setBarsMs: switchTiming.setBarsMs ?? null,
+              server: switchTiming.serverTiming ?? null,
+              hidden: document.hidden,
+            }),
+          ),
+        );
+      }
       if (!shouldRetryHistory(bars.length, degraded)) {
         retryAttemptRef.current = 0;
       } else if (

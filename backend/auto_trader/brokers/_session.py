@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 
 import httpx
 
+from auto_trader.core import candle_timing
 from auto_trader.core.broker_health import BrokerBlocked, BrokerDown
 
 # Retries for a 429 that slips through the caller's own rate limiter (shared
@@ -114,6 +115,12 @@ class SessionAuthBroker:
     async def _ensure_session(self) -> None:
         if self._session_valid():
             return
+        # Timed (lock wait included) into the current /api/candles record, if
+        # any: a login another caller started still costs this request.
+        with candle_timing.span("auth"):
+            await self._login_locked()
+
+    async def _login_locked(self) -> None:
         async with self._auth_lock:
             if self._session_valid():  # another task may have just authed
                 return
@@ -132,6 +139,7 @@ class SessionAuthBroker:
                     json=self._login_json(),
                 )
                 if resp.status_code == 429 and attempt < _SESSION_MAX_RETRIES - 1:
+                    candle_timing.note("session 429")
                     await asyncio.sleep(_SESSION_RETRY_BACKOFF * (attempt + 1))
                     continue
                 break

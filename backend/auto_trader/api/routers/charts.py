@@ -6,10 +6,11 @@ import asyncio
 import logging
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 
 from auto_trader.brokers.capital_stream import SECONDS_INTERVALS
 from auto_trader.brokers.ig import IGBroker
+from auto_trader.core import candle_timing
 from auto_trader.core.candle_aggregate import DERIVED
 from auto_trader.core.candle_cache import CANDLE_CACHE, active_backfills
 from auto_trader.core.models import Candle, Resolution
@@ -32,6 +33,11 @@ from ..sweep_apply import candle_to_dto as _candle_dto
 
 router = APIRouter()
 log = logging.getLogger(__name__)
+# Own logger so the timing lines are easy to filter out of the shared log
+# buffer (see core/candle_timing.py).
+_timing_log = logging.getLogger("auto_trader.candle_timing")
+# A windowed (scroll-back) read slower than this is logged like a recent one.
+_SLOW_WINDOW_S = 1.0
 
 
 # How long an interactive chart read may spend FILLING history before it serves
@@ -126,11 +132,28 @@ async def candles(
     for them — the chart disables it for live-only intervals."""
     degraded: dict = {}
     partial: dict = {}
-    loaded = await deps._fetch_symbol_candles(
-        broker_id, epic, resolution, bars, from_ts, to_ts, price_side,
-        degraded=degraded, budget_s=CHART_FILL_BUDGET_S, partial=partial,
-        max_fill_chunks=CHART_PASSTHROUGH_MAX_FILL_CHUNKS,
+    windowed = from_ts is not None
+    timing = candle_timing.begin(
+        source="server", broker=broker_id, epic=epic, resolution=resolution,
+        side=price_side, kind="window" if windowed else "recent",
     )
+    try:
+        loaded = await deps._fetch_symbol_candles(
+            broker_id, epic, resolution, bars, from_ts, to_ts, price_side,
+            degraded=degraded, budget_s=CHART_FILL_BUDGET_S, partial=partial,
+            max_fill_chunks=CHART_PASSTHROUGH_MAX_FILL_CHUNKS,
+        )
+    finally:
+        rec = candle_timing.finish(timing)
+        # Every recent read (that is what a timeframe switch asks for), and any
+        # slow window. Windows are scroll-back pages, too many to log each.
+        if not windowed or rec["total"] > _SLOW_WINDOW_S:
+            _timing_log.info(
+                "candles %s %s/%s/%s %s", rec["kind"], broker_id, epic, resolution,
+                candle_timing.summary(rec),
+            )
+    if response is not None:
+        response.headers["Server-Timing"] = candle_timing.server_timing(rec)
     if degraded:
         _log_degraded(broker_id, epic, resolution, degraded)
     if degraded and response is not None:
@@ -238,6 +261,35 @@ def _base_resolution(resolution: str) -> Resolution:
     if rule is not None:
         return rule.base
     return _parse_resolution(resolution)
+
+
+@router.get("/api/candle-cache/timings", dependencies=[Depends(deps.require_admin_console)])
+async def candle_timings() -> dict:
+    """Diagnostic: the last few hundred /api/candles timing breakdowns and the
+    frontend's click-to-paint records, oldest first (core/candle_timing.py)."""
+    return {"records": candle_timing.recent()}
+
+
+@router.post(
+    "/api/candle-cache/timings/client",
+    status_code=204,
+    dependencies=[Depends(deps.require_admin_console)],
+)
+async def candle_timings_client(entry: dict = Body(...)) -> None:
+    """Diagnostic: one frontend timeframe-switch timing. Only flat numbers,
+    booleans and short strings are kept, at most 30 fields."""
+    clean: dict = {}
+    for k, v in list(entry.items())[:30]:
+        if isinstance(v, bool | int | float) or v is None:
+            clean[str(k)[:40]] = v
+        elif isinstance(v, str):
+            clean[str(k)[:40]] = v[:300]
+    candle_timing.record_client(clean)
+    _timing_log.info(
+        "client switch %s %s %s",
+        clean.get("epic"), clean.get("resolution"),
+        " ".join(f"{k}={v}" for k, v in clean.items() if k not in ("epic", "resolution")),
+    )
 
 
 @router.get("/api/candle-cache/stats", response_model=CandleCacheStatsDTO)

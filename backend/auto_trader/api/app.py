@@ -249,7 +249,7 @@ app.add_middleware(
     allow_headers=["*"],
     # Lets the browser read the broker-blocked marker (see deps.guarded) so the
     # frontend can tell "your network blocks the broker" from a generic outage.
-    expose_headers=["X-Broker-Blocked", "X-Candles-Degraded", "X-Failure-Cause"],
+    expose_headers=["X-Broker-Blocked", "X-Candles-Degraded", "X-Failure-Cause", "Server-Timing"],
 )
 
 from . import activity

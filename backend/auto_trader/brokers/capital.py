@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from auto_trader.brokers.base import MarketDataBroker
+from auto_trader.core import candle_timing
 from auto_trader.brokers._capital_history import (
     DayCache,
     attach_pnl,
@@ -179,18 +180,21 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
         # across all our traffic, so a burst can still trip it past the limiter.
         for attempt in range(_RATE_LIMIT_RETRIES + 1):
             await self._ensure_session()
-            await self._rate.acquire()
+            with candle_timing.span("ratelimit"):
+                await self._rate.acquire()
             sent_cst = self._cst  # the token this request carries; compared on 401
             resp = await self._client.request(
                 method, path, params=params, json=json, headers=self._auth_headers()
             )
             if resp.status_code == 401:  # token rejected mid-flight; re-auth once
+                candle_timing.note("401, re-login")
                 await self._reauth(sent_cst)
                 await self._rate.acquire()
                 resp = await self._client.request(
                     method, path, params=params, json=json, headers=self._auth_headers()
                 )
             if resp.status_code == 429 and attempt < _RATE_LIMIT_RETRIES:
+                candle_timing.note("prices 429")
                 await asyncio.sleep(0.5 * (2**attempt))
                 continue
             break

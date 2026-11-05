@@ -20,8 +20,10 @@ import os
 import sqlite3
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
+from auto_trader.core import candle_timing
 from auto_trader.core.broker_health import failure_cause
 from auto_trader.core.models import Candle
 
@@ -119,14 +121,15 @@ class CandleCache:
         if self._repair is None or not bars:
             return bars
         try:
-            return await self._repair(key, res_seconds, bars)
+            with candle_timing.span("repair"):
+                return await self._repair(key, res_seconds, bars)
         except Exception:  # a broken repair must never cost the chart its data
             log.exception("candle repair failed for %s; serving raw bars", _key_label(key))
             return bars
 
     async def bar_before(self, key: CandleKey, ts: int) -> Candle | None:
         """The stored closed bar just before `ts`, or None."""
-        rows = await asyncio.to_thread(self._read_back, key, 1, ts)
+        rows = await self._db(self._read_back, key, 1, ts)
         return rows[0] if rows else None
 
     def _key_lock(self, key: CandleKey) -> asyncio.Lock:
@@ -145,6 +148,26 @@ class CandleCache:
         if lock is None:
             lock = self._locks[key] = asyncio.Lock()
         return lock
+
+    @staticmethod
+    async def _db(fn: Callable, *args):  # type: ignore[type-arg]
+        """asyncio.to_thread for the sqlite helpers, timed into the current
+        /api/candles record (candle_timing). Wall time, so a starved default
+        thread pool shows up here too."""
+        with candle_timing.span("sqlite"):
+            return await asyncio.to_thread(fn, *args)
+
+    @asynccontextmanager
+    async def _timed_lock(self, key: CandleKey):
+        """The per-key lock, with the wait timed into the current record: a
+        background fill holding it stalls a chart read for its whole walk."""
+        lock = self._key_lock(key)
+        with candle_timing.span("lock"):
+            await lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
 
     def _connect(self) -> sqlite3.Connection:
         # Ensure schema on EVERY connection (robust to an older db file / cwd change),
@@ -426,7 +449,7 @@ class CandleCache:
         deadline = None if budget_s is None else time.monotonic() + budget_s
         if max_fill_chunks is not None:
             from_ts, to_ts = int(start.timestamp()), int(end.timestamp())
-            cov = await asyncio.to_thread(self._coverage, key)
+            cov = await self._db(self._coverage, key)
             chunk_secs = res_seconds * max(1, chunk_bars)
             if cov is not None and to_ts < cov[0]:
                 gap_chunks = -(-(cov[0] - from_ts) // chunk_secs)  # ceil
@@ -438,7 +461,7 @@ class CandleCache:
                         degraded=degraded, partial=partial,
                     )
                     return await self._repaired(key, res_seconds, bars)
-        async with self._key_lock(key):
+        async with self._timed_lock(key):
             bars = await self._window(
                 key, res_seconds, start, end, fetch_range,
                 now=now, chunk_bars=chunk_bars, degraded=degraded,
@@ -466,14 +489,14 @@ class CandleCache:
         Otherwise contiguous-backfill: fetch the gap below oldest down to `start`
         (or the whole window when cold), store closed bars, mark covered, serve."""
         from_ts, to_ts = int(start.timestamp()), int(end.timestamp())
-        cov = await asyncio.to_thread(self._coverage, key)
+        cov = await self._db(self._coverage, key)
         # A cache hit needs the window fully inside coverage. Misses fill BELOW
         # oldest (scroll-back) and ABOVE newest (forward walks) — but the newest
         # watermark never passes the closed cutoff: the forming bar belongs to
         # recent()/the stream and must stay re-fetchable.
         if cov is not None and cov[0] <= from_ts and cov[1] >= to_ts:
             self._record_hit(key)
-            return await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
+            return await self._db(self._read_window, key, from_ts, to_ts)
         cutoff = _bucket_start(now if now is not None else time.time(), res_seconds)
         chunk_secs = res_seconds * max(1, chunk_bars)
         fetched_any = False
@@ -515,8 +538,8 @@ class CandleCache:
                     fwd_err = e
                     break
                 fetched_any = True
-                await asyncio.to_thread(self._store_closed, key, chunk, cutoff)
-                await asyncio.to_thread(self._extend_coverage, key, cov[1], chunk_to)
+                await self._db(self._store_closed, key, chunk, cutoff)
+                await self._db(self._extend_coverage, key, cov[1], chunk_to)
                 cur = chunk_to
             cov = (cov[0], max(cov[1], cur))
         # Backfill from `start` up to the current oldest (gap-free), or the whole
@@ -547,7 +570,7 @@ class CandleCache:
         # oldest, never above: orphaned rows near the live edge must not
         # short-circuit a forward fill the broker could serve fresher.
         absorb_below = cov[0] if cov is not None else None
-        floor_reached = absorb_below is not None and await asyncio.to_thread(
+        floor_reached = absorb_below is not None and await self._db(
             self._backfill_reached_floor, key
         )
         # Progress logging. A multi-chunk backfill (a backtest's warm-up ask, a deep
@@ -587,7 +610,7 @@ class CandleCache:
                     and int(cursor.timestamp()) <= absorb_below
                     and (
                         floor_reached
-                        or await asyncio.to_thread(
+                        or await self._db(
                             self._has_stored, key, chunk_from_ts, int(cursor.timestamp()) - 1
                         )
                     )
@@ -597,7 +620,7 @@ class CandleCache:
                     # only partially stored is absorbed whole; its holes sit below
                     # broker retention, so a fetch could not have filled them.
                     if hi >= chunk_from_ts:
-                        await asyncio.to_thread(self._extend_coverage, key, chunk_from_ts, hi)
+                        await self._db(self._extend_coverage, key, chunk_from_ts, hi)
                     cursor = chunk_from
                     done_chunks += 1
                     continue
@@ -607,11 +630,11 @@ class CandleCache:
                     err = e
                     break
                 fetched_any = True
-                await asyncio.to_thread(self._store_closed, key, chunk, cutoff)
+                await self._db(self._store_closed, key, chunk, cutoff)
                 # Skip the write when there's no valid closed span (an entirely-future
                 # window), which would otherwise record an inverted oldest>newest row.
                 if hi >= chunk_from_ts:
-                    await asyncio.to_thread(self._extend_coverage, key, chunk_from_ts, hi)
+                    await self._db(self._extend_coverage, key, chunk_from_ts, hi)
                 cursor = chunk_from
                 done_chunks += 1
                 bars_in += len(chunk)
@@ -659,7 +682,7 @@ class CandleCache:
         # guards against); a 5xx is treated as "retry the same window on next
         # scroll". Progress persists: the landed chunks are already stored +
         # covered, so the retry resumes deeper.
-        cached = await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
+        cached = await self._db(self._read_window, key, from_ts, to_ts)
         # The budget ran out with the walk unfinished. Report it whatever the
         # payload looks like: a deep window is usually still EMPTY at this point
         # (chunks fill top-down, the ask sits at the bottom), and an empty 200
@@ -725,7 +748,7 @@ class CandleCache:
         with bars already in hand — and a failure with nothing to serve raises,
         the same "real bars beat a 5xx, an empty 200 does not" rule _window
         applies to its own partial fills."""
-        stored = await asyncio.to_thread(self._read_window, key, from_ts, to_ts)
+        stored = await self._db(self._read_window, key, from_ts, to_ts)
         out: list[Candle] = []
         total_chunks = max(1, -(-(to_ts - from_ts) // chunk_secs))  # ceil
         done_chunks = 0
@@ -787,7 +810,7 @@ class CandleCache:
         need_hi = min(to_ts, cutoff - res_seconds)
         if need_hi < from_ts:
             return True  # entirely in the forming/future region: nothing closed to miss
-        cov = await asyncio.to_thread(self._coverage, key)
+        cov = await self._db(self._coverage, key)
         return cov is not None and cov[0] <= from_ts and cov[1] >= need_hi
 
     async def recent(
@@ -805,7 +828,7 @@ class CandleCache:
 
         `degraded` (optional out-param): same contract as window() — set when a
         broker fetch failed and cached bars were served in its place."""
-        async with self._key_lock(key):
+        async with self._timed_lock(key):
             bars = await self._recent(
                 key, res_seconds, count, fetch_recent, tail=tail, now=now, degraded=degraded
             )
@@ -831,12 +854,13 @@ class CandleCache:
         # A late absorb for this key is still in flight: don't pile another slow
         # fetch on top (thundering herd); serve the cache until the absorb lands.
         if key in self._absorbing:
-            cached = await asyncio.to_thread(self._read_back, key, count, cutoff + res_seconds)
+            cached = await self._db(self._read_back, key, count, cutoff + res_seconds)
             if cached:
+                candle_timing.note("served cache: late absorb in flight")
                 self._record_hit(key)
                 return cached
-        cov = await asyncio.to_thread(self._coverage, key)
-        cached_n = await asyncio.to_thread(self._cached_count, key)
+        cov = await self._db(self._coverage, key)
+        cached_n = await self._db(self._cached_count, key)
         newest = cov[1] if cov is not None else None
         # Cold/short cache (no coverage, or fewer than `count - 1` closed bars — the
         # forming bar fills the final slot) -> one full `count` page. Warm cache -> a
@@ -849,6 +873,7 @@ class CandleCache:
         else:
             bridge = (cutoff - newest) // res_seconds + 1  # bars between newest and now
             fetch_n = min(count, max(tail, bridge))
+        candle_timing.note(f"{'cold' if cold else 'warm'} fetch {fetch_n} bars")
         fetch_task = asyncio.ensure_future(fetch_recent(fetch_n))
         try:
             try:
@@ -866,10 +891,11 @@ class CandleCache:
                     # recent-N with a bulk history download). Serve the cached
                     # bars now (stale beats a client-side timeout) and absorb the
                     # late result when it lands so the next call's bridge is short.
-                    cached = await asyncio.to_thread(
+                    cached = await self._db(
                         self._read_back, key, count, cutoff + res_seconds
                     )
                     if cached:
+                        candle_timing.note(f"tail fetch over {self._tail_budget:g}s budget, served cache")
                         self._record_hit(key)
                         self._absorb_late(key, res_seconds, fetch_task)
                         return cached
@@ -883,7 +909,8 @@ class CandleCache:
             self._absorb_late(key, res_seconds, fetch_task)
             raise
         except Exception as e:
-            cached = await asyncio.to_thread(self._read_back, key, count, cutoff + res_seconds)
+            candle_timing.note(f"tail fetch failed: {type(e).__name__}")
+            cached = await self._db(self._read_back, key, count, cutoff + res_seconds)
             if cached:
                 if degraded is not None:
                     degraded["reason"] = str(e)
@@ -899,7 +926,7 @@ class CandleCache:
         if cold:
             return fetched[-count:]
         forming = [b for b in fetched if int(b.time.timestamp()) >= cutoff]
-        closed = await asyncio.to_thread(self._read_back, key, count - len(forming), cutoff)
+        closed = await self._db(self._read_back, key, count - len(forming), cutoff)
         return closed + forming
 
     async def _store_recent(
@@ -915,13 +942,13 @@ class CandleCache:
         within one bar of `newest`) unions; a block that lands disjoint (the gap was
         bigger than we could bridge) RESETS coverage to just the fresh block, so the
         unfetched gap is never claimed."""
-        span = await asyncio.to_thread(self._store_closed, key, fetched, cutoff, False)
+        span = await self._db(self._store_closed, key, fetched, cutoff, False)
         if span is not None:
             lo, hi = span
             if newest is not None and lo <= newest + res_seconds:
-                await asyncio.to_thread(self._extend_coverage, key, lo, hi)
+                await self._db(self._extend_coverage, key, lo, hi)
             else:
-                await asyncio.to_thread(self._set_coverage, key, lo, hi)
+                await self._db(self._set_coverage, key, lo, hi)
 
     def _absorb_late(self, key: CandleKey, res_seconds: int, task: asyncio.Task) -> None:
         """Finish a budget-blown tail fetch in the background: when it lands, take
@@ -943,7 +970,7 @@ class CandleCache:
                 return
             async with self._key_lock(key):
                 cutoff = _bucket_start(time.time(), res_seconds)
-                cov = await asyncio.to_thread(self._coverage, key)
+                cov = await self._db(self._coverage, key)
                 newest = cov[1] if cov is not None else None
                 await self._store_recent(key, res_seconds, fetched, cutoff, newest)
 
@@ -979,12 +1006,12 @@ class CandleCache:
         their read-modify-write of the coverage row."""
         ts = int(bar.time.timestamp())
         async with self._key_lock(key):
-            await asyncio.to_thread(
+            await self._db(
                 self._store_closed, key, [bar], ts + 1, False
             )
-            cov = await asyncio.to_thread(self._coverage, key)
+            cov = await self._db(self._coverage, key)
             if cov is not None and cov[1] < ts and ts - res_seconds <= cov[1]:
-                await asyncio.to_thread(self._extend_coverage, key, cov[0], ts)
+                await self._db(self._extend_coverage, key, cov[0], ts)
 
     async def backfill_below(
         self,
@@ -1017,12 +1044,12 @@ class CandleCache:
         `on_progress(cursor_ts, bars_stored)` fires after every step — stored chunks
         AND proven-empty windows (bars_stored=0), so a deep pre-history scan is still
         visibly moving. Called with the lock held: it must be cheap and non-raising."""
-        if await asyncio.to_thread(self._backfill_reached_floor, key):
+        if await self._db(self._backfill_reached_floor, key):
             return "floor"
         now_s = now if now is not None else time.time()
         cutoff = _bucket_start(now_s, res_seconds)
         async with self._key_lock(key):
-            cov = await asyncio.to_thread(self._coverage, key)
+            cov = await self._db(self._coverage, key)
             if cov is None:
                 return "cold"  # a forward load must establish a block to anchor below
             oldest = cov[0]
@@ -1047,14 +1074,14 @@ class CandleCache:
                     if on_progress is not None:
                         on_progress(oldest, 0)
                     if empty_span >= max_empty_gap_seconds:
-                        await asyncio.to_thread(self._set_backfill_floor, key)
+                        await self._db(self._set_backfill_floor, key)
                         return "floor"
                     continue
                 empty_span = 0
-                await asyncio.to_thread(self._store_closed, key, closed, cutoff, False)
+                await self._db(self._store_closed, key, closed, cutoff, False)
                 # Lower oldest only to the deepest real bar. MIN keeps oldest; passing
                 # new_oldest as the hi arg leaves newest intact (new_oldest < newest).
-                await asyncio.to_thread(self._extend_coverage, key, new_oldest, new_oldest)
+                await self._db(self._extend_coverage, key, new_oldest, new_oldest)
                 oldest = new_oldest
                 if on_progress is not None:
                     on_progress(oldest, len(closed))
