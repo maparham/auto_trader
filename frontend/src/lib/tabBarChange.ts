@@ -15,6 +15,13 @@
 // once and some time out. Until a fresh poll lands, a live frame from a newer
 // day rolls the seeded day forward (the cache holds closed bars only, so a
 // stale tail is usually just missing today's bar).
+//
+// The poll is the costly half: every chip re-reads its DAY bars, and with
+// dozens of chips that kept the backend saturated on a CPU-throttled host. So
+// it polls every minute only while it is actually needed. Once the stream is
+// delivering, the stream carries the price and the day roll (applyLive), and
+// the poll is a slow safety net. While the stream is silent, an unchanged
+// answer (a closed market) backs the poll off.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KLineData } from "klinecharts";
@@ -26,6 +33,10 @@ const DAY_MS = 86_400_000;
 // (not a weekend or holiday gap): wait for a fresh seed instead of rolling.
 const MAX_ROLL_MS = 5 * DAY_MS;
 const POLL_MS = 60_000;
+// Poll period while the stream is live, and the cap of the unchanged backoff.
+export const SLOW_POLL_MS = 15 * 60_000;
+// A stream frame newer than this counts as a live stream.
+const LIVE_FRESH_MS = 3 * 60_000;
 const SEED_RETRY_MS = [2_000, 5_000, 15_000, 30_000];
 // Seeds in flight at once, so a boot with ~30 chips does not queue every
 // fetch behind the browser's per-host connection cap and time them out.
@@ -119,12 +130,18 @@ export function useTabBarChange(
       let ref: number | undefined;
       let price: number | undefined;
       let live: KLineData | undefined;
+      // When the stream last delivered (wall clock), the last seed's answer,
+      // and the current poll period, for the backoff above.
+      let liveAt = 0;
+      let lastSeen: string | undefined;
+      let pollMs = POLL_MS;
       const emit = () => {
         const pct = dayChangePct(price, ref);
         if (pct != null) pending.current[epic] = pct;
       };
       const applyLive = (k: KLineData) => {
         live = k;
+        liveAt = Date.now();
         if (dayT == null) return;
         if (k.timestamp >= dayT + DAY_MS) {
           if (k.timestamp >= dayT + MAX_ROLL_MS) return;
@@ -150,8 +167,16 @@ export function useTabBarChange(
             emit();
             // A frame that beat this poll only matters if it is from a newer day.
             if (live && live.timestamp >= dayT + DAY_MS) applyLive(live);
-            if (degraded) retry(attempt);
-            else next(0, POLL_MS);
+            if (degraded) {
+              retry(attempt);
+              return;
+            }
+            const seen = `${dayT}|${ref}|${price}`;
+            if (Date.now() - liveAt < LIVE_FRESH_MS) pollMs = SLOW_POLL_MS;
+            else if (seen === lastSeen) pollMs = Math.min(pollMs * 2, SLOW_POLL_MS);
+            else pollMs = POLL_MS;
+            lastSeen = seen;
+            next(0, pollMs);
           })
           .catch(() => retry(attempt));
       };

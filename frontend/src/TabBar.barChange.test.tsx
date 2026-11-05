@@ -29,7 +29,7 @@ vi.mock("./lib/feed", async () => {
 
 import TabBar from "./TabBar";
 import { fetchRecentWithStatus, openLive } from "./lib/feed";
-import { dayChangePct, fmtBarChange } from "./lib/tabBarChange";
+import { SLOW_POLL_MS, dayChangePct, fmtBarChange } from "./lib/tabBarChange";
 import type { ChartTab } from "./lib/persist";
 import type { Period } from "./lib/feed";
 
@@ -197,6 +197,48 @@ it("no daily history (404, empty) is not retried", async () => {
   await act(async () => { vi.advanceTimersByTime(60_000); });
   expect(vi.mocked(fetchRecentWithStatus)).toHaveBeenCalledOnce();
   expect(chip()).toBeNull();
+});
+
+it("a live stream slows the daily poll to the safety-net period", async () => {
+  renderBar({ showBarChange: true });
+  await flush();
+  const calls = () => vi.mocked(fetchRecentWithStatus).mock.calls.length;
+  expect(calls()).toBe(1);
+  // The stream delivers before the next poll (a minute out), so the poll
+  // after that one waits SLOW_POLL_MS.
+  act(() => liveCbs[0]({ timestamp: D2 + 3_600_000, open: 101, close: 101 }));
+  await act(async () => { vi.advanceTimersByTime(60_000); });
+  await flush();
+  expect(calls()).toBe(2);
+  // (flush() itself advances a second, hence the margin.)
+  await act(async () => { vi.advanceTimersByTime(SLOW_POLL_MS - 10_000); });
+  await flush();
+  expect(calls()).toBe(2);
+  await act(async () => { vi.advanceTimersByTime(10_000); });
+  await flush();
+  expect(calls()).toBe(3);
+});
+
+it("a silent stream backs the poll off while the answer is unchanged", async () => {
+  renderBar({ showBarChange: true });
+  await flush();
+  const calls = () => vi.mocked(fetchRecentWithStatus).mock.calls.length;
+  // Same answer every time (closed market): 1 min, then 2 min, then 4 min.
+  await act(async () => { vi.advanceTimersByTime(60_000); });
+  await flush();
+  expect(calls()).toBe(2);
+  await act(async () => { vi.advanceTimersByTime(60_000); });
+  await flush();
+  expect(calls()).toBe(2);
+  await act(async () => { vi.advanceTimersByTime(60_000); });
+  await flush();
+  expect(calls()).toBe(3);
+  await act(async () => { vi.advanceTimersByTime(3 * 60_000); });
+  await flush();
+  expect(calls()).toBe(3);
+  await act(async () => { vi.advanceTimersByTime(60_000); });
+  await flush();
+  expect(calls()).toBe(4);
 });
 
 it("toggling one tab opens or closes only that lead's feed", () => {

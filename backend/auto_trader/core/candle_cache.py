@@ -346,17 +346,21 @@ class CandleCache:
         finally:
             conn.close()
 
-    def _cached_count(self, key: CandleKey) -> int:
+    def _cached_count(self, key: CandleKey, cap: int | None = None) -> int:
         # Count only bars within the live coverage window: rows orphaned by a disjoint
         # reset must not inflate the count and misclassify a near-empty series as warm.
+        # `cap` stops counting there: recent() only asks "at least N?", and a full
+        # count walks every cached bar of the series (decades of DAY bars, months of
+        # minutes) on each call, which a CPU-throttled host felt on every chart poll.
         conn = self._connect()
         try:
             (n,) = conn.execute(
-                "SELECT COUNT(*) FROM bars "
+                "SELECT COUNT(*) FROM (SELECT 1 FROM bars "
                 "WHERE broker=? AND epic=? AND resolution=? AND side=? "
                 "AND ts >= COALESCE((SELECT oldest_ts FROM coverage "
-                "WHERE broker=? AND epic=? AND resolution=? AND side=?), 0)",
-                (*key, *key),
+                "WHERE broker=? AND epic=? AND resolution=? AND side=?), 0) "
+                "LIMIT ?)",
+                (*key, *key, -1 if cap is None else cap),
             ).fetchone()
         finally:
             conn.close()
@@ -860,7 +864,7 @@ class CandleCache:
                 self._record_hit(key)
                 return cached
         cov = await self._db(self._coverage, key)
-        cached_n = await self._db(self._cached_count, key)
+        cached_n = await self._db(self._cached_count, key, count)
         newest = cov[1] if cov is not None else None
         # Cold/short cache (no coverage, or fewer than `count - 1` closed bars — the
         # forming bar fills the final slot) -> one full `count` page. Warm cache -> a
