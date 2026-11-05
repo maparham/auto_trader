@@ -3,19 +3,21 @@
 # catches the process exiting; on 2026-10-20 it stayed alive but stopped
 # accepting connections, and nothing restarted it.
 #
-# Deliberately slow to act: three consecutive misses (about three minutes at
-# the timer's 1-minute cadence), each with a 10s budget. Under swap pressure
-# the API is slow but alive, and an early restart there only makes every open
-# chart reload from scratch; the first version (two misses, 5s) restarted the
-# API five times during one memory crunch.
+# Deliberately slow to act: ten consecutive misses (about ten minutes at the
+# timer's 1-minute cadence), each with a 30s budget. Under swap pressure or
+# CPU throttling the API is slow but alive, and an early restart there only
+# makes every open chart reload from scratch and re-runs the startup feed and
+# backfill work on a starved box. The first version (two misses, 5s) restarted
+# the API five times during one memory crunch; the second (three misses, 10s)
+# did the same on 2026-11-05 once the Lightsail burst credits hit zero.
 #
 # Installed by scripts/deploy-demo.sh, run by auto-trader-watchdog.timer.
 
 URL="http://127.0.0.1:8010/api/brokers"
 COUNT_FILE=/tmp/auto-trader-watchdog.misses
-MAX_MISSES=3
+MAX_MISSES=10
 
-if curl -fsS --max-time 10 "$URL" >/dev/null 2>&1; then
+if curl -fsS --max-time 30 "$URL" >/dev/null 2>&1; then
   rm -f "$COUNT_FILE"
   exit 0
 fi
