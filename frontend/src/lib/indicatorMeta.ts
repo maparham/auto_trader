@@ -1238,7 +1238,7 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
       },
       {
         key: "showStats",
-        label: "Show pivot (○) & crossing (●) counts",
+        label: "Show ◦ & • counts",
         type: "boolean",
         source: "extend",
         field: "showStats",
