@@ -255,7 +255,9 @@ if [ "$DO_BACKEND" = 1 ]; then
     /opt/auto-trader/venv/bin/pip install -q --no-cache-dir 'agent-ui-bridge @ git+https://github.com/maparham/agent-ui-bridge@$bridge_rev#subdirectory=python'
     /opt/auto-trader/venv/bin/pip install -q --no-cache-dir /opt/auto-trader/backend
     sudo systemctl restart auto-trader-demo
-    for i in \$(seq 1 20); do
+    # A restart takes ~35s on the box (old process drains ~10s, imports ~20s),
+    # so give it 90s rather than failing the deploy on a healthy start.
+    for i in \$(seq 1 90); do
       sleep 1
       if curl -sf -m 5 http://127.0.0.1:8010/health >/dev/null; then exit 0; fi
     done
