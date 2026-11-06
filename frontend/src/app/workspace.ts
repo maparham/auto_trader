@@ -22,7 +22,7 @@ export const DEFAULT_SYMBOL: Instrument = {
   pricePrecision: 2,
 };
 export const DEFAULT_PERIOD: Period =
-  PERIODS.find((p) => p.resolution === "HOUR") ?? PERIODS[0];
+  PERIODS.find((p) => p.resolution === "DAY") ?? PERIODS[0];
 
 // Which chart tab is active is remembered PER BROWSER TAB (sessionStorage, so it
 // survives a reload but isn't shared with sibling tabs) — see the activeId state.
