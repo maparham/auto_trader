@@ -312,6 +312,26 @@ interface Props {
 
 type Tab = "live" | "history";
 
+// The last tab the user picked, so reopening the panel lands on it again
+// (per-browser convenience; storage failures just fall back to "live").
+const TAB_KEY = "auto-trader.alerts.sidebarTab";
+
+function loadTab(): Tab {
+  try {
+    return localStorage.getItem(TAB_KEY) === "history" ? "history" : "live";
+  } catch {
+    return "live";
+  }
+}
+
+function saveTab(t: Tab): void {
+  try {
+    localStorage.setItem(TAB_KEY, t);
+  } catch {
+    /* storage unavailable: the tab still switches for this session */
+  }
+}
+
 // Compact "2m ago" / "3h ago" / date for older — keeps rows scannable.
 function ago(ms: number, now: number): string {
   const s = Math.max(0, Math.round((now - ms) / 1000));
@@ -368,7 +388,11 @@ export default function AlertsSidebar({
       if (id) c.overlays.selectAlert(turnOff ? null : id);
     }
   };
-  const [tab, setTab] = useState<Tab>("live");
+  const [tab, setTabState] = useState<Tab>(loadTab);
+  const setTab = (t: Tab) => {
+    saveTab(t);
+    setTabState(t);
+  };
   const [showAll, setShowAll] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
