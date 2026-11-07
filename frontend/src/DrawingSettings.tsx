@@ -361,6 +361,9 @@ export default function DrawingSettings({ overlays, id, onIdChange, onClose }: P
       } else {
         const oExtra = asDrawingExtra(o.extendData);
         overlays.setStyle(curId, o.styles ?? {});
+        // Snaps first: the restored points are the ones shown at open, and a
+        // point back where it was must keep its snap, not re-snap here.
+        overlays.restoreSnaps(curId, oExtra.snaps, o.points);
         overlays.updatePoints(curId, o.points);
         overlays.setVisibilityModel(curId, oExtra.visibility ?? defaultVisibility());
         overlays.setPriceLabels(curId, oExtra.priceLabels ?? true);

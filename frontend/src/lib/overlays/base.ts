@@ -23,6 +23,7 @@ export abstract class OverlayManagerBase {
     extra?: { visible?: boolean; zLevel?: number; extendData?: unknown; id?: string },
   ): string | null;
   abstract shiftIndexAnchoredPoints(delta: number): void;
+  abstract refreshSnapDisplay(): void;
 
   protected chart: Chart | null = null;
   // v10 data-pipeline facade (set alongside chart in attach). applyOlderBars
@@ -41,6 +42,14 @@ export abstract class OverlayManagerBase {
   // ChartCore before rehydrate; flipped false on Unlock (followed by a rehydrate).
   protected readOnly = false;
   protected entries = new Map<string, Kind>();
+  // Per snapped drawing: the time each snapped point is SHOWN at on this chart
+  // (pointSnap.resolveDisplay), so persist() can tell an untouched point,
+  // written back at its own bar open, from one the user moved here.
+  protected snapDisplay = new Map<string, Array<number | null>>();
+  // Per snapped-tool drawing restored from storage: its points as last loaded
+  // or saved, so persist() only records a snap for a point the user actually
+  // moved, never for one that merely happens to sit on a level here.
+  protected snapBase = new Map<string, Array<{ timestamp?: number; dataIndex?: number; value?: number }>>();
   // Where a pattern ghost sat when the user pressed it (anchor price + bar), so
   // the release can tell a vertical placement from a slide along the bars.
   protected ghostDragStart: { value: number; dataIndex: number; timestamp?: number } | null = null;
@@ -219,6 +228,7 @@ export abstract class OverlayManagerBase {
     // matter who answers the load. applyOlderBars covers the INIT-type path.
     if (this.dataFacade) {
       this.dataFacade.onForwardPrepend = (count) => this.shiftIndexAnchoredPoints(count);
+      this.dataFacade.onForwardPrepended = () => this.refreshSnapDisplay();
     }
     // Keep this cell's drawings' snap mode in lockstep with the global magnet toggle
     // AND the hold-invert modifier. New drawings pick it up at create() time; these
@@ -233,9 +243,14 @@ export abstract class OverlayManagerBase {
     this.magnetUnsub.forEach((u) => u());
     this.magnetUnsub = [];
     this.chart = null;
-    if (this.dataFacade) this.dataFacade.onForwardPrepend = null;
+    if (this.dataFacade) {
+      this.dataFacade.onForwardPrepend = null;
+      this.dataFacade.onForwardPrepended = null;
+    }
     this.dataFacade = null;
     this.entries.clear();
+    this.snapDisplay.clear();
+    this.snapBase.clear();
     this.alertCfg.clear();
     this.alertIds.clear();
     this.alertCreatedAt.clear();

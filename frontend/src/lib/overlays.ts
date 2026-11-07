@@ -23,6 +23,7 @@ import { defaultVisibility } from "./visibility";
 import { type DrawingExtra, GHOST_NAME, type Kind, asDrawingExtra, isTradeDrawing } from "./overlays/shared";
 import { OverlayDrawings } from "./overlays/drawings";
 export { asDrawingExtra, cloneStyles } from "./overlays/shared";
+import { SNAP_TOOLS, resolveDisplay } from "./overlays/pointSnap";
 export type { AlertConfig, DrawingExtra } from "./overlays/shared";
 
 export class OverlayManager extends OverlayDrawings {
@@ -42,6 +43,17 @@ export class OverlayManager extends OverlayDrawings {
     const isSlope = kind === "slope";
     const isDrawing = kind === "drawing";
     const isTrade = isTradeDrawing(name);
+    // A magnet-snapped point shows on the candle that traded its level when
+    // this chart is finer than the one it was drawn on (pointSnap.ts).
+    let snapDisplay: Array<number | null> | null = null;
+    if (isDrawing && points && SNAP_TOOLS.has(name)) {
+      const snaps = asDrawingExtra(extra?.extendData).snaps;
+      if (snaps?.some(Boolean)) {
+        const r = resolveDisplay(name, points, snaps, this.chart.getDataList(), this.barIntervalMs() ?? 0);
+        points = r.points as SavedOverlay["points"];
+        snapDisplay = r.display;
+      }
+    }
     const id = this.chart.createOverlay({
       // A caller-supplied id (rehydrate reviving a persisted drawing) keeps the
       // overlay's identity across rebuilds; everyone else lets the library mint.
@@ -237,6 +249,8 @@ export class OverlayManager extends OverlayDrawings {
         // a genuine user delete writes a by-id delete intent to storage (guarded).
         const alertSavedId = isAlert ? this.alertIds.get(e.overlay.id) ?? null : null;
         this.entries.delete(e.overlay.id);
+        this.snapDisplay.delete(e.overlay.id);
+        this.snapBase.delete(e.overlay.id);
         if (this.measureId === e.overlay.id) {
           this.measureId = null;
           this.measureDrawing = false;
@@ -351,6 +365,13 @@ export class OverlayManager extends OverlayDrawings {
     });
     if (typeof id !== "string") return null;
     this.entries.set(id, kind);
+    if (snapDisplay) this.snapDisplay.set(id, snapDisplay);
+    // Restored from storage: remember its points, so a later save records a
+    // snap only for a point the user moves (see snapBase).
+    if (isDrawing && this.hydrating > 0 && SNAP_TOOLS.has(name)) {
+      const pts = this.byId(id)?.points ?? [];
+      this.snapBase.set(id, pts.map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: p.value })));
+    }
     return id;
   }
 
@@ -402,6 +423,8 @@ export class OverlayManager extends OverlayDrawings {
     try {
       for (const id of [...this.entries.keys()]) this.chart.removeOverlay({ id });
       this.entries.clear();
+      this.snapDisplay.clear();
+      this.snapBase.clear();
       this.alertCfg.clear();
       this.alertIds.clear();
       this.alertCreatedAt.clear();

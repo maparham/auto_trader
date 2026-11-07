@@ -4,6 +4,7 @@ import type { KLineData, Overlay, DeepPartial, OverlayStyle } from "klinecharts"
 import { saveDrawings, type SavedOverlay } from "../persist";
 import { RESOLUTION_SECONDS } from "../feed";
 import { asDrawingExtra, cloneStyles } from "./shared";
+import { SNAP_TOOLS, canonicalize, snapDisplayTs, snapsDiffer, type PointSnap } from "./pointSnap";
 import { OverlayManagerBase } from "./base";
 
 export abstract class OverlayPersistence extends OverlayManagerBase {
@@ -73,6 +74,57 @@ export abstract class OverlayPersistence extends OverlayManagerBase {
     // canLoadOlder must stay true or native scroll-back paging is disarmed for
     // the session (the facade owns the v10 flag translation).
     this.dataFacade.setBars(merged, true);
+    this.refreshSnapDisplay();
+  }
+
+  // Older bars just landed: a magnet-snapped point whose bar was not loaded
+  // when its drawing was built sits on that bar's open (the fallback), so
+  // re-place every untouched snapped point now that more history is here.
+  // Display only: storage already holds the bar open, so nothing persists.
+  refreshSnapDisplay(): void {
+    if (!this.chart) return;
+    const bars = this.chart.getDataList();
+    const ms = this.barIntervalMs() ?? 0;
+    for (const [id, disp] of this.snapDisplay) {
+      const ov = this.byId(id);
+      const snaps = asDrawingExtra(ov?.extendData).snaps;
+      const pts = ov?.points;
+      if (!ov || !snaps || !pts) continue;
+      let changed = false;
+      const next = pts.map((p, i) => {
+        const s = snaps[i];
+        const d = disp[i];
+        if (!s || d == null || p.timestamp !== d || p.value !== s.v) return p;
+        const ts = snapDisplayTs(s, bars, ms);
+        if (ts === d) return p;
+        disp[i] = ts;
+        changed = true;
+        return { ...p, timestamp: ts };
+      });
+      if (!changed) continue;
+      // A trade box's stop rides its target's time.
+      if (ov.name === "tradeBox" && next.length >= 3 && next[1].timestamp != null)
+        next[2] = { ...next[2], timestamp: next[1].timestamp };
+      this.chart.overrideOverlay({ id, points: next as Overlay["points"] });
+      // An untouched point, moved by us: not a user move.
+      this.snapBase.set(id, next.map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: p.value })));
+    }
+  }
+
+  // The drawing settings' Cancel puts a drawing's points back as they were
+  // shown when the modal opened; its snaps must come back with them, or the
+  // restored point would read as a fresh placement and snap on THIS timeframe.
+  restoreSnaps(id: string, snaps: Array<PointSnap | null> | undefined, shown: ReadonlyArray<{ timestamp?: number; value?: number }>): void {
+    const ov = this.byId(id);
+    if (!ov || !this.chart || !SNAP_TOOLS.has(ov.name)) return;
+    const ext = asDrawingExtra(ov.extendData);
+    const next = { ...ext, snaps };
+    if (!snaps) delete next.snaps;
+    this.chart.overrideOverlay({ id, extendData: next });
+    this.snapDisplay.set(
+      id,
+      shown.map((p, i) => (snaps?.[i] && p.value === snaps[i]!.v && p.timestamp != null ? p.timestamp : null)),
+    );
   }
 
   // Prepending older bars renumbers every bar's dataIndex; dataIndex-only points
@@ -172,12 +224,39 @@ export abstract class OverlayPersistence extends OverlayManagerBase {
       // (an anchor), but stablePoints() can't resolve it to a timestamp when no bars
       // are loaded and would make the drawing look degenerate and drop it.
       if (OverlayPersistence.isDegenerateDrawing(ov.points)) continue;
+      // Stable anchors only (timestamp/value) — see stablePoints for why a
+      // beyond-data anchor's dataIndex becomes an extrapolated timestamp.
+      let points = this.stablePoints(ov.points);
+      let extendData = ov.extendData;
+      // Magnet-snapped points (pointSnap.ts): an untouched one goes back to its
+      // own bar open, never the candle it is shown on here, and a point placed
+      // or dragged on this chart records its snap afresh.
+      if (SNAP_TOOLS.has(ov.name)) {
+        const ext = asDrawingExtra(ov.extendData);
+        const c = canonicalize(
+          ov.name,
+          ov.points ?? [],
+          points,
+          ext.snaps,
+          this.snapDisplay.get(id),
+          this.chart.getDataList(),
+          this.resolution,
+          this.snapBase.get(id),
+        );
+        points = c.points as SavedOverlay["points"];
+        this.snapDisplay.set(id, c.display);
+        this.snapBase.set(id, (ov.points ?? []).map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: p.value })));
+        if (snapsDiffer(ext.snaps, c.snaps)) {
+          const next = { ...ext, snaps: c.snaps.some(Boolean) ? c.snaps : undefined };
+          if (!next.snaps) delete next.snaps;
+          extendData = next;
+          this.chart.overrideOverlay({ id, extendData: next });
+        }
+      }
       drawings.push({
         id,
         name: ov.name,
-        // Stable anchors only (timestamp/value) — see stablePoints for why a
-        // beyond-data anchor's dataIndex becomes an extrapolated timestamp.
-        points: this.stablePoints(ov.points),
+        points,
         // The stashed canonical style while this id is a ghost (faded interval/
         // auto-hide stub) — ov.styles is the FADED color in that state, and
         // persist() must never write that; see canonicalStyles/fadedStyles.
@@ -188,7 +267,7 @@ export abstract class OverlayPersistence extends OverlayManagerBase {
         // when they save while on a filtered interval. extendData carries intent.
         visible: asDrawingExtra(ov.extendData).userVisible ?? true,
         zLevel: ov.zLevel,
-        extendData: ov.extendData,
+        extendData,
       });
     }
     saveDrawings(this.scope, this.epic, drawings);

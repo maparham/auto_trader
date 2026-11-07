@@ -14,6 +14,7 @@ import type { VisibilityModel } from "../visibility";
 import type { FibConfig } from "../fibConfig";
 import { SELECT_GLOW_KEY } from "../touchHitSlop";
 import type { TradeConfig } from "../tradePlan";
+import type { PointSnap } from "./pointSnap";
 import { TRADE_BOX } from "../tradeOverlay";
 import type { GhostFit, GhostPattern, GhostStyle } from "../patternGhost";
 
@@ -114,6 +115,10 @@ export interface DrawingExtra {
   // Label groups + account overrides for a Trade box drawing (tradeBox).
   // Absent on a freshly drawn one — asTradeConfig fills the defaults.
   trade?: TradeConfig;
+  // Per point: the candle level it was magnet-snapped to, on which timeframe
+  // and bar, so a finer chart shows it on the candle that traded it
+  // (pointSnap.ts). Null or absent for a point that was not snapped.
+  snaps?: Array<PointSnap | null>;
 }
 
 // The trade-planning drawing: a three-point overlay whose third point (the stop)

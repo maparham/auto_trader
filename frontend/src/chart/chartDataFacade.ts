@@ -39,6 +39,10 @@ export interface ChartDataFacade {
    * overlay-agnostic.
    */
   onForwardPrepend: ((count: number) => void) | null;
+  /** Called right after a forward (scroll-back) load's bars have landed, for
+   * anything that must re-read the now-longer history (OverlayManager re-places
+   * magnet-snapped drawing points whose bar was not loaded before). */
+  onForwardPrepended?: (() => void) | null;
   getBars(): KLineData[];
 }
 
@@ -72,6 +76,7 @@ export function createChartDataFacade(): ChartDataFacade {
             // the old data. See onForwardPrepend's doc for why the shift exists.
             if (type === "forward" && pageBars.length) facade.onForwardPrepend?.(pageBars.length);
             callback(pageBars, pageMore);
+            if (type === "forward" && pageBars.length) facade.onForwardPrepended?.();
           });
         },
         subscribeBar: ({ callback }) => { subscribe = callback; },
