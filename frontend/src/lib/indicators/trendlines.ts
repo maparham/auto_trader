@@ -3009,13 +3009,42 @@ export function pinnedEndY(
   return { y0: yA + slope * (x0 - xA), y1: yA + slope * (x1 - xA) };
 }
 
-/** Two chart bars on the stroke drawTrendlines paints for a frozen line (a
- * line alert) under a pin coarser than the chart, so the alert's dashed ray
- * lies exactly on its trendline. The stroke starts at the candle that traded
- * the first anchor's extreme (htfExtremeSnap) and runs straight in CHART bars
- * to the draw edge; a ray through the anchors' HTF open candles instead
- * leans off it, since the snap moves the start a few candles and the map is
- * only piecewise linear. `lastIdx` is the calc's last-row lineIdx. Null when
+/** The chart bars of a pinned line's two anchors, so the stroke can be drawn
+ * the way TradingView draws a trendline on another timeframe: straight in
+ * CHART bars through both anchor candles, extended in chart bars. The line is
+ * straight in HTF bars, and a chart day does not always hold the same number
+ * of chart bars (a session that grew from 16 to 24 hours, a half day), so
+ * no single chart-space segment can follow the HTF projection everywhere.
+ * Drawn from its two ends instead, it sagged off the second anchor (TSLA 1D
+ * pin on 4H: 2.6 below the pivot that defines it). Through the anchors it
+ * touches both pivots on every timeframe; past them it can read a few points
+ * off the HTF values that the outputs and alerts use, as TradingView's does.
+ * `snap` maps an HTF pivot to the candle that traded its extreme. Null when a
+ * kind is unknown, either candle is not a loaded bar, or they coincide: the
+ * caller keeps the HTF projection (pinnedEndY). */
+export function pinnedAnchorBars(
+  i1: number,
+  k1: PivotKind | null,
+  i2: number,
+  k2: PivotKind | null,
+  snap: (j: number, kind: PivotKind) => number,
+  n: number,
+): [number, number] | null {
+  if (!k1 || !k2) return null;
+  const c1 = snap(i1, k1);
+  const c2 = snap(i2, k2);
+  const loaded = (c: number) => Number.isInteger(c) && c >= 0 && c < n;
+  return loaded(c1) && loaded(c2) && c2 > c1 ? [c1, c2] : null;
+}
+
+/** Two chart bars on the HTF line a pin-timeframe line alert watches, for
+ * its dashed ray on a finer chart. Alerts made since the stroke went through
+ * both anchor candles (pinnedAnchorBars) are frozen in CHART bars instead and
+ * never come here; this draws the older ones where they really fire. The ray
+ * starts at the candle that traded the first anchor's extreme
+ * (htfExtremeSnap) and runs straight in CHART bars to the draw edge, on the
+ * HTF projection, so past the second anchor it can leave the solid stroke.
+ * `lastIdx` is the calc's last-row lineIdx. Null when
  * there is no coarser pin, the first anchor is not a loaded HTF bar, or the
  * stroke is too short to carry two bars: the caller keeps the plain anchors. */
 export function pinnedAlertStroke(
@@ -3034,11 +3063,14 @@ export function pinnedAlertStroke(
   const snap = htfExtremeSnap(dataList, mtf, map.toChart);
   // The alert keeps no pivot kind: the anchor price IS the HTF bar's low or
   // high, so take whichever snapped candle traded nearer to it.
-  const lo = snap(j1, "low");
-  const hi = snap(j1, "high");
-  if (!Number.isInteger(lo) || !Number.isInteger(hi) || lo < 0 || hi < 0 || lo >= n || hi >= n) return null;
-  const cA =
-    Math.abs(dataList[lo].low - line.p1) <= Math.abs(dataList[hi].high - line.p1) ? lo : hi;
+  const candle = (j: number, p: number): number | null => {
+    const lo = snap(j, "low");
+    const hi = snap(j, "high");
+    if (!Number.isInteger(lo) || !Number.isInteger(hi) || lo < 0 || hi < 0 || lo >= n || hi >= n) return null;
+    return Math.abs(dataList[lo].low - p) <= Math.abs(dataList[hi].high - p) ? lo : hi;
+  };
+  const cA = candle(j1, line.p1);
+  if (cA === null) return null;
   const jR = trendlineDrawEdge(mtf.formingIdx, lastIdx, map.toLine, n, mtf.waitClose === false);
   const cR = map.toChart(jR);
   if (!(jR > j1) || !(cR > cA)) return null;
@@ -3364,6 +3396,9 @@ function drawTrendlines(
   // Coarser-pin snap: a bar index that IS a pivot/touch maps to the chart
   // candle that traded the extreme, not the HTF bar's opening candle.
   const snap = mtf ? htfExtremeSnap(dataList, mtf, toChart) : null;
+  // Only a COARSER pin draws through its anchor candles (pinnedAnchorBars);
+  // a finer one is more precise than the chart's own bars.
+  const coarserPin = !!mtf && (mtf.htfMs ?? 0) > chartBarMs(dataList);
   const xAtPivot = (j: number, kind: PivotKind) =>
     snap ? xAxis.convertToPixel(snap(j, kind)) : xAt(j);
   // A CLOSURE called on every exit, not a call in one place, and that is the
@@ -3651,10 +3686,29 @@ function drawTrendlines(
     const xExt = jExt > jRight ? xAt(jExt) : x1;
     if (Math.max(x1, xExt) <= 0 || x0 >= bounding.width) continue;
     const yPx = (price: number) => yAxis.convertToPixel(price);
-    const endY = (jR: number, xR: number) =>
-      mtf
+    // Coarser pin: straight in chart bars through both anchor candles, as
+    // TradingView draws a trendline on another timeframe (pinnedAnchorBars).
+    const anchorBars =
+      coarserPin && snap
+        ? pinnedAnchorBars(
+            line.i1, kindAt(line.i1) ?? line.k1 ?? null,
+            line.i2, kindAt(line.i2) ?? line.k2 ?? null,
+            snap, dataList.length,
+          )
+        : null;
+    const endY = (jR: number, xR: number): { y0: number; y1: number } => {
+      if (anchorBars) {
+        const xa = xAxis.convertToPixel(anchorBars[0]);
+        const xb = xAxis.convertToPixel(anchorBars[1]);
+        const ya = yPx(line.p1);
+        const yb = yPx(line.p2);
+        const at = (x: number) => ya + ((yb - ya) * (x - xa)) / (xb - xa);
+        return { y0: at(x0), y1: at(xR) };
+      }
+      return mtf
         ? pinnedEndY(line, jLeft, jR, x0, xR, toLine(0), toLine(lastChartIdx), xAt, yPx)
         : { y0: yPx(projectAt(line, jLeft)), y1: yPx(projectAt(line, jR)) };
+    };
     const { y0, y1 } = endY(jRight, x1);
     // Marks (the touch rings) ride the SEGMENT AS DRAWN rather
     // than projecting themselves: under a timeframe pin the index map is only
@@ -3744,6 +3798,20 @@ function drawTrendlines(
         // it. Under a pin lastIdx is already closed: the coordinator computes
         // Trendlines on closed HTF bars only, Wait on or off. The formingIdx
         // step-back only guards a stash that carries a folded forming bar.
+        // Drawn through its anchor candles (coarser pin): the stroke frozen in
+        // CHART bars, for a line alert that fires where the stroke is, as
+        // TradingView's does (lineGate's chartFrame). Picked lines keep the
+        // pin's alertLine so rules on the pin's timeframe can still use them.
+        ...(anchorBars
+          ? {
+              chartLine: () =>
+                alertLineOf(
+                  { i1: anchorBars[0], p1: line.p1, i2: anchorBars[1], p2: line.p2 },
+                  (timestamps ??= dataList.map((d) => d.timestamp)),
+                  lastChartIdx - 1,
+                ),
+            }
+          : {}),
         alertLine: () =>
           alertLineOf(
             line,

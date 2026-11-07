@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
-  alertInstanceOf, alertTimeframeOf, chartValueOf, isAlertableType, loadAlertableTypes,
+  alertInstanceOf, alertTimeframeOf, chartValueOf, isAlertableType, lineAlertShown, loadAlertableTypes,
 } from "./indicatorAlertInstance";
 import { alertsChanged } from "./signals";
 import { setIndicatorTimezone, getIndicatorTimezone } from "./indicatorTimezone";
@@ -61,5 +61,15 @@ describe("alertInstanceOf on a calendar-bucketed pane", () => {
     } finally {
       setIndicatorTimezone(before);
     }
+  });
+});
+
+describe("lineAlertShown", () => {
+  const pinned = { mtf: { timeframe: "1D" } };
+  it("shows a line alert on the pin's timeframe or the chart's own", () => {
+    expect(lineAlertShown(pinned, "HOUR_4", "DAY")).toBe(true);
+    expect(lineAlertShown(pinned, "HOUR_4", "HOUR_4")).toBe(true);
+    expect(lineAlertShown(pinned, "HOUR_4", "HOUR")).toBe(false);
+    expect(lineAlertShown(undefined, "HOUR", "DAY")).toBe(false);
   });
 });

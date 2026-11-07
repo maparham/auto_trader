@@ -42,7 +42,7 @@ import { slopeMaLines } from "../lib/indicators/slope";
 import { getTrendlineTags } from "../lib/indicators/trendlines";
 import { getIndicatorById, getIndicatorsByPane } from "../lib/indicators";
 import { loadIndicatorAlerts, loadLineAlerts } from "../lib/alertsApi";
-import { alertTimeframeOf, chartValueOf } from "../lib/indicatorAlertInstance";
+import { alertTimeframeOf, chartValueOf, lineAlertShown } from "../lib/indicatorAlertInstance";
 import type { AlertCurveBellTag } from "./AlertCurveBells";
 import { bellPastCurveEnd, gapAlongLine, stepPastTags } from "./lineAlertBellPlace";
 import { indTypeOf } from "../lib/customIndicators";
@@ -899,7 +899,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // Same check the line uses: the instance must alert on the alert's
         // timeframe here (the chart's, or its pin's); otherwise neither draws.
         const ext = ind.extendData as Record<string, unknown> | undefined;
-        if (alertTimeframeOf(ext, resRef.current) !== p.timeframe) continue;
+        if (!lineAlertShown(ext, resRef.current, p.timeframe)) continue;
         const pts = controller.indicatorAlerts.rayPoints(a.id);
         const dl = chart.getDataList();
         if (!pts || dl.length === 0) continue;

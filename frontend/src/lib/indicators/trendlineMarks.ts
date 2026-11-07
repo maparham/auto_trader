@@ -167,6 +167,10 @@ export interface TrendlineSegment {
   /** The line as an alert sees it, in the indicator's OWN bars (the pin's
    * under a timeframe pin). Absent on debug-layer lines. */
   alertLine?: () => TrendlineAlertLine | null;
+  /** The stroke as drawn, in CHART bars: present on a line drawn through its
+   * anchor candles under a coarser pin. A line alert prefers it (on the
+   * chart's timeframe); a picked line keeps alertLine. */
+  chartLine?: () => TrendlineAlertLine | null;
 }
 
 export interface TrendlineAlertLine {

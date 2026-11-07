@@ -12,6 +12,7 @@ import {
   crossingChartIdx,
   pinnedEndY,
   pinnedAlertStroke,
+  pinnedAnchorBars,
   lineKey,
   TL_PIVOT_ARM,
   TRENDLINES_TEMPLATE,
@@ -369,6 +370,22 @@ describe("TRENDLINES_TEMPLATE.draw snaps HTF extremes onto their chart bars", ()
     expect(segments[0].x0).toBeCloseTo(6, 6);
     expect(segments[0].y0).toBeCloseTo(400 - 110, 6);
     expect(rings.map((r) => Math.round(r.x))).toEqual([6, 13]);
+    // Straight in chart bars THROUGH both anchors, so each ring sits on its
+    // own pivot's price, not on the HTF projection between the ends.
+    expect(rings.map((r) => 400 - r.y)).toEqual([110, 106]);
+  });
+
+  it("passes through both anchors when an HTF bar holds fewer chart bars", () => {
+    // HTF bar 2 lost half its session (chart bars 8 and 9), as when a
+    // market's hours change: anchor 2 (HTF bar 3) opens on chart bar 10, not
+    // 12. The HTF projection between the stroke's ends would miss it.
+    const bars = chartBars().filter((_, i) => i !== 8 && i !== 9);
+    const { segments } = draw(bars, stash());
+    const s = segments[0];
+    const yAt = (x: number) => s.y0 + ((s.y1 - s.y0) * (x - s.x0)) / (s.x1 - s.x0);
+    expect(s.x0).toBeCloseTo(4, 6);
+    expect(s.y0).toBeCloseTo(400 - 110, 6);
+    expect(yAt(10)).toBeCloseTo(400 - 106, 6);
   });
 
   it("falls back to the HTF bar's start when its span is not fully loaded", () => {
@@ -607,6 +624,19 @@ describe("crossingChartIdx", () => {
   });
 });
 
+describe("pinnedAnchorBars", () => {
+  const snap = (j: number) => j * 4 + 1;
+  it("maps both anchors to their snapped candles", () => {
+    expect(pinnedAnchorBars(1, "low", 3, "high", snap, 40)).toEqual([5, 13]);
+  });
+  it("is null when a kind is unknown, a candle is not loaded, or they coincide", () => {
+    expect(pinnedAnchorBars(1, null, 3, "high", snap, 40)).toBeNull();
+    expect(pinnedAnchorBars(1, "low", 12, "high", snap, 40)).toBeNull();
+    expect(pinnedAnchorBars(1, "low", 3, "high", () => 2.5, 40)).toBeNull();
+    expect(pinnedAnchorBars(1, "low", 1, "high", snap, 40)).toBeNull();
+  });
+});
+
 describe("pinnedEndY", () => {
   // Rising line: 100 at HTF bar 0, +10 per HTF bar. Pixels: xAt maps a line
   // index to 10px per bar INSIDE the loaded range [2, 6] but the calendar
@@ -673,24 +703,31 @@ describe("alignMtfTrendlines short last intraday bucket", () => {
 });
 
 describe("TRENDLINES_TEMPLATE.draw records the line as an alert sees it", () => {
-  const alertLine = (mtf: TrendlinesMtf) => {
+  const segOf = (mtf: TrendlinesMtf) => {
     const { chart } = draw(chartBars(), mtf);
-    return findTrendlineSegment(chart, "candle_pane", "TRENDLINES", lineKey(htfLine, chartBars(), htfStarts()))?.alertLine?.();
+    return findTrendlineSegment(chart, "candle_pane", "TRENDLINES", lineKey(htfLine, chartBars(), htfStarts()));
   };
 
   it("measures a closed-bar pin at its newest closed HTF bar, per HTF bar", () => {
     // lineIdx is 8 (HTF bar 9 closes in the newest chart bar's future).
-    expect(alertLine(stash())).toEqual({
+    expect(segOf(stash())?.alertLine?.()).toEqual({
       slope: -2, tRef: T0 + 8 * HTF_MS, pRef: 96,
       t1: T0 + HTF_MS, p1: 110, t2: T0 + 3 * HTF_MS, p2: 106,
     });
   });
 
   it("skips a folded forming HTF bar, so tRef is the newest CLOSED pin bar", () => {
-    // With "Wait for timeframe closes" off, lineIdx reaches the forming
-    // entry 9; the alert must still reference closed bar 8.
-    expect(alertLine(stash({ formingIdx: 9 }))).toEqual({
+    expect(segOf(stash({ formingIdx: 9 }))?.alertLine?.()).toEqual({
       slope: -2, tRef: T0 + 8 * HTF_MS, pRef: 96,
+      t1: T0 + HTF_MS, p1: 110, t2: T0 + 3 * HTF_MS, p2: 106,
+    });
+  });
+
+  it("also offers the stroke in CHART bars through its anchor candles", () => {
+    // Anchors snap to chart bars 4 and 12 (110 and 106): -0.5 per chart bar,
+    // referenced at the newest closed chart bar (38).
+    expect(segOf(stash())?.chartLine?.()).toEqual({
+      slope: -0.5, tRef: T0 + 38 * CHART_MS, pRef: 93,
       t1: T0 + HTF_MS, p1: 110, t2: T0 + 3 * HTF_MS, p2: 106,
     });
   });

@@ -14,7 +14,7 @@
 // the trendline is gone; the bell past its end (useChartPaint/
 // AlertCurveBells) marks it.
 import type { Chart, KLineData } from "klinecharts";
-import { alertTimeframeOf } from "../indicatorAlertInstance";
+import { alertTimeframeOf, lineAlertShown } from "../indicatorAlertInstance";
 import { loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert, type LineAlertParams } from "../alertsApi";
 import { getIndicatorsByPane } from "../indicators";
 import { isInsetInstance } from "../indicators/inset";
@@ -212,7 +212,7 @@ export class IndicatorAlertLines {
         const ind = inds.get(link.instanceId);
         if (!ind) continue;
         const ext = ind.extendData as { mtf?: TrendlinesMtf } | undefined;
-        if (alertTimeframeOf(ext as Record<string, unknown> | undefined, this.resolution) !== a.params.timeframe) break;
+        if (!lineAlertShown(ext as Record<string, unknown> | undefined, this.resolution, a.params.timeframe)) break;
         const { t1, p1, t2, p2 } = a.params.anchors;
         dataList ??= this.chart.getDataList();
         const pinned = !!ext?.mtf?.timeframe && a.params.timeframe !== this.resolution;
