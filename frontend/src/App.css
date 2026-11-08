@@ -1049,6 +1049,13 @@
 /* Merge-tabs checklist (tab-chip context menu → "Merge into this tab"). */
 .merge-menu { min-width: 220px; }
 .merge-menu-title { padding: 5px 10px 7px; font-size: 12px; color: var(--text-faint); }
+.merge-menu-search {
+  display: block; box-sizing: border-box; width: calc(100% - 12px); margin: 0 6px 4px;
+  padding: 5px 8px; font: inherit; font-size: 12px; color: var(--text);
+  background: transparent; border: 1px solid var(--border); border-radius: 4px; outline: none;
+}
+.merge-menu-search:focus { border-color: var(--accent); }
+.merge-menu-empty { padding: 6px 10px; font-size: 12px; color: var(--text-faint); }
 .merge-menu .merge-row .ctx-item-label { display: flex; align-items: center; gap: 8px; }
 .merge-menu .merge-row input[type="checkbox"] { pointer-events: none; margin: 0; }
 .merge-menu .merge-confirm { justify-content: center; margin-top: 4px; font-weight: 600; }

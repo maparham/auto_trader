@@ -2,7 +2,8 @@
 // every OTHER tab; ticked tabs merge into the target in tab-bar order. Rows
 // whose cells would push the merged tab past 4 are disabled, live — ticking a
 // row updates which of the rest still fit. Closes on outside-click / Escape
-// (same idiom as ContextMenu).
+// (same idiom as ContextMenu). The search box filters rows by any cell's
+// display name or epic, so "Intel" and "INTC" find the same tab.
 
 import { useEffect, useRef, useState } from "react";
 import type { ChartTab } from "./lib/persist";
@@ -21,6 +22,7 @@ interface Props {
 export default function MergeTabsMenu({ x, y, tabs, targetId, onMerge, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const [query, setQuery] = useState("");
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
@@ -41,6 +43,17 @@ export default function MergeTabsMenu({ x, y, tabs, targetId, onMerge, onClose }
     target.cells.length +
     others.filter((t) => picked.has(t.id)).reduce((n, t) => n + t.cells.length, 0);
 
+  const q = query.trim().toLowerCase();
+  const shown = q
+    ? others.filter((t) =>
+        t.cells.some(
+          (c) =>
+            c.symbol.name.toLowerCase().includes(q) || c.symbol.epic.toLowerCase().includes(q),
+        ),
+      )
+    : others;
+  const fitsRow = (t: ChartTab) => picked.has(t.id) || total + t.cells.length <= 4;
+
   const toggle = (id: string) => {
     const next = new Set(picked);
     if (next.has(id)) next.delete(id);
@@ -55,10 +68,26 @@ export default function MergeTabsMenu({ x, y, tabs, targetId, onMerge, onClose }
       style={{ left: Math.min(x, window.innerWidth - 260), top: y }}
     >
       <div className="merge-menu-title">Merge into this tab</div>
-      {others.map((t) => {
+      <input
+        className="merge-menu-search"
+        type="text"
+        placeholder="Search name or symbol"
+        value={query}
+        autoFocus
+        spellCheck={false}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          // Enter ticks the first row that matches and still fits.
+          if (e.key !== "Enter") return;
+          const first = shown.find(fitsRow);
+          if (first) toggle(first.id);
+        }}
+      />
+      {shown.length === 0 && <div className="merge-menu-empty">No matching tabs</div>}
+      {shown.map((t) => {
         const lead = t.cells.find((c) => c.id === t.activeCellId) ?? t.cells[0];
         const on = picked.has(t.id);
-        const fits = on || total + t.cells.length <= 4;
+        const fits = fitsRow(t);
         return (
           // Wrapper, not asChild: a disabled button may not fire mouse events.
           <Tooltip key={t.id} content={fits ? null : "Would exceed 4 charts"}>
