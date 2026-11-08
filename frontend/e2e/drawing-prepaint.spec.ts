@@ -33,7 +33,8 @@ async function clickChartCenter(page: Page) {
 }
 
 test("a line drawn while a new tab pre-paints is saved, not lost", async ({ page }) => {
-  await seedSingleChartDefault(page);
+  // On 1D, the period a new tab opens on, so tab 2 shares tab 1's cached series.
+  await seedSingleChartDefault(page, "t1", true);
   await stubStateApi(page);
   // Hold US100 candle fetches once `hold` is set, so tab 2 stays in its
   // pre-paint window until the test releases it.

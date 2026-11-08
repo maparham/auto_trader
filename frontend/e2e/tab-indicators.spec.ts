@@ -48,22 +48,23 @@ function indicatorMenu(page: Page) {
 // independent indicator sets. (Tests that distinguish tabs by period would pass
 // even if this were broken, because a period change already triggers a reload.)
 test("tabs on the same symbol+period have independent indicators", async ({ page }) => {
-  await seedSingleChartDefault(page);
+  // On 1D, the period a new tab opens on, so both tabs match.
+  await seedSingleChartDefault(page, "t1", true);
   await stubStateApi(page);
   await page.goto("/");
   await page.locator(".tab-bar").waitFor();
   const m = indicatorMenu(page);
 
-  // Tab 1 (US100·1H): add MA.
+  // Tab 1 (US100·1D): add MA.
   await m.add("MA");
   await expect.poll(() => activeTypes(page)).toContain("MA");
 
-  // Open Tab 2, keep it on the SAME symbol (cancel search) and SAME period (1H).
+  // Open Tab 2, keep it on the SAME symbol (cancel search) and SAME period (1D).
   await addTabOn(page);
   await expect(page.locator(".tab-bar .tab")).toHaveCount(2);
   expect(await page.locator(".tab-bar .tab .tab-period").allTextContents()).toEqual([
-    "1H",
-    "1H",
+    "1D",
+    "1D",
   ]);
 
   // Tab 2 starts with NO indicators (independent layout), then add RSI.

@@ -8,7 +8,9 @@ import { expect, test, type Page } from "@playwright/test";
 //
 // Guarded by a sessionStorage flag so the seed runs ONCE (before the first load);
 // a reload must NOT re-seed, or it would wipe the persistence the spec is testing.
-type SeedTab = { id: string; epic: string; name?: string };
+// New tabs open on 1D (DEFAULT_PERIOD); seed `day` when a spec compares the
+// seeded tab with one it adds.
+type SeedTab = { id: string; epic: string; name?: string; day?: boolean };
 
 // The broker the app boots on is defaultBrokerId(): capital when the backend has
 // it (local dev with credentials), else its first data broker (CI has none, so
@@ -37,8 +39,7 @@ async function seedScratchTabs(page: Page, tabs: SeedTab[]): Promise<void> {
     if (sessionStorage.getItem("__seeded")) return;
     localStorage.clear();
     localStorage.setItem("brokersCache", cache);
-    const period = { resolution: "HOUR", label: "1H" };
-    const tab = ({ id, epic, name }: SeedTab) => ({
+    const tab = ({ id, epic, name, day }: SeedTab) => ({
       id,
       layout: "1",
       activeCellId: `${id}-c0`,
@@ -46,7 +47,7 @@ async function seedScratchTabs(page: Page, tabs: SeedTab[]): Promise<void> {
         {
           id: `${id}-c0`,
           symbol: { epic, name: name ?? epic, status: null, pricePrecision: 2 },
-          period,
+          period: day ? { resolution: "DAY", label: "1D" } : { resolution: "HOUR", label: "1H" },
           scope: `tab.${id}`,
         },
       ],
@@ -57,10 +58,10 @@ async function seedScratchTabs(page: Page, tabs: SeedTab[]): Promise<void> {
   }, [tabs, b] as [SeedTab[], E2EBroker]);
 }
 
-// One US100 1H chart. Pass a tabId so the spec can address the primary cell's
-// scope (`tab.<tabId>`).
-export async function seedSingleChartDefault(page: Page, tabId = "t1"): Promise<void> {
-  await seedScratchTabs(page, [{ id: tabId, epic: "US100", name: "US Tech 100" }]);
+// One US100 1H chart (1D with `day`). Pass a tabId so the spec can address the
+// primary cell's scope (`tab.<tabId>`).
+export async function seedSingleChartDefault(page: Page, tabId = "t1", day = false): Promise<void> {
+  await seedScratchTabs(page, [{ id: tabId, epic: "US100", name: "US Tech 100", day }]);
 }
 
 // TWO tabs (t1, t2), each a single-cell chart on a distinct epic, with the first
