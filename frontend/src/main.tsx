@@ -21,6 +21,10 @@ import AppAuthCallbackPage from './components/AppAuthCallbackPage.tsx'
 import { shouldBootAppAuthCallback } from './lib/appAuthCallbackBoot.ts'
 import { startShellStatusMirror } from './lib/shellStatus.ts'
 import { lazyChunk } from './components/lazyChunk.tsx'
+import { installBackspaceGuard } from './lib/backspaceGuard.ts'
+
+// Backspace outside a text field must never navigate back (WKWebView does).
+installBackspaceGuard()
 
 // Boot modes other than the desktop app load their own chunk.
 const MobileApp = lazyChunk(() => import('./mobile/MobileApp.tsx'))
