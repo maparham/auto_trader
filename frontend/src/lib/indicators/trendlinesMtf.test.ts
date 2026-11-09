@@ -572,6 +572,68 @@ describe("trendlineIdxMap past the pin's newest bar (same timeframe)", () => {
     const { toLine } = trendlineIdxMap(chart, mtf);
     expect(trendlineDrawEdge(undefined, 4, toLine, chart.length, true)).toBeCloseTo(5, 9);
   });
+
+  it("maps Monday's candle to the next bar of a FINER pin, not 13 bars on", () => {
+    // A 4h pin on the same 1D chart: six closed 4h bars a weekday, the last
+    // at Friday 20:00. Monday's daily candle opens where the next 4h bar
+    // will, one pin bar on; calendar time made it 52h / 4h = 13.
+    const H4 = 4 * 3_600_000;
+    const starts = days.slice(0, 5).flatMap((d) => Array.from({ length: 6 }, (_, k) => d + k * H4));
+    const finer: TrendlinesMtf = { timeframe: "HOUR_4", htfMs: H4, htfStarts: starts };
+    const { toLine, toChart } = trendlineIdxMap(chart, finer);
+    expect(toLine(5)).toBeCloseTo(30, 9);
+    expect(toChart(30)).toBe(5);
+    expect(trendlineDrawEdge(undefined, 29, toLine, chart.length, true)).toBeCloseTo(30, 9);
+  });
+
+  const H1 = 3_600_000;
+  // NVDA-like session: seven 1h bars a weekday, 14:00..20:00.
+  const session = days.slice(0, 5).flatMap((d) => Array.from({ length: 7 }, (_, k) => d + (14 + k) * H1));
+  const hourly: TrendlinesMtf = { timeframe: "HOUR", htfMs: H1, htfStarts: session };
+
+  it("counts a session market's own bars per candle, not 24 a day", () => {
+    const { toLine, toChart } = trendlineIdxMap(chart, hourly);
+    // Monday's candle opens on the bar after Friday 20:00 ...
+    expect(toLine(5)).toBeCloseTo(35, 9);
+    expect(toChart(35)).toBe(5);
+    // ... and each later candle is one session (7 bars) on.
+    expect(toLine(7)).toBeCloseTo(49, 9);
+    expect(toChart(49)).toBeCloseTo(7, 9);
+  });
+
+  it("never runs backwards between the pin's last bar and the next candle", () => {
+    for (const pin of [hourly, mtf]) {
+      const { toLine } = trendlineIdxMap(chart, pin);
+      let prev = -Infinity;
+      for (let j = 3; j <= 7; j += 0.05) {
+        const v = toLine(j);
+        expect(v).toBeGreaterThanOrEqual(prev - 1e-9);
+        prev = v;
+      }
+    }
+  });
+
+  it("puts next week's candle one daily bar after Friday on a 1W chart", () => {
+    const WEEK = 7 * DAY;
+    const weeks = [0, 1, 2, 3].map((w) => MON + w * WEEK);
+    const wChart = weeks.map((t) => ({ timestamp: t, open: 1, high: 1, low: 1, close: 1 }) as KLineData);
+    // Daily bars Mon..Fri of the first three weeks; week 4 is forming.
+    const dStarts = weeks.slice(0, 3).flatMap((w) => [0, 1, 2, 3, 4].map((d) => w + d * DAY));
+    const { toLine } = trendlineIdxMap(wChart, { timeframe: "DAY", htfMs: DAY, htfStarts: dStarts });
+    expect(toLine(3)).toBeCloseTo(15, 9);
+    expect(toLine(4)).toBeCloseTo(20, 9);
+  });
+
+  it("keeps a monthly pin on a monthly chart one bar per candle", () => {
+    const months = [0, 1, 2, 3, 4].map((m) => Date.UTC(2026, m, 1));
+    const mChart = months.map((t) => ({ timestamp: t, open: 1, high: 1, low: 1, close: 1 }) as KLineData);
+    const { toLine, toChart } = trendlineIdxMap(mChart, {
+      timeframe: "MONTH", htfMs: 30 * DAY, htfStarts: months.slice(0, 4),
+    });
+    expect(toLine(4)).toBeCloseTo(4, 9);
+    expect(toLine(6)).toBeCloseTo(6, 9);
+    expect(toChart(6)).toBeCloseTo(6, 9);
+  });
 });
 
 describe("crossingChartIdx", () => {

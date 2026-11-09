@@ -2884,19 +2884,58 @@ export function trendlineIdxMap(
   const chartAt = (i: number) => dataList[i].timestamp;
   const nHtf = starts.length;
   const nChart = dataList.length;
-  // A pin on the chart's own timeframe has one bar per chart bar, so past
-  // either end of its series it counts CHART BARS, not calendar time. The
-  // pin computes on closed bars only: on a Monday it ends on Friday while the
-  // chart holds Monday's candle, and calendar time made that three bars on,
-  // which put the stroke's end two bars too far along the line and tilted it
-  // off its own anchors.
-  const sameTf = htfMs === barMs;
-  const cFirst = sameTf ? idxAtTime(nChart, chartAt, starts[0], barMs) : 0;
-  const cLast = sameTf ? idxAtTime(nChart, chartAt, starts[nHtf - 1], barMs) : 0;
+  // A pin on the chart's own timeframe or a finer one: past either end of its
+  // series, count the chart's CANDLES, not calendar time. The pin computes on
+  // closed bars only, so on a Monday it ends on Friday while the chart holds
+  // Monday's candle. Calendar time counted the weekend (a 1D pin put Monday
+  // three bars on, a 4h pin 13) and the stroke's end took the line's price
+  // that far along, tilting the line off its own anchors.
+  //
+  // From the data, not from nominal durations (a 1h pin on a stock trades ~7
+  // bars a day, not 24; a 1D pin on a 1W chart 5 a week, not 7; months are
+  // 28 to 31 days): the pin's next bar opens on the chart's next candle
+  // (kNext), and each candle after it holds `step` pin bars, the most any
+  // recent fully covered candle held. Between the last pin bar (cLast) and
+  // kNext the map is linear, so it stays continuous and never runs back.
+  // A coarser pin keeps calendar time: its stroke is drawn through its anchor
+  // candles (pinnedAnchorBars) and does not lean on this. The 1.2 admits a
+  // 30-day MONTH pin on a monthly chart whose median gap is 31 days.
+  const countBars = htfMs <= barMs * 1.2;
+  let cFirst = 0;
+  let cLast = 0;
+  let kNext = 0;
+  let step = 1;
+  if (countBars) {
+    cFirst = idxAtTime(nChart, chartAt, starts[0], barMs);
+    cLast = idxAtTime(nChart, chartAt, starts[nHtf - 1], barMs);
+    kNext = Math.floor(cLast + 1e-9) + 1;
+    // First index of `starts` at or after t.
+    const lowerBound = (t: number): number => {
+      let lo = 0;
+      let hi = nHtf;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (starts[mid] < t) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo;
+    };
+    let most = 0;
+    for (let k = Math.max(0, kNext - 6); k < kNext && k + 1 < nChart; k++) {
+      if (chartAt(k) < starts[0]) continue; // not covered by the pin
+      most = Math.max(most, lowerBound(chartAt(k + 1)) - lowerBound(chartAt(k)));
+    }
+    step = most > 0 ? most : Math.max(1, Math.round(barMs / htfMs));
+  }
   const toChart = (j: number): number => {
-      if (sameTf && j > nHtf - 1) return cLast + (j - (nHtf - 1));
-      if (sameTf && j < 0) return cFirst + j;
-      const idx = idxAtTime(nChart, chartAt, timeAtIdx(nHtf, htfAt, j, htfMs), barMs);
+      const idx =
+        countBars && j > nHtf - 1
+          ? j <= nHtf
+            ? cLast + (j - (nHtf - 1)) * (kNext - cLast)
+            : kNext + (j - nHtf) / step
+          : countBars && j < 0
+            ? cFirst + j / step
+            : idxAtTime(nChart, chartAt, timeAtIdx(nHtf, htfAt, j, htfMs), barMs);
       // A pin FINER than the chart puts a line-space bar INSIDE a chart bar,
       // so the fractional index lands between two candles and an anchor's
       // ring hangs in the gap off the candle's wick. Snap down to the candle
@@ -2904,7 +2943,10 @@ export function trendlineIdxMap(
       // forming bar: a ray's far edge extrapolates past the data on purpose
       // (clamping a sloped line rotates it), and flooring there would pile
       // it onto the last candle.
-      if (htfMs < barMs && idx >= 0 && idx < nChart) return Math.floor(idx);
+      // (The epsilon keeps a bar-count landing like 4.999999, or -1e-12, on
+      // its candle.)
+      const snapped = idx + 1e-9;
+      if (htfMs < barMs && snapped >= 0 && idx < nChart) return Math.floor(snapped);
       return idx;
   };
   return {
@@ -2918,10 +2960,12 @@ export function trendlineIdxMap(
       return Math.min(nChart - 1, Math.max(open, close));
     },
     toLine: (j) => {
-      const t = timeAtIdx(nChart, chartAt, j, barMs);
-      if (sameTf && t > starts[nHtf - 1]) return nHtf - 1 + (j - cLast);
-      if (sameTf && t < starts[0]) return j - cFirst;
-      return idxAtTime(nHtf, htfAt, t, htfMs);
+      // Branch on the chart position, not the time, so the switch sits exactly
+      // where the in-range path reaches the pin's end (continuous).
+      if (countBars && j > cLast)
+        return j <= kNext ? nHtf - 1 + (j - cLast) / (kNext - cLast) : nHtf + (j - kNext) * step;
+      if (countBars && j < cFirst) return (j - cFirst) * step;
+      return idxAtTime(nHtf, htfAt, timeAtIdx(nChart, chartAt, j, barMs), htfMs);
     },
   };
 }
