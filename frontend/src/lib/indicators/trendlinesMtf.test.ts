@@ -542,6 +542,38 @@ describe("trendlineIdxMap.toChartClose", () => {
   });
 });
 
+describe("trendlineIdxMap past the pin's newest bar (same timeframe)", () => {
+  // A 1D pin on a 1D chart. Trendlines computes on CLOSED pin bars, so on a
+  // Monday the pin ends on Friday while the chart already holds Monday's
+  // forming candle. Monday is one bar on, not three calendar days: counted as
+  // three, the stroke's end took the line's price two bars too far along and
+  // the whole line tilted off its anchors (NVDA, Aug 26 low).
+  const DAY = 86_400_000;
+  const MON = Date.UTC(2026, 10, 2); // Mon 2 Nov 2026
+  const weekdays = (n: number): number[] => {
+    const out: number[] = [];
+    for (let t = MON; out.length < n; t += DAY) {
+      const wd = new Date(t).getUTCDay();
+      if (wd !== 0 && wd !== 6) out.push(t);
+    }
+    return out;
+  };
+  const days = weekdays(6); // Mon..Fri, then next Mon
+  const chart = days.map((t) => ({ timestamp: t, open: 1, high: 1, low: 1, close: 1 }) as KLineData);
+  const mtf: TrendlinesMtf = { timeframe: "DAY", htfMs: DAY, htfStarts: days.slice(0, 5) };
+
+  it("maps the chart's Monday candle to the bar after Friday", () => {
+    const { toLine, toChart } = trendlineIdxMap(chart, mtf);
+    expect(toLine(5)).toBeCloseTo(5, 9);
+    expect(toChart(5)).toBeCloseTo(5, 9);
+  });
+
+  it("keeps the drawn end on the line's own bar count", () => {
+    const { toLine } = trendlineIdxMap(chart, mtf);
+    expect(trendlineDrawEdge(undefined, 4, toLine, chart.length, true)).toBeCloseTo(5, 9);
+  });
+});
+
 describe("crossingChartIdx", () => {
   // Flat line at 100 in HTF space; the 1h pin over 15m bars puts HTF bar 2 on
   // chart bars 8..11.

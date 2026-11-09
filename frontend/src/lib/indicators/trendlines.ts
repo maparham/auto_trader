@@ -2884,7 +2884,18 @@ export function trendlineIdxMap(
   const chartAt = (i: number) => dataList[i].timestamp;
   const nHtf = starts.length;
   const nChart = dataList.length;
+  // A pin on the chart's own timeframe has one bar per chart bar, so past
+  // either end of its series it counts CHART BARS, not calendar time. The
+  // pin computes on closed bars only: on a Monday it ends on Friday while the
+  // chart holds Monday's candle, and calendar time made that three bars on,
+  // which put the stroke's end two bars too far along the line and tilted it
+  // off its own anchors.
+  const sameTf = htfMs === barMs;
+  const cFirst = sameTf ? idxAtTime(nChart, chartAt, starts[0], barMs) : 0;
+  const cLast = sameTf ? idxAtTime(nChart, chartAt, starts[nHtf - 1], barMs) : 0;
   const toChart = (j: number): number => {
+      if (sameTf && j > nHtf - 1) return cLast + (j - (nHtf - 1));
+      if (sameTf && j < 0) return cFirst + j;
       const idx = idxAtTime(nChart, chartAt, timeAtIdx(nHtf, htfAt, j, htfMs), barMs);
       // A pin FINER than the chart puts a line-space bar INSIDE a chart bar,
       // so the fractional index lands between two candles and an anchor's
@@ -2906,8 +2917,12 @@ export function trendlineIdxMap(
       const close = Math.ceil(toChart(j + 1)) - 1;
       return Math.min(nChart - 1, Math.max(open, close));
     },
-    toLine: (j) =>
-      idxAtTime(nHtf, htfAt, timeAtIdx(nChart, chartAt, j, barMs), htfMs),
+    toLine: (j) => {
+      const t = timeAtIdx(nChart, chartAt, j, barMs);
+      if (sameTf && t > starts[nHtf - 1]) return nHtf - 1 + (j - cLast);
+      if (sameTf && t < starts[0]) return j - cFirst;
+      return idxAtTime(nHtf, htfAt, t, htfMs);
+    },
   };
 }
 
