@@ -8,7 +8,7 @@ vi.mock("../alertsApi", async (orig) => ({
   loadLineAlerts: () => lineAlerts,
   patchIndicatorAlert: vi.fn(() => Promise.resolve(true)),
 }));
-import { IndicatorAlertLines, loadedLinePoints } from "./indicatorAlerts";
+import { alertStepPoints, IndicatorAlertLines, loadedLinePoints } from "./indicatorAlerts";
 import { patchIndicatorAlert } from "../alertsApi";
 import { ChartController } from "../chartController";
 
@@ -161,9 +161,9 @@ describe("IndicatorAlertLines: line alerts", () => {
     expect(chart.removeOverlay).toHaveBeenCalledWith({ id: "lnalert:al-l" });
   });
 
-  it("follows the pinned stroke on a finer chart and moves with new bars", () => {
-    // 15m chart under a 1h pin: HTF bar 2 (chart bars 8..11) bottoms at 90 on
-    // chart bar 10, where the trendline's stroke starts.
+  it("follows the pinned steps on a finer chart and moves with new bars", () => {
+    // 15m chart under a 1h pin: the alert's line is 90 on HTF bar 2 (chart
+    // bars 8..11), +1 per HTF bar, drawn as one step per HTF bar.
     const T0 = 1_700_000_000_000;
     const M15 = 900_000;
     const H1 = 3_600_000;
@@ -191,16 +191,20 @@ describe("IndicatorAlertLines: line alerts", () => {
     const lines = new IndicatorAlertLines();
     lines.attach(chart as never, "s1", "b", "US100", "MINUTE_15");
     lines.reconcile();
+    const stepsTo = (last: number) =>
+      Array.from({ length: last - 1 }, (_, k) => ({ timestamp: bars[4 * (k + 2)].timestamp, value: 90 + k }));
     expect(created[0]).toMatchObject({
-      points: [{ timestamp: bars[10].timestamp, value: 90 }, { timestamp: bars[39].timestamp, value: 97.75 }],
+      name: "alertSteps",
+      points: [...stepsTo(9), { timestamp: bars[39].timestamp, value: 97 }],
     });
     lines.refreshRays();
     expect(chart.overrideOverlay).not.toHaveBeenCalled();
     bars.push({ timestamp: T0 + 40 * M15, open: 100, high: 100, low: 100, close: 100, volume: 1 });
     lines.refreshRays();
+    // Chart bar 40 opens the next (forming) HTF bar: one more step, at 98.
     expect(chart.overrideOverlay).toHaveBeenCalledWith({
       id: "lnalert:al-l",
-      points: [{ timestamp: bars[10].timestamp, value: 90 }, { timestamp: bars[40].timestamp, value: 98 }],
+      points: [...stepsTo(9), { timestamp: bars[40].timestamp, value: 98 }],
     });
   });
 
@@ -246,5 +250,50 @@ describe("loadedLinePoints", () => {
 
   it("is null when no reference bar is in the alert's bars", () => {
     expect(loadedLinePoints(params(500, 1500), times, loaded)).toBeNull();
+  });
+});
+
+describe("alertStepPoints", () => {
+  // 4H candles, six a day, around the clock; a 1D pin with five closed days
+  // and two candles of the forming sixth.
+  const H4 = 4 * 3_600_000;
+  const DAY = 6 * H4;
+  const T0 = 1_700_006_400_000;
+  const data = Array.from({ length: 32 }, (_, i) => ({ timestamp: T0 + i * H4, open: 1, high: 1, low: 1, close: 1 }));
+  const starts = Array.from({ length: 5 }, (_, j) => T0 + j * DAY);
+  const mtf = { timeframe: "DAY", htfStarts: starts, htfMs: DAY };
+  // 102 on day 1, +2 a day; referenced at day 3 (106).
+  const params = {
+    tRef: starts[3], pRef: 106, slope: 2,
+    anchors: { t1: starts[1], p1: 102, t2: starts[2], p2: 104 },
+  };
+
+  it("gives one point per HTF bar at the alert's own values", () => {
+    const r = alertStepPoints(data as never, mtf, params);
+    expect(r?.steps).toEqual([
+      { timestamp: T0 + 6 * H4, value: 102 },
+      { timestamp: T0 + 12 * H4, value: 104 },
+      { timestamp: T0 + 18 * H4, value: 106 },
+      { timestamp: T0 + 24 * H4, value: 108 },
+      { timestamp: T0 + 30 * H4, value: 110 },
+      { timestamp: T0 + 31 * H4, value: 110 },
+    ]);
+  });
+
+  it("falls back to t2 then t1 when tRef is not loaded", () => {
+    const r = alertStepPoints(data as never, mtf, { ...params, tRef: T0 - DAY, pRef: 0 });
+    expect(r?.steps[0]).toEqual({ timestamp: T0 + 6 * H4, value: 102 });
+    const r2 = alertStepPoints(data as never, mtf, {
+      ...params, tRef: T0 - DAY, pRef: 0, anchors: { ...params.anchors, t2: T0 - DAY },
+    });
+    expect(r2?.steps[0]).toEqual({ timestamp: T0 + 6 * H4, value: 102 });
+  });
+
+  it("bell pair is horizontal at the forming value", () => {
+    const r = alertStepPoints(data as never, mtf, params);
+    expect(r?.bell).toEqual([
+      { timestamp: T0 + 30 * H4, value: 110 },
+      { timestamp: T0 + 31 * H4, value: 110 },
+    ]);
   });
 });

@@ -8,7 +8,7 @@
 // Also the frozen-trendline (`line`) alerts: a dashed line through their
 // anchors on the candle pane of the linked cell, while its Trendlines pane
 // alerts on the alert's timeframe. Under a coarser pin it follows the
-// trendline's own stroke instead (pinnedAlertStroke). The line runs from its
+// trendline's own steps instead (alertStepPoints, the alertSteps overlay). The line runs from its
 // first anchor to the chart's last bar and stops there, so it lies on the
 // trendline while that is drawn and still shows what the alert watches once
 // the trendline is gone; the bell past its end (useChartPaint/
@@ -18,7 +18,9 @@ import { alertTimeframeOf, lineAlertShown } from "../indicatorAlertInstance";
 import { loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert, type LineAlertParams } from "../alertsApi";
 import { getIndicatorsByPane } from "../indicators";
 import { isInsetInstance } from "../indicators/inset";
-import { pinnedAlertStroke, type TrendlinesMtf } from "../indicators/trendlines";
+import type { TrendlinesMtf } from "../indicators/trendlines";
+import { stepMapFor } from "../indicators/trendlineSteps";
+import "./alertSteps";
 import { alertLineStyles, createAlertLine } from "./alertLine";
 
 const ovId = (alertId: string) => `indalert:${alertId}`;
@@ -28,7 +30,15 @@ type Drawn = { paneId: string; value: number };
 export type RayPoints = [{ timestamp: number; value: number }, { timestamp: number; value: number }];
 // `points` defines the line (the bell extrapolates through them); `drawn` is
 // the segment actually drawn, from the first point to the last bar.
-type Ray = { points: RayPoints; drawn: RayPoints; key: string };
+// `name` is the overlay drawing it: a two-point "segment", or "alertSteps"
+// under a coarser pin, whose `steps` are its points.
+type Ray = {
+  points: RayPoints;
+  drawn: RayPoints;
+  key: string;
+  name: "segment" | "alertSteps";
+  steps?: Array<{ timestamp: number; value: number }>;
+};
 
 /**
  * Two points on a line alert's line, both at bars the chart has loaded.
@@ -49,20 +59,9 @@ export function loadedLinePoints(
   const first = dataList[0]?.timestamp;
   const lastT = dataList[dataList.length - 1]?.timestamp;
   if (first == null || lastT == null) return null;
-  let jRef = -1;
-  let pAt = 0;
-  for (const [t, price] of [
-    [p.tRef, p.pRef],
-    [p.anchors.t2, p.anchors.p2],
-    [p.anchors.t1, p.anchors.p1],
-  ]) {
-    jRef = times.lastIndexOf(t);
-    if (jRef >= 0) {
-      pAt = price;
-      break;
-    }
-  }
-  if (jRef < 0) return null;
+  const ref = alertRef(p, times);
+  if (!ref) return null;
+  const { jRef, pAt } = ref;
   // From anchor1 when it is loaded (the line starts there), else the first
   // loaded bar; to the last loaded bar of `times`.
   let a = 0;
@@ -74,6 +73,74 @@ export function loadedLinePoints(
   if (b <= a) return null;
   const at = (j: number) => ({ timestamp: times[j], value: pAt + p.slope * (j - jRef) });
   return [at(a), at(b)];
+}
+
+/** The bar of `times` an alert's line is counted from, and the line there:
+ * its reference bar, else anchor 2, else anchor 1 (the backend rebase moves
+ * tRef, so an older chart may not hold it). Null when none is in `times`. */
+export function alertRef(
+  p: Pick<LineAlertParams, "tRef" | "pRef" | "anchors">,
+  times: readonly number[],
+): { jRef: number; pAt: number } | null {
+  for (const [t, price] of [
+    [p.tRef, p.pRef],
+    [p.anchors.t2, p.anchors.p2],
+    [p.anchors.t1, p.anchors.p1],
+  ]) {
+    const j = times.lastIndexOf(t);
+    if (j >= 0) return { jRef: j, pAt: price };
+  }
+  return null;
+}
+
+/**
+ * A coarser-pinned line alert as steps: one point per HTF bar from anchor 1's
+ * bar (or the first loaded one) through the bar the newest candle is in, at
+ * that bar's first candle and the alert's own value there, then the newest
+ * candle at the same value. `bell` is the last two candles at that value, so
+ * the bell extrapolates flat along the step the alert fires on. Null when
+ * the pin has no usable bars or no reference bar is held.
+ */
+export function alertStepPoints(
+  dataList: readonly KLineData[],
+  mtf: TrendlinesMtf,
+  p: Pick<LineAlertParams, "tRef" | "pRef" | "slope" | "anchors">,
+): { steps: Array<{ timestamp: number; value: number }>; bell: RayPoints } | null {
+  const n = dataList.length;
+  const starts = mtf.htfStarts ?? [];
+  const map = n >= 2 ? stepMapFor(dataList, mtf) : null;
+  const ref = map ? alertRef(p, starts) : null;
+  if (!map || !ref) return null;
+  const valueAt = (j: number) => ref.pAt + p.slope * (j - ref.jRef);
+  const j1 = starts.lastIndexOf(p.anchors.t1);
+  const jNow = map.barOf(n - 1);
+  const steps: Array<{ timestamp: number; value: number }> = [];
+  for (let j = Math.max(j1 >= 0 ? j1 : -Infinity, map.barOf(0)); j <= jNow; j++) {
+    const s = map.span(j);
+    if (!s) continue;
+    const c = Math.max(0, Math.ceil(s.from));
+    if (c > n - 1) break;
+    steps.push({ timestamp: dataList[c].timestamp, value: valueAt(j) });
+  }
+  const vNow = valueAt(jNow);
+  const newest = dataList[n - 1].timestamp;
+  if (steps[steps.length - 1]?.timestamp !== newest) steps.push({ timestamp: newest, value: vNow });
+  return {
+    steps,
+    bell: [
+      { timestamp: dataList[n - 2].timestamp, value: vNow },
+      { timestamp: newest, value: vNow },
+    ],
+  };
+}
+
+/** Median of the chart's last few bar gaps, so a weekend cannot stretch it. */
+function chartGapMs(dataList: readonly KLineData[]): number {
+  const gaps: number[] = [];
+  for (let i = Math.max(1, dataList.length - 20); i < dataList.length; i++)
+    gaps.push(dataList[i].timestamp - dataList[i - 1].timestamp);
+  gaps.sort((a, b) => a - b);
+  return gaps[gaps.length >> 1] ?? 0;
 }
 
 /**
@@ -216,23 +283,28 @@ export class IndicatorAlertLines {
         const { t1, p1, t2, p2 } = a.params.anchors;
         dataList ??= this.chart.getDataList();
         const pinned = !!ext?.mtf?.timeframe && a.params.timeframe !== this.resolution;
-        // Under a coarser pin, the points the trendline's own stroke runs
-        // through, so the ray lies on it. Otherwise (or when that stroke is
-        // not on the chart) two points on the alert's own line that are
+        // Under a coarser pin, the trendline's own steps, so the line lies
+        // on them. Otherwise two points on the alert's own line that are
         // inside the loaded bars; the anchors themselves only as a last resort.
-        let points: RayPoints | null = null;
-        if (pinned && ext?.mtf) {
-          const res = ind.result as Array<{ lineIdx?: number }> | undefined;
-          const lastIdx = res?.[res.length - 1]?.lineIdx ?? -1;
-          points = pinnedAlertStroke(dataList, ext.mtf, lastIdx, { t1, p1, slope: a.params.slope });
+        if (pinned && ext?.mtf && (ext.mtf.htfMs ?? 0) > chartGapMs(dataList)) {
+          const sp = alertStepPoints(dataList, ext.mtf, a.params);
+          if (sp) {
+            const key = `S|${sp.steps.map((q) => `${q.timestamp}:${q.value}`).join("|")}`;
+            out.set(a.id, { points: sp.bell, drawn: sp.bell, key, name: "alertSteps", steps: sp.steps });
+            break;
+          }
         }
-        points ??= loadedLinePoints(a.params, pinned ? ext?.mtf?.htfStarts ?? [] : this.barTimes(dataList), dataList);
+        let points: RayPoints | null = loadedLinePoints(a.params, pinned ? ext?.mtf?.htfStarts ?? [] : this.barTimes(dataList), dataList);
         points ??= [
           { timestamp: t1, value: p1 },
           { timestamp: t2, value: p2 },
         ];
         const drawn = this.toLastBar(points, dataList);
-        if (drawn) out.set(a.id, { points, drawn, key: drawn.map((q) => `${q.timestamp}:${q.value}`).join("|") });
+        if (drawn)
+          out.set(a.id, {
+            points, drawn, name: "segment",
+            key: `L|${drawn.map((q) => `${q.timestamp}:${q.value}`).join("|")}`,
+          });
         break;
       }
     }
@@ -267,7 +339,14 @@ export class IndicatorAlertLines {
         continue;
       }
       if (w.key !== geo) {
-        c.overrideOverlay({ id: rayId(id), points: w.drawn });
+        // The overlay kind cannot change in place: a ray that moves between
+        // a segment and steps is re-created below.
+        if (w.key[0] !== geo[0]) {
+          c.removeOverlay({ id: rayId(id) });
+          this.rays.delete(id);
+          continue;
+        }
+        c.overrideOverlay({ id: rayId(id), points: w.steps ?? w.drawn });
         this.rays.set(id, w.key);
       }
       if (hiddenChanged) c.overrideOverlay({ id: rayId(id), visible: !hidden });
@@ -276,8 +355,8 @@ export class IndicatorAlertLines {
       if (this.rays.has(id)) continue;
       const made = c.createOverlay({
         id: rayId(id),
-        name: "segment",
-        points: w.drawn,
+        name: w.name,
+        points: w.steps ?? w.drawn,
         styles: alertLineStyles(false),
         visible: !hidden,
         mode: "normal",
