@@ -515,8 +515,10 @@ describe("tradeLineSpecs", () => {
     // Only the entry line survives — no separate :stop.
     expect(specs.map((s) => s.key)).toEqual(["D1:price"]);
     const merged = specs[0];
-    expect(merged.color).toBe("#f23645"); // STOP_COLOR — the stop is the live constraint
-    expect(merged.draggable).toBe(false); // display-only; un-breakeven via the form
+    expect(merged.color).toBe("#f23645"); // STOP_COLOR, the stop is the live constraint
+    // Dragging the merged line moves the stop off entry (out of breakeven).
+    expect(merged.draggable).toBe(true);
+    expect(merged.dragField).toBe("stop");
     expect(merged.label).toBe("Long 2 @ 100.00 · BE");
   });
 
@@ -556,8 +558,20 @@ describe("tradeLineSpecs", () => {
     // Only the entry line survives — no separate :tp.
     expect(specs.map((s) => s.key)).toEqual(["D1:price"]);
     const merged = specs[0];
-    expect(merged.color).toBe("#089981"); // TP_COLOR — the target is the merged level
-    expect(merged.draggable).toBe(false); // display-only; un-breakeven via the form
+    expect(merged.color).toBe("#089981"); // TP_COLOR, the target is the merged level
+    // Dragging the merged line moves the target off entry (out of breakeven).
+    expect(merged.draggable).toBe(true);
+    expect(merged.dragField).toBe("tp");
+    const dropped: [string, string, number][] = [];
+    const locked = tradeLineSpecs({
+      ...base,
+      levelsDraggable: false,
+      onDrag: (id, f, l) => dropped.push([id, f, l]),
+      trades: [trade({ priceLevel: 100, takeProfit: 100, openedAt: 1 })],
+    });
+    expect(locked[0].draggable).toBe(false); // read-only mode keeps it fixed
+    locked[0].onDragEnd?.(103);
+    expect(dropped).toEqual([["D1", "takeProfit", 103]]);
     expect(merged.label).toBe("Long 2 @ 100.00 · BE");
   });
 

@@ -12,6 +12,7 @@ import {
   pendingEditsSignal,
   setTradeSelected,
   toggleTradeSelected,
+  selectTradeLine,
   toggleTradeHidden,
 } from "./signals";
 
@@ -54,6 +55,19 @@ describe("setTradeSelected coupling", () => {
     expect(tradeLineUiSignal.value.selected).toBeNull();
     expect(editTradeSignal.value).toBeNull();
     expect(tradePanelOpen.value).toBe(false);
+  });
+
+  it("a single click on the active line keeps an open ticket open", () => {
+    setTradeSelected("A", "price"); // double-click opened the ticket
+    selectTradeLine("A", "price", false);
+    expect(tradeLineUiSignal.value.selected).toBe("A");
+    expect(tradePanelOpen.value).toBe(true);
+  });
+
+  it("a single click on the active line still deselects with no ticket open", () => {
+    setTradeSelected("A", "price", false);
+    selectTradeLine("A", "price", false);
+    expect(tradeLineUiSignal.value.selected).toBeNull();
   });
 
   it("hiding the selected trade deselects it (edit mode clears in lockstep)", () => {

@@ -31,6 +31,10 @@ export interface LineSpec {
   // blue pills otherwise) read apart at a glance. Absent → no chevron.
   side?: "buy" | "sell";
   draggable: boolean;
+  // The level a drag of this line actually moves, when it is not the line's own
+  // key field: a position's merged breakeven entry line drags the SL/TP that sits
+  // on it, so the drag pulls that level off the entry. Absent → the key's field.
+  dragField?: "stop" | "tp";
   // Drawn emphasised (dashed, thicker) — set while the trade is hovered (panel row
   // or the line itself).
   highlight?: boolean;
@@ -167,6 +171,7 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
     const stopBE = t.kind === "position" && isBreakeven(price, stop, o.precision);
     const tpBE = t.kind === "position" && isBreakevenTarget(price, tp, o.precision);
     const breakeven = stopBE || tpBE;
+    const beField = stopBE ? "stop" : tpBE ? "tp" : undefined;
     // A resting order at price <= 0 means the broker sync couldn't parse a real
     // level (see WorkingOrder.limit_level fallback in capital.py/ig.py) — drawing
     // it would place an invisible line/pill off the bottom of the chart, so skip it
@@ -190,14 +195,16 @@ export function tradeLineSpecs(o: SpecBuildOpts): LineSpec[] {
             ? ""
             : `${word} ${t.quantity} @ ${fmt(price)}${pnlStr}${breakeven ? " · BE" : ""}`,
         // A resting order's price line is draggable to reprice it; a filled
-        // position's entry is fixed (you can't change a fill), so never draggable.
-        draggable: t.kind === "order",
+        // position's entry is fixed (you can't change a fill). At breakeven, though,
+        // the line also IS the merged SL/TP, so it drags that level off the entry.
+        draggable: t.kind === "order" || (breakeven && o.levelsDraggable),
+        dragField: beField,
         highlight,
         selected,
         emphasized,
         openedAt: t.openedAt,
         pending: t.kind === "order",
-        onDragEnd: (lvl) => o.onDrag(t.id, "price", lvl),
+        onDragEnd: (lvl) => o.onDrag(t.id, beField === "tp" ? "takeProfit" : beField ?? "price", lvl),
       });
     }
     if (stop != null && !stopBE) {

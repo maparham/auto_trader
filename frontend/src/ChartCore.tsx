@@ -2329,6 +2329,7 @@ export default function ChartCore({
           field: s.key.slice(sep + 1) as TradeLineField, // "price" | "stop" | "tp"
           level: s.level,
           draggable: s.draggable,
+          dragField: s.dragField,
           y: first(
             c.convertToPixel([{ value: s.level }], { paneId: "candle_pane", absolute: true }),
           ).y,

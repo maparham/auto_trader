@@ -32,6 +32,7 @@ import {
   pendingEditsSignal,
   draftOrderSignal,
   tradePanelOpen,
+  tradeMarkerHoverSignal,
   setTradeSelected,
   Signal,
   type TradeLineField,
@@ -51,11 +52,18 @@ import type { ChartHandle } from "./chartHandle";
 
 // A trade line resolved to a pixel-y, as produced by the init-effect-local
 // tradeLinePixels(); the grab test only needs id/field/draggable/y.
+// How far (px) a breakeven entry line's grab must travel before it moves the merged
+// SL/TP, so a click on the position's entry row stays a click.
+const BE_DEAD_ZONE_PX = 4;
+
 export type TradeLinePx = {
   id: string;
   field: TradeLineField;
   level: number;
   draggable: boolean;
+  // What a grab of this line drags when it isn't `field` (see LineSpec.dragField in
+  // lib/positionLines.ts): a breakeven entry line drags its merged SL/TP.
+  dragField?: TradeLineField;
   y: number | undefined;
   emphasized: boolean;
   fullWidth: boolean;
@@ -318,19 +326,31 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
     // Nearest DRAGGABLE line within ALERT_SNAP_PX of pixel y — the same band that shows
     // the ns-resize cursor. onMove routes a DRAFT_ID drag to the draft order instead of a
     // server-trade pending edit.
-    const grabbableTradeLine = (yPix: number): { id: string; field: TradeLineField; d: number } | null => {
-      let best: { id: string; field: TradeLineField; d: number } | null = null;
+    // A grab of a breakeven entry line (`dragField` set) carries `y0`, the line's pixel
+    // y: that drag only starts once the cursor leaves BE_DEAD_ZONE_PX of it, so a
+    // jittery click meant to select the position can't nudge a live stop/target off
+    // its entry. `armed` flips once it has.
+    type TradeHit = { id: string; field: TradeLineField; d: number; y0?: number; armed?: boolean };
+    const toHit = (t: TradeLinePx, d: number): TradeHit =>
+      t.dragField ? { id: t.id, field: t.dragField, d, y0: t.y } : { id: t.id, field: t.field, d };
+    const grabbableTradeLine = (yPix: number): TradeHit | null => {
+      let best: TradeHit | null = null;
       for (const t of tradeLinePixelsRef.current()) {
         if (!t.draggable || t.y == null) continue;
         const d = Math.abs(t.y - yPix);
-        if (d <= ALERT_SNAP_PX && (!best || d < best.d)) best = { id: t.id, field: t.field, d };
+        if (d <= ALERT_SNAP_PX && (!best || d < best.d)) best = toHit(t, d);
       }
       return best;
     };
-    const tradeDrag = makeLineDrag<{ id: string; field: TradeLineField; d: number }>({
+    const tradeDrag = makeLineDrag<TradeHit>({
       grab: grabbableTradeLine,
       onBegin: () => draggingLineSignal.set(true), // pause no-confirm auto-apply until the drop
       onMove: (hit, value, c) => {
+        if (hit.y0 != null && !hit.armed) {
+          const py = first(c.convertToPixel([{ value }], { paneId: "candle_pane", absolute: true })).y;
+          if (py == null || Math.abs(py - hit.y0) < BE_DEAD_ZONE_PX) return;
+          hit.armed = true;
+        }
         let level = Number(value.toFixed(precisionRef.current));
         // Reveal this trade's lines full-width for the duration of the drag (below,
         // drawPositions reads draggingTradeRef) so a stub SL/TP doesn't jump mid-drag.
@@ -379,7 +399,19 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
         }
         const pendKey = hit.field === "tp" ? "takeProfit" : hit.field;
         const cur = pendingEditsSignal.value;
-        pendingEditsSignal.set({ ...cur, [hit.id]: { ...cur[hit.id], [pendKey]: level } });
+        // Back on the committed level (e.g. a BE stop clamped at entry): stage nothing,
+        // so no Apply/Discard shows and no-confirm mode never sends a no-op modify.
+        const committed = trade ? (pendKey === "price" ? trade.priceLevel : trade[pendKey]) : undefined;
+        const same = committed != null && Number(committed.toFixed(precisionRef.current)) === level;
+        if (same) {
+          const { [pendKey]: _drop, ...rest } = cur[hit.id] ?? {};
+          const next = { ...cur };
+          if (Object.keys(rest).length) next[hit.id] = rest;
+          else delete next[hit.id];
+          pendingEditsSignal.set(next);
+        } else {
+          pendingEditsSignal.set({ ...cur, [hit.id]: { ...cur[hit.id], [pendKey]: level } });
+        }
         // Keep the bracket glued to the line AS it drags. The pending-edit subscription
         // only repaints on the next rAF, so the line (redrawn synchronously) would
         // otherwise pull ahead of its spine/legs for a frame — repaint now, in lockstep.
@@ -388,11 +420,21 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
         // openPanel=false, so DRAGGING a line never pops the edit ticket open (only an
         // explicit double-click does). No-confirm mode leaves selection alone (the dock
         // auto-applies on the drop).
-        if (confirmLineEditsRef.current) setTradeSelectedFn(hit.id, hit.field, false);
+        // A BE drag still sitting on entry has no SL/TP pill yet; focus the entry's.
+        if (confirmLineEditsRef.current)
+          setTradeSelectedFn(hit.id, hit.y0 != null && same ? "price" : hit.field, false);
       },
-      onCommit: (_hit, moved) => {
-        // A press with no move is a plain click → let onClick select/toggle (don't swallow).
-        if (!moved) return false;
+      onCommit: (hit, moved) => {
+        // A press with no move (or a BE grab that never left its dead zone) is a plain
+        // click → let onClick select/toggle (don't swallow).
+        if (!moved || (hit.y0 != null && !hit.armed)) {
+          draggingLineSignal.set(false);
+          if (draggingTradeRef.current != null) {
+            draggingTradeRef.current = null;
+            handle.posDrawRef.current();
+          }
+          return false;
+        }
         draggingLineSignal.set(false); // let no-confirm auto-apply commit the final level
         // Drop done: drop the drag-reveal and retract the line to its resting extent
         // (unless still hovered/selected, which drawPositions re-derives). Only when a
@@ -599,6 +641,9 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
       // drag must agree or a drag inside a pill moves a different trade's line). Grab
       // the pill's OWN line directly when it's draggable; otherwise swallow no grab and
       // let the click select the pill's trade.
+      // The cursor is on a live trade marker: leave the press to its own klinecharts
+      // click (a BE entry line runs through the entry glyph and would swallow it).
+      if (tradeMarkerHoverSignal.value != null) return;
       const pillHit = tradePillHitTest(e.clientX, e.clientY);
       if (pillHit) {
         const line = tradeLinePixelsRef
@@ -607,7 +652,7 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
         if (line?.draggable && line.y != null) {
           e.preventDefault();
           e.stopPropagation();
-          tradeDrag.beginHit({ id: line.id, field: line.field, d: 0 });
+          tradeDrag.beginHit(toHit(line, 0));
         }
         return;
       }

@@ -454,12 +454,15 @@ export function toggleTradeSelected(id: string): void {
   else setTradeSelected(id, "price");
 }
 // Chart line click — focuses THAT line (its pill shows); clicking the already-active
-// line clears the whole selection. Pass openPanel=false for single-click (highlight
-// only); double-click uses the default (true) to open the edit ticket.
+// line clears the whole selection, except while this trade's edit ticket is open:
+// the ticket closes only via its own Cancel/Escape, so the click keeps it. Pass
+// openPanel=false for single-click (highlight only); double-click uses the default
+// (true) to open the edit ticket.
 export function selectTradeLine(id: string, field: TradeLineField, openPanel = true): void {
   const cur = tradeLineUiSignal.value;
-  if (cur.selected === id && cur.selectedField === field) setTradeSelected(null);
-  else setTradeSelected(id, field, openPanel);
+  if (cur.selected === id && cur.selectedField === field) {
+    if (!tradePanelOpen.value) setTradeSelected(null);
+  } else setTradeSelected(id, field, openPanel);
 }
 // Double-click-to-edit: force the panel open regardless of current selection state.
 // A dblclick is preceded by two clicks (which may have toggled selection back and
