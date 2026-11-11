@@ -167,10 +167,9 @@ export interface TrendlineSegment {
   /** The line as an alert sees it, in the indicator's OWN bars (the pin's
    * under a timeframe pin). Absent on debug-layer lines. */
   alertLine?: () => TrendlineAlertLine | null;
-  /** The stroke as drawn, in CHART bars: present on a line drawn through its
-   * anchor candles under a coarser pin. A line alert prefers it (on the
-   * chart's timeframe); a picked line keeps alertLine. */
-  chartLine?: () => TrendlineAlertLine | null;
+  /** A coarser pin's stepped stroke, on-pane pieces only: hit-tested by x
+   * (distToSteps) instead of as the straight x0..y1 segment. */
+  steps?: StepPiece[];
 }
 
 export interface TrendlineAlertLine {
@@ -242,6 +241,37 @@ export function dropTrendlineSegments(chart: object, name: string): void {
     if (key.slice(key.indexOf(":") + 1) === name) byPane.delete(key);
 }
 
+/** One drawn piece of a staircase, in pixels. Horizontal (y0 === y1) unless
+ * it merges several sub-pixel steps. */
+export interface StepPiece {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+/** Pixel distance from (px, py) to a staircase: the step under px, or a
+ * riser at its edges. Infinity when px is outside every piece. */
+export function distToSteps(px: number, py: number, pieces: readonly StepPiece[]): number {
+  let lo = 0;
+  let hi = pieces.length - 1;
+  if (hi < 0 || px < pieces[0].x0 || px > pieces[hi].x1) return Infinity;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (pieces[mid].x0 <= px) lo = mid;
+    else hi = mid - 1;
+  }
+  const p = pieces[lo];
+  if (px > p.x1) return Infinity;
+  const y = p.x1 === p.x0 ? p.y0 : p.y0 + ((p.y1 - p.y0) * (px - p.x0)) / (p.x1 - p.x0);
+  let d = Math.abs(py - y);
+  const riser = (x: number, ya: number, yb: number) =>
+    Math.hypot(px - x, py < Math.min(ya, yb) ? Math.min(ya, yb) - py : py > Math.max(ya, yb) ? py - Math.max(ya, yb) : 0);
+  if (lo > 0) d = Math.min(d, riser(p.x0, pieces[lo - 1].y1, p.y0));
+  if (lo + 1 < pieces.length) d = Math.min(d, riser(p.x1, p.y1, pieces[lo + 1].y0));
+  return d;
+}
+
 /** Pixel distance from (px, py) to the segment (x0,y0)-(x1,y1). */
 export function distToSegment(
   px: number, py: number, x0: number, y0: number, x1: number, y1: number,
@@ -289,7 +319,9 @@ export function hitTrendline(
     const name = k.slice(cut + 1);
     if (isHidden(chart, paneId, name)) continue;
     for (const seg of segs) {
-      const d = distToSegment(px, py, seg.x0, seg.y0, seg.x1, seg.y1);
+      const d = seg.steps
+        ? distToSteps(px, py, seg.steps)
+        : distToSegment(px, py, seg.x0, seg.y0, seg.x1, seg.y1);
       if (d > slop) continue;
       if (!best || d < best.d) best = { paneId, name, seg, d };
     }

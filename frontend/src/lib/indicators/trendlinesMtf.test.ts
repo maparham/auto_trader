@@ -269,8 +269,8 @@ function draw(
     chart,
     indicator: { result, calcParams: PARAMS, extendData: ext, paneId: "candle_pane", name: "TRENDLINES" },
     bounding: { width: 400, height: 400 },
-    xAxis: { convertToPixel: (i: number) => i },
-    yAxis: { convertToPixel: (p: number) => 400 - p },
+    xAxis: { convertToPixel: (i: number) => i, convertFromPixel: (x: number) => x },
+    yAxis: { convertToPixel: (p: number) => 400 - p, convertFromPixel: (y: number) => 400 - y },
   } as never);
   return { segments, rings, dots, chart };
 }
@@ -859,6 +859,26 @@ describe("TRENDLINES_TEMPLATE.draw records the line as an alert sees it", () => 
       slope: -2, tRef: T0 + 8 * HTF_MS, pRef: 96,
       t1: T0 + HTF_MS, p1: 110, t2: T0 + 3 * HTF_MS, p2: 106,
     });
+  });
+});
+
+describe("clone of a stepped line", () => {
+  const segOf = (over: Record<string, unknown> = {}) => {
+    const { chart } = draw(chartBars(), stash(), over);
+    return findTrendlineSegment(chart, "candle_pane", "TRENDLINES", lineKey(htfLine, chartBars(), htfStarts()));
+  };
+
+  it("is straight from its drawn start to the newest candle, at the step values", () => {
+    const c = segOf()?.clone();
+    expect(c?.points).toEqual([
+      { timestamp: T0 + 4 * CHART_MS, value: 110 },
+      { timestamp: T0 + 39 * CHART_MS, value: 110 - 2 * (9 - 1) },
+    ]);
+  });
+
+  it("ends a segment where its steps end", () => {
+    const c = segOf({ extend: "segment" })?.clone();
+    expect(c?.points[1]).toEqual({ timestamp: T0 + 15 * CHART_MS, value: 106 });
   });
 });
 

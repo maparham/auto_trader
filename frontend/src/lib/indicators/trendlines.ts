@@ -3846,8 +3846,25 @@ function drawTrendlines(
     ctx.setLineDash([]);
     // Line-body hit target: the stroke's on-pane part only, so a click can
     // never land on a stretch of line nobody can see.
-    const hitSeg = clipSegmentToRect(x0, y0, x1, y1, 0, 0, tagRight, bounding.height);
+    // Stepped: the on-pane pieces, hit-tested by x (hitTrendline).
+    const hitSteps = pieces
+      ?.filter((p) => p.x1 > 0 && p.x0 < tagRight)
+      .map((p) => (p.x0 < 0 || p.x1 > tagRight ? { ...p, x0: Math.max(0, p.x0), x1: Math.min(tagRight, p.x1) } : p));
+    const hitSeg = hitSteps
+      ? hitSteps.length
+        ? [hitSteps[0].x0, hitSteps[0].y0, hitSteps[hitSteps.length - 1].x1, hitSteps[hitSteps.length - 1].y1]
+        : null
+      : clipSegmentToRect(x0, y0, x1, y1, 0, 0, tagRight, bounding.height);
     if (hitSeg) {
+      // A stepped line's clone: a drawing cannot be a staircase, so it is
+      // straight from the first stepped candle to the stroke's end (the
+      // newest candle when it reaches it), at the step values there.
+      const stepPoint = (c: number): { timestamp: number; value: number } | null => {
+        timestamps ??= dataList.map((d) => d.timestamp);
+        const k = Math.max(0, Math.min(lastChartIdx, c));
+        const timestamp = tsAtIndex(timestamps, k);
+        return timestamp === null ? null : { timestamp, value: projectAt(line, stepMap!.barOf(k)) };
+      };
       const toPoint = (x: number): { timestamp: number; value: number } | null => {
         timestamps ??= dataList.map((d) => d.timestamp);
         const idx = Math.round(xAxis.convertFromPixel(x));
@@ -3859,10 +3876,20 @@ function drawTrendlines(
       segments.push({
         key,
         x0: hitSeg[0], y0: hitSeg[1], x1: hitSeg[2], y1: hitSeg[3],
+        ...(hitSteps ? { steps: hitSteps } : {}),
         // Anchored on the line's first anchor, then its drawn end (segment) or
         // the newest bar (ray / extended run on by themselves), so the
         // drawing lies on the stroke the user saw.
         clone: (): TrendlineClone | null => {
+          if (pieces) {
+            const posOf = (x: number) => xAxis.convertFromPixel(x);
+            const a = stepPoint(Math.round(posOf(pieces[0].x0) + 0.5));
+            const xNow = xAxis.convertToPixel(lastChartIdx);
+            const end = tool === "segment" || x1 < xNow ? Math.round(posOf(x1) - 0.5) : lastChartIdx;
+            const b = stepPoint(end);
+            if (!a || !b || a.timestamp === b.timestamp) return null;
+            return { tool, points: [a, b] };
+          }
           const a = toPoint(xAtLine(lineStart(line)));
           const b = toPoint(tool === "segment" ? x1 : xAt(drawEdge));
           if (!a || !b || a.timestamp === b.timestamp) return null;

@@ -6,6 +6,7 @@ import {
   cloneToolFor,
   distToSegment,
   hitTrendline,
+  setTrendlineSegments,
   marksFor,
   markedLineStyle,
   setNote,
@@ -356,5 +357,25 @@ describe("drawTrendlines records the line as an alert sees it", () => {
       slope, tRef: bars[ref].timestamp, pRef,
       t1: bars[line.i1].timestamp, p1: line.p1, t2: bars[line.i2].timestamp, p2: line.p2,
     });
+  });
+});
+
+describe("hitTrendline on a stepped line", () => {
+  it("hits a stepped segment by x", () => {
+    // Steps at 50, 50, 30; a straight line between the ends would sit at 40
+    // in the middle, where the drawn step is at 50.
+    const chart = {};
+    setTrendlineSegments(chart, "candle_pane", "TRENDLINES", [
+      {
+        key: "k", x0: 0, y0: 50, x1: 30, y1: 30, clone: () => null,
+        steps: [
+          { x0: 0, x1: 10, y0: 50, y1: 50 },
+          { x0: 10, x1: 20, y0: 50, y1: 50 },
+          { x0: 20, x1: 30, y0: 30, y1: 30 },
+        ],
+      },
+    ]);
+    expect(hitTrendline(chart, 15, 51, 4)).not.toBeNull();
+    expect(hitTrendline(chart, 15, 40, 4)).toBeNull();
   });
 });

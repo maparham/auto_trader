@@ -30,16 +30,9 @@ export function lineGate(
   seg: TrendlineSegment,
   ext: Record<string, unknown> | undefined,
   resolution: string,
-  opts?: { chartFrame?: boolean },
 ): LineGateResult {
-  // A line alert on a line drawn through its anchor candles (coarser pin)
-  // freezes the stroke in the chart's bars, on the chart's timeframe, when
-  // that timeframe can take one. Otherwise, and for picked lines (rules on
-  // the pin's timeframe must keep working), the pin's line as before.
-  if (opts?.chartFrame && seg.chartLine && chartFrameOk(resolution)) {
-    const geometry = seg.chartLine();
-    if (geometry) return { ok: true, timeframe: resolution, geometry };
-  }
+  // A pinned pane's lines alert on the pin's own bars, coarser pins
+  // included: their steps are the pin's values, so that is what fires.
   const timeframe = alertTimeframeOf(ext, resolution);
   try {
     if (parseTf(timeframe).unit === "SECOND") return { ok: false, kind: "seconds" };
@@ -50,14 +43,6 @@ export function lineGate(
   const geometry = seg.alertLine?.() ?? null;
   if (!geometry) return { ok: false, kind: "noGeometry" };
   return { ok: true, timeframe, geometry };
-}
-
-function chartFrameOk(resolution: string): boolean {
-  try {
-    return parseTf(resolution).unit !== "SECOND" && isNativeTf(resolution);
-  } catch {
-    return false;
-  }
 }
 
 export const LINE_ID_RE = /^L\d+$/;

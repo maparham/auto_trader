@@ -19,16 +19,13 @@ describe("buildLineAlertDraft", () => {
     const r = buildLineAlertDraft({ ...base, seg: seg(() => line), ext: { mtf: { timeframe: "1D" } }, resolution: "HOUR" });
     expect(r && "draft" in r && r.draft.timeframe).toBe("DAY");
   });
-  it("a line drawn through its anchor candles drafts on the chart, even when pinned", () => {
-    const chartLine = { ...line, slope: 0.25 };
-    const s = { ...seg(() => line), chartLine: () => chartLine };
-    const r = buildLineAlertDraft({ ...base, seg: s, ext: { mtf: { timeframe: "1D" } }, resolution: "HOUR_4" });
-    expect(r && "draft" in r && r.draft).toMatchObject({ timeframe: "HOUR_4", line: chartLine });
-  });
-  it("falls back to the pin on a chart timeframe that can't take an alert", () => {
-    const s = { ...seg(() => line), chartLine: () => ({ ...line, slope: 0.25 }) };
-    const r = buildLineAlertDraft({ ...base, seg: s, ext: { mtf: { timeframe: "1D" } }, resolution: "HOUR_2" });
+  it("a coarser pin drafts on its pin", () => {
+    const r = buildLineAlertDraft({ ...base, seg: seg(() => line), ext: { mtf: { timeframe: "1D" } }, resolution: "HOUR_4" });
     expect(r && "draft" in r && r.draft).toMatchObject({ timeframe: "DAY", line });
+  });
+  it("a 2D pin refuses a line alert", () => {
+    const r = buildLineAlertDraft({ ...base, seg: seg(() => line), ext: { mtf: { timeframe: "2D" } }, resolution: "HOUR_4" });
+    expect(r).toEqual({ reason: "Alerts on this timeframe are coming later" });
   });
   it("reasons and hiding", () => {
     expect(buildLineAlertDraft({ ...base, seg: seg(() => line), ext: {}, resolution: "HOUR_2" }))

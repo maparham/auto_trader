@@ -9,10 +9,9 @@ export function buildLineAlertDraft(args: {
   seg: TrendlineSegment; ext: Record<string, unknown> | undefined; resolution: string;
   scope: string; instanceId: string; epic: string; broker: string; precision: number;
 }): { draft: LineAlertDraft } | { reason: string } | null {
-  // A pinned pane's lines alert on the pin's bars, except a coarser pin's,
-  // which are drawn through their anchor candles and alert on the chart's
-  // when it can take one (lineGate's chartFrame).
-  const gate = lineGate(args.seg, args.ext, args.resolution, { chartFrame: true });
+  // A pinned pane's lines alert on the pin's bars (a coarser pin's steps are
+  // the pin's values); a pin alerts cannot run on yet refuses.
+  const gate = lineGate(args.seg, args.ext, args.resolution);
   if (!gate.ok) {
     // Seconds and unparseable timeframes hide the menu entry; others show a reason
     if (gate.kind === "seconds" || gate.kind === "unparseable") return null;

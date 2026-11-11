@@ -15,6 +15,7 @@
 
 import type { KLineData } from "klinecharts";
 import { htfBarEndMs } from "../mtfForming";
+import type { StepPiece } from "./trendlineMarks";
 import type { TrendlinesMtf } from "./trendlines";
 
 export interface HtfStepMap {
@@ -188,14 +189,8 @@ export function stepMapFor(dataList: readonly KLineData[], mtf: TrendlinesMtf): 
   return map;
 }
 
-/** One drawn piece of a staircase, in pixels. Horizontal (y0 === y1) unless
- * it merges several sub-pixel steps. */
-export interface StepPiece {
-  x0: number;
-  x1: number;
-  y0: number;
-  y1: number;
-}
+export type { StepPiece } from "./trendlineMarks";
+export { distToSteps } from "./trendlineMarks";
 
 /**
  * The step pieces of a line from HTF bar floor(jFrom) to jTo: an integer jTo
@@ -280,26 +275,4 @@ export function strokeSteps(ctx: CanvasRenderingContext2D, pieces: readonly Step
     ctx.lineTo(p.x0, p.y0);
     ctx.lineTo(p.x1, p.y1);
   }
-}
-
-/** Pixel distance from (px, py) to a staircase: the step under px, or a
- * riser at its edges. Infinity when px is outside every piece. */
-export function distToSteps(px: number, py: number, pieces: readonly StepPiece[]): number {
-  let lo = 0;
-  let hi = pieces.length - 1;
-  if (hi < 0 || px < pieces[0].x0 || px > pieces[hi].x1) return Infinity;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (pieces[mid].x0 <= px) lo = mid;
-    else hi = mid - 1;
-  }
-  const p = pieces[lo];
-  if (px > p.x1) return Infinity;
-  const y = p.x1 === p.x0 ? p.y0 : p.y0 + ((p.y1 - p.y0) * (px - p.x0)) / (p.x1 - p.x0);
-  let d = Math.abs(py - y);
-  const riser = (x: number, ya: number, yb: number) =>
-    Math.hypot(px - x, py < Math.min(ya, yb) ? Math.min(ya, yb) - py : py > Math.max(ya, yb) ? py - Math.max(ya, yb) : 0);
-  if (lo > 0) d = Math.min(d, riser(p.x0, pieces[lo - 1].y1, p.y0));
-  if (lo + 1 < pieces.length) d = Math.min(d, riser(p.x1, p.y1, pieces[lo + 1].y0));
-  return d;
 }

@@ -24,11 +24,10 @@ describe("pickedLines", () => {
     expect(pickedLineFromSeg({ seg: { ...seg, alertLine: () => null }, ext: undefined, resolution: "HOUR", epic: "US100", broker: "capital" })).toHaveProperty("reason");
     expect(pickedLineFromSeg({ seg, ext: undefined, resolution: "HOUR", epic: "US100", broker: "capital" })).toEqual({ line: L });
   });
-  it("keeps the pin's line for a coarser-pinned line, so rules on the pin's timeframe can use it", () => {
+  it("a coarser-pinned line is picked on the pin's timeframe", () => {
     const s2 = {
       key: "k", x0: 0, y0: 0, x1: 0, y1: 0, clone: () => null,
       alertLine: () => ({ slope: 1, tRef: 3, pRef: 3, t1: 1, p1: 1, t2: 2, p2: 2 }),
-      chartLine: () => ({ slope: 9, tRef: 3, pRef: 3, t1: 1, p1: 1, t2: 2, p2: 2 }),
     };
     const r = pickedLineFromSeg({ seg: s2, ext: { mtf: { timeframe: "1D" } }, resolution: "HOUR", epic: "US100", broker: "capital" });
     expect(r).toEqual({ line: { ...L, timeframe: "DAY" } });
