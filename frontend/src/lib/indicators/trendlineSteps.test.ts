@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildHtfStepMap,
   buildSteps,
+  clipPiece,
   distToSteps,
+  rampValueAt,
   stepRange,
   type HtfStepMap,
   type StepPiece,
@@ -155,21 +157,37 @@ describe("buildSteps", () => {
   const yOf = (p: number) => 1000 - p;
   const all = { xOf, yOf, posMin: -1e9, posMax: 1e9 };
 
-  it("buildSteps values", () => {
+  it("ramps each bar to the next bar's value; the newest candle's bar stays flat", () => {
+    expect(map.nowBar).toBe(9);
     const pieces = buildSteps(map, value, 0, 9, all);
     expect(pieces).toHaveLength(10);
     pieces.forEach((p, j) => {
       expect(p.y0).toBe(yOf(value(j)));
-      expect(p.y1).toBe(p.y0);
+      expect(p.y1).toBe(j === 9 ? p.y0 : yOf(value(j + 1)));
       expect(p.x0).toBe(xOf(j * 7 - 0.5));
       expect(p.x1).toBe(xOf(j * 7 + 6.5));
     });
   });
 
-  it("fractional end", () => {
+  it("fractional end ramps to the value there", () => {
     const pieces = buildSteps(map, value, 0, 3.5, all);
-    expect(pieces[pieces.length - 1].x1).toBe(xOf(map.posOf(3.5)));
+    const last = pieces[pieces.length - 1];
+    expect(last.x1).toBe(xOf(map.posOf(3.5)));
+    expect(last.y1).toBeCloseTo(yOf(value(3.5)), 9);
     expect(pieces).toHaveLength(4);
+  });
+
+  it("flat: one horizontal per bar (the Steps style)", () => {
+    const pieces = buildSteps(map, value, 0, 9, { ...all, flat: true });
+    pieces.forEach((p, j) => expect([p.y0, p.y1]).toEqual([yOf(value(j)), yOf(value(j))]));
+    expect(rampValueAt(map, value, 17, true)).toBe(value(2));
+  });
+
+  it("rampValueAt follows the pieces, flat in the newest candle's bar", () => {
+    // Candle 17 is the fourth of bar 2: 3.5 of 7 candle widths in.
+    expect(rampValueAt(map, value, 17)).toBeCloseTo(value(2.5), 9);
+    expect(rampValueAt(map, value, 66)).toBe(value(9));
+    expect(rampValueAt(map, value, 69)).toBe(value(9));
   });
 
   it("clamps at endPos", () => {
@@ -213,6 +231,13 @@ describe("stepRange", () => {
   it("anything else is unchanged", () => {
     expect(stepRange(lastIdx + 40, lastIdx, map)).toEqual({ jTo: lastIdx + 40 });
     expect(stepRange(lastIdx - 3, lastIdx, map)).toEqual({ jTo: lastIdx - 3 });
+  });
+});
+
+describe("clipPiece", () => {
+  it("interpolates y at the cut", () => {
+    expect(clipPiece({ x0: 0, x1: 10, y0: 50, y1: 40 }, 5, 20)).toEqual({ x0: 5, x1: 10, y0: 45, y1: 40 });
+    expect(clipPiece({ x0: 0, x1: 10, y0: 50, y1: 40 }, -5, 2)).toEqual({ x0: 0, x1: 2, y0: 50, y1: 48 });
   });
 });
 

@@ -1,11 +1,16 @@
 // Steps for a trendline pinned to a COARSER timeframe, drawn on a finer chart.
 //
 // The line is straight in HTF bars and has one value per HTF bar
-// (projectAt(line, j)), so on a finer chart it is drawn as one horizontal step
-// across every chart candle of HTF bar j, rising at the next bar. That gives
-// the same price at the same moment on every chart timeframe, which a straight
-// stroke in chart bars cannot: HTF bars do not hold a constant number of chart
-// candles. See docs/superpowers/specs/2026-11-11-pinned-trendline-steps-design.md.
+// (projectAt(line, j)), so on a finer chart each HTF bar j is drawn across its
+// own chart candles as a ramp from value(j) at its first candle's left edge to
+// value(j + 1) where the next bar starts. That puts every HTF bar's open at
+// the same price on every chart timeframe, which a straight stroke in chart
+// bars cannot (HTF bars do not hold a constant number of chart candles),
+// without the jagged look of flat steps. The bar holding the newest candle
+// stays FLAT at its own value: that is the level the HTF bar is judged
+// against, so the price at the newest candle, the tag and the alert line
+// match the pinned timeframe exactly. See
+// docs/superpowers/specs/2026-11-11-pinned-trendline-steps-design.md.
 //
 // Positions here are CHART positions in candle-edge units: candle c spans
 // [c - 0.5, c + 0.5], so a step's ends sit on candle edges and the caller
@@ -22,6 +27,9 @@ export interface HtfStepMap {
   readonly nChart: number;
   /** Index of the forming HTF bar: starts.length. */
   readonly forming: number;
+  /** HTF bar of the newest candle (the forming one, or later on a stale
+   * stash); its piece is flat. */
+  readonly nowBar: number;
   /** Chart candles per HTF bar (median of up to 5 recent fully loaded bars), >= 1. */
   readonly perBar: number;
   /** HTF bar of chart candle c, 0 <= c < nChart. */
@@ -162,6 +170,7 @@ export function buildHtfStepMap(
   return {
     nChart,
     forming: nS,
+    nowBar: lastBar,
     perBar,
     barOf: (c) => bar[c],
     span,
@@ -212,8 +221,24 @@ export function stepMapFor(dataList: readonly KLineData[], mtf: TrendlinesMtf): 
 export type { StepPiece } from "./trendlineMarks";
 export { distToSteps } from "./trendlineMarks";
 
+/** The line's value at chart position `pos`, as the pieces draw it: the
+ * ramp through the HTF bar there, flat in the newest candle's bar; with
+ * `flat` (the Steps style), that bar's own value everywhere. */
+export function rampValueAt(map: HtfStepMap, valueAt: (j: number) => number, pos: number, flat = false): number {
+  const j = map.jAt(pos);
+  return flat || Math.floor(j) === map.nowBar ? valueAt(Math.floor(j)) : valueAt(j);
+}
+
+/** A piece cut to [xa, xb], its y interpolated at the cut. */
+export function clipPiece(p: StepPiece, xa: number, xb: number): StepPiece {
+  const x0 = Math.max(p.x0, xa);
+  const x1 = Math.min(p.x1, xb);
+  const yAt = (x: number) => (p.x1 === p.x0 ? p.y0 : p.y0 + ((p.y1 - p.y0) * (x - p.x0)) / (p.x1 - p.x0));
+  return { x0, x1, y0: x0 === p.x0 ? p.y0 : yAt(x0), y1: x1 === p.x1 ? p.y1 : yAt(x1) };
+}
+
 /**
- * The step pieces of a line from HTF bar floor(jFrom) to jTo: an integer jTo
+ * The pieces of a line from HTF bar floor(jFrom) to jTo: an integer jTo
  * takes the whole of bar jTo, a fractional one ends at posOf(jTo). Only bars
  * meeting [posMin, posMax] are built; runs of pieces narrower than a pixel
  * are merged so a zoomed-out chart does not stroke thousands of them.
@@ -229,6 +254,8 @@ export function buildSteps(
     posMin: number;
     posMax: number;
     endPos?: number;
+    /** The Steps style: every piece flat at its bar's value. */
+    flat?: boolean;
   },
 ): StepPiece[] {
   const jStart = Math.floor(jFrom);
@@ -245,8 +272,11 @@ export function buildSteps(
     if (!s) continue;
     const to = Math.min(s.to, end);
     if (!(to > s.from)) continue;
+    // A ramp to the value where the piece ends; flat in the newest
+    // candle's bar.
     const y = opts.yOf(valueAt(j));
-    const p: StepPiece = { x0: opts.xOf(s.from), x1: opts.xOf(to), y0: y, y1: y };
+    const y1 = opts.flat || j === map.nowBar ? y : opts.yOf(valueAt(j + (to - s.from) / (s.to - s.from)));
+    const p: StepPiece = { x0: opts.xOf(s.from), x1: opts.xOf(to), y0: y, y1 };
     if (p.x1 - p.x0 >= 1) {
       if (run) {
         out.push(run);
@@ -284,11 +314,12 @@ export function stepRange(
   if (Number.isInteger(jRight) && jRight === lastIdx)
     // Through the newest candle's bar: the forming one, or a later one when
     // a stale stash left the newest candles past it.
-    return { jTo: Math.max(map.forming, map.nChart ? map.barOf(map.nChart - 1) : map.forming), endPos: map.nChart - 1 + 0.5 };
+    return { jTo: Math.max(map.forming, map.nowBar), endPos: map.nChart - 1 + 0.5 };
   return { jTo: jRight };
 }
 
-/** Stroke a staircase as ONE path, risers included. The caller sets the
+/** Stroke the pieces as ONE path, joined where they meet (a riser only where
+ * a ramp meets the flat newest bar's end or a bar the pin lacks). The caller sets the
  * style and calls ctx.stroke(). */
 export function strokeSteps(ctx: CanvasRenderingContext2D, pieces: readonly StepPiece[]): void {
   if (!pieces.length) return;

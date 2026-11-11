@@ -262,7 +262,8 @@ function draw(
   };
   // `xShift` scrolls the view: chart bar i sits at pixel i - xShift.
   const shift = typeof over.xShift === "number" ? over.xShift : 0;
-  const ext = { mtf, dedupe: false, nearPrice: false, ...over };
+  // The Steps look unless a test asks for the Ramp (the app's default).
+  const ext = { mtf, dedupe: false, nearPrice: false, pinnedStyle: "steps", ...over };
   const result = TRENDLINES_TEMPLATE.calc!(bars, { calcParams: PARAMS, extendData: ext } as never);
   const chart = { getDataList: () => bars, getSize: () => ({ width: 0 }) };
   TRENDLINES_TEMPLATE.draw!({
@@ -283,6 +284,35 @@ const stepPriceAt = (segs: Seg[], x: number): number | undefined => {
   const f = flats(segs).find((s) => s.x0 <= x && x <= s.x1);
   return f ? 400 - f.y0 : undefined;
 };
+
+describe("TRENDLINES_TEMPLATE.draw under a pin, Ramp look", () => {
+  const ramp = { pinnedStyle: "ramp" };
+  /** The ramp's price at chart position x, interpolated on its pieces. */
+  const rampPriceAt = (segs: Seg[], x: number): number | undefined => {
+    const g = segs.find((q) => q.x1 > q.x0 && q.x0 <= x && x <= q.x1);
+    return g ? 400 - (g.y0 + ((g.y1 - g.y0) * (x - g.x0)) / (g.x1 - g.x0)) : undefined;
+  };
+
+  it("runs each HTF bar from its value to the next bar's", () => {
+    const { segments } = draw(chartBars(), stash(), ramp);
+    // HTF bar 1 is chart bars 4..7: 110 at its first candle's left edge,
+    // 108 where HTF bar 2 starts.
+    expect(segments).toContainEqual({ x0: 3.5, y0: 400 - 110, x1: 7.5, y1: 400 - 108 });
+    expect(segments).toContainEqual({ x0: 7.5, y0: 400 - 108, x1: 11.5, y1: 400 - 106 });
+  });
+
+  it("keeps the newest candle's HTF bar flat at its own value", () => {
+    const { segments } = draw(chartBars(), stash(), ramp);
+    // HTF bar 9 (chart bars 36..39) holds the newest candle: flat at 94.
+    expect(segments).toContainEqual({ x0: 35.5, y0: 400 - 94, x1: 39.5, y1: 400 - 94 });
+  });
+
+  it("rings each touch ON the ramp", () => {
+    const { segments, rings } = draw(chartBars(), stash(), ramp);
+    expect(rings).toHaveLength(2);
+    for (const r of rings) expect(400 - r.y).toBeCloseTo(rampPriceAt(segments, r.x)!, 9);
+  });
+});
 
 describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
   it("draws a coarser pin as one step per HTF bar", () => {

@@ -36,7 +36,7 @@ type Ray = {
   points: RayPoints;
   drawn: RayPoints;
   key: string;
-  name: "segment" | "alertSteps";
+  name: "segment" | "alertSteps" | "alertRamp";
   steps?: Array<{ timestamp: number; value: number }>;
 };
 
@@ -180,7 +180,7 @@ export class IndicatorAlertLines {
   // TrendLine list, which can re-extend its second touch as new bars arrive
   // and would otherwise lose a match the alert itself never moved off.
   private lastPoints = new Map<string, RayPoints>();
-  // Alert ids whose ray draws as steps (alertSteps), for rayStepped().
+  // Alert ids whose ray draws as steps or a ramp, for rayStepped().
   private stepped = new Set<string>();
   // The visibility the drawn lines currently carry (the sidebar eye).
   private shownHidden = false;
@@ -281,7 +281,7 @@ export class IndicatorAlertLines {
       for (const [, inds] of panes) {
         const ind = inds.get(link.instanceId);
         if (!ind) continue;
-        const ext = ind.extendData as { mtf?: TrendlinesMtf } | undefined;
+        const ext = ind.extendData as { mtf?: TrendlinesMtf; pinnedStyle?: string } | undefined;
         if (!lineAlertShown(ext as Record<string, unknown> | undefined, this.resolution, a.params.timeframe)) break;
         const { t1, p1, t2, p2 } = a.params.anchors;
         dataList ??= this.chart.getDataList();
@@ -292,8 +292,11 @@ export class IndicatorAlertLines {
         if (pinned && ext?.mtf && (ext.mtf.htfMs ?? 0) > chartGapMs(dataList)) {
           const sp = alertStepPoints(dataList, ext.mtf, a.params);
           if (sp) {
-            const key = `S|${sp.steps.map((q) => `${q.timestamp}:${q.value}`).join("|")}`;
-            out.set(a.id, { points: sp.bell, drawn: sp.bell, key, name: "alertSteps", steps: sp.steps });
+            // The pane's pinned style: steps, or the ramp (default). The key's
+            // first letter is the overlay kind, so a style change re-creates it.
+            const flat = ext.pinnedStyle === "steps";
+            const key = `${flat ? "S" : "R"}|${sp.steps.map((q) => `${q.timestamp}:${q.value}`).join("|")}`;
+            out.set(a.id, { points: sp.bell, drawn: sp.bell, key, name: flat ? "alertSteps" : "alertRamp", steps: sp.steps });
             break;
           }
         }
@@ -334,7 +337,7 @@ export class IndicatorAlertLines {
   private reconcileRays(c: Chart, hidden: boolean, hiddenChanged: boolean): void {
     const want = this.wantedRays();
     this.lastPoints = new Map([...want].map(([id, w]) => [id, w.points]));
-    this.stepped = new Set([...want].filter(([, w]) => w.name === "alertSteps").map(([id]) => id));
+    this.stepped = new Set([...want].filter(([, w]) => w.name !== "segment").map(([id]) => id));
     for (const [id, geo] of this.rays) {
       const w = want.get(id);
       if (!w) {
@@ -344,7 +347,7 @@ export class IndicatorAlertLines {
       }
       if (w.key !== geo) {
         // The overlay kind cannot change in place: a ray that moves between
-        // a segment and steps is re-created below.
+        // a segment, steps and a ramp is re-created below.
         if (w.key[0] !== geo[0]) {
           c.removeOverlay({ id: rayId(id) });
           this.rays.delete(id);

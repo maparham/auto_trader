@@ -290,6 +290,7 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
   showPivots: false,
   showLinePivots: true,
   showCrossings: true,
+  pinnedStyle: "ramp",
   showStats: true,
   showStrength: false,
   fanEdges: false,

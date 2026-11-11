@@ -173,6 +173,7 @@ describe("IndicatorAlertLines: line alerts", () => {
     });
     const ext = {
       mtf: { timeframe: "HOUR", htfStarts: Array.from({ length: 10 }, (_, i) => T0 + i * H1), htfMs: H1, waitClose: false },
+      pinnedStyle: "steps",
     };
     const result = [{ lineIdx: 8 }];
     const a = lineAlert("s1");
@@ -208,6 +209,41 @@ describe("IndicatorAlertLines: line alerts", () => {
       id: "lnalert:al-l",
       points: [...stepsTo(9), { timestamp: bars[40].timestamp, value: 98 }],
     });
+  });
+
+  it("draws a ramp through the same points by default", () => {
+    const T0 = 1_700_000_000_000;
+    const M15 = 900_000;
+    const H1 = 3_600_000;
+    const bars = Array.from({ length: 40 }, (_, i) => {
+      const t = T0 + i * M15;
+      return { timestamp: t, open: 100, high: 100, low: i === 10 ? 90 : 100, close: 100, volume: 1 };
+    });
+    const ext = {
+      mtf: { timeframe: "HOUR", htfStarts: Array.from({ length: 10 }, (_, i) => T0 + i * H1), htfMs: H1, waitClose: false },
+    };
+    const a = lineAlert("s1");
+    a.params = { ...a.params, slope: 1, anchors: { t1: T0 + 2 * H1, p1: 90, t2: T0 + 6 * H1, p2: 94 } };
+    alerts.splice(0, alerts.length);
+    lineAlerts.splice(0, lineAlerts.length, a);
+    const created: Array<Record<string, unknown>> = [];
+    const chart = {
+      ...pixelSpace,
+      createOverlay: (o: Record<string, unknown>) => { created.push(o); return o.id as string; },
+      removeOverlay: vi.fn(),
+      overrideOverlay: vi.fn(),
+      getDataList: () => bars,
+      getIndicators: () => [{ name: "TRENDLINES", paneId: "candle_pane", extendData: ext, result: [{ lineIdx: 8 }] }],
+    };
+    const lines = new IndicatorAlertLines();
+    lines.attach(chart as never, "s1", "b", "US100", "MINUTE_15");
+    lines.reconcile();
+    const knots = Array.from({ length: 8 }, (_, k) => ({ timestamp: bars[4 * (k + 2)].timestamp, value: 90 + k }));
+    expect(created[0]).toMatchObject({
+      name: "alertRamp",
+      points: [...knots, { timestamp: bars[39].timestamp, value: 97 }],
+    });
+    expect(lines.rayStepped("al-l")).toBe(true);
   });
 
   it("rayPoints reports the ray's own anchors, surviving the live TrendLine list moving on", () => {

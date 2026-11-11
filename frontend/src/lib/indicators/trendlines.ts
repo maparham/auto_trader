@@ -43,7 +43,9 @@ import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 import { minPositiveGap } from "../barInterval";
 import { htfBarEndMs } from "../mtfForming";
 import { clipSegmentToRect, DRAW_CLIP_PAD } from "./shared";
-import { buildSteps, stepMapFor, stepRange, strokeSteps, type StepPiece } from "./trendlineSteps";
+import {
+  buildSteps, clipPiece, rampValueAt, stepMapFor, stepRange, strokeSteps, type StepPiece,
+} from "./trendlineSteps";
 import { afterNextPaint, clearIndicatorBusy, markIndicatorBusy } from "../indicatorBusy";
 import {
   cloneToolFor,
@@ -1542,6 +1544,11 @@ export interface TrendlinesExtend {
    * the same events Min/Max Crossings count and the end tag reports. ON by
    * default. Render-only. */
   showCrossings?: boolean;
+  /** How a line pinned to a COARSER timeframe draws on a finer chart:
+   * "ramp" (default) runs each HTF bar from its value to the next bar's,
+   * flat in the newest candle's bar; "steps" draws one horizontal per HTF
+   * bar. Render-only (alerts fire on the HTF value either way). */
+  pinnedStyle?: "ramp" | "steps";
   /** Write each drawn line's touch and crossing counts at its right end
    * ("3 ○ 2 ●"). ON by default. Render-only. */
   showStats?: boolean;
@@ -3414,6 +3421,8 @@ function drawTrendlines(
   const showStats = ext?.showStats ?? TRENDLINES_EXTEND_DEFAULTS.showStats;
   const showStrength = ext?.showStrength ?? TRENDLINES_EXTEND_DEFAULTS.showStrength;
   const showCrossings = ext?.showCrossings ?? TRENDLINES_EXTEND_DEFAULTS.showCrossings;
+  // Coarser pin: flat steps, or ramps (the default) with the newest bar flat.
+  const flatSteps = (ext?.pinnedStyle ?? TRENDLINES_EXTEND_DEFAULTS.pinnedStyle) === "steps";
   const showDepth = ext?.showPivotDepth ?? TRENDLINES_EXTEND_DEFAULTS.showPivotDepth;
   const paintMarks = (used: ReadonlySet<number>, depths: ReadonlyMap<number, number> | null): void => {
     if ((showAll || showLineUsed) && last?.pivots)
@@ -3694,25 +3703,27 @@ function drawTrendlines(
     let xExt: number;
     let y0: number;
     let y1: number;
-    // Coarser pin: the stepped stroke and its dashed extension.
+    // Coarser pin: the ramped stroke (flat in the newest candle's HTF bar)
+    // and its dashed extension.
     let pieces: StepPiece[] | null = null;
     let extPieces: StepPiece[] | null = null;
-    // The solid steps' true end (chart position) and last HTF bar, uncut by
+    // The solid stroke's true end (chart position), uncut by
     // the viewport, for the extension and the clone.
     let stepEndPos = 0;
-    let stepEndJ = 0;
     if (stepMap) {
       const valueAt = (j: number) => projectAt(line, j);
       const { jTo, endPos } = stepRange(jRight, lastIdx, stepMap);
-      const opts = { xOf: (pos: number) => xAxis.convertToPixel(pos), yOf: yPx, posMin, posMax, endPos };
+      const opts = {
+        xOf: (pos: number) => xAxis.convertToPixel(pos), yOf: yPx, posMin, posMax, endPos, flat: flatSteps,
+      };
       pieces = buildSteps(stepMap, valueAt, jLeft, jTo, opts);
-      stepEndJ = Math.floor(jTo);
       stepEndPos = Math.min(
         endPos ?? Infinity,
         Number.isInteger(jTo) ? (stepMap.span(jTo)?.to ?? stepMap.posOf(jTo + 1)) : stepMap.posOf(jTo),
       );
       x1 = xAxis.convertToPixel(stepEndPos);
-      y1 = yPx(valueAt(stepEndJ));
+      // Just inside the end: exactly on a bar edge reads the next bar.
+      y1 = yPx(rampValueAt(stepMap, valueAt, stepEndPos - 1e-6, flatSteps));
       x0 = pieces.length ? pieces[0].x0 : x1;
       y0 = pieces.length ? pieces[0].y0 : y1;
       if (jExt > jRight) {
@@ -3725,7 +3736,7 @@ function drawTrendlines(
           endPos: undefined,
         })
           .filter((p) => p.x1 > solidX)
-          .map((p) => (p.x0 < solidX ? { ...p, x0: solidX } : p));
+          .map((p) => (p.x0 < solidX ? clipPiece(p, solidX, Infinity) : p));
       }
       // Nothing of the line on the pane: neither its steps nor its extension.
       if (!pieces.length && !extPieces?.length) continue;
@@ -3737,9 +3748,8 @@ function drawTrendlines(
       if (Math.max(x1, xExt) <= 0 || x0 >= bounding.width) continue;
       ({ y0, y1 } = endY(jRight, x1));
     }
-    // A stepped line's price over chart candle c: the step of c's HTF bar.
-    const stepY = (c: number): number =>
-      yPx(projectAt(line, stepMap!.barOf(Math.max(0, Math.min(stepMap!.nChart - 1, Math.round(c))))));
+    // A ramped line's y at chart position c, as its pieces draw it.
+    const stepY = (c: number): number => yPx(rampValueAt(stepMap!, (j) => projectAt(line, j), c, flatSteps));
     // Marks (the touch rings) ride the SEGMENT AS DRAWN rather
     // than projecting themselves: under a timeframe pin the index map is only
     // piecewise linear (a weekend compresses on the chart but not in time), so
@@ -3816,22 +3826,25 @@ function drawTrendlines(
     // Stepped: the on-pane pieces, hit-tested by x (hitTrendline).
     const hitSteps = pieces
       ?.filter((p) => p.x1 > 0 && p.x0 < tagRight)
-      .map((p) => (p.x0 < 0 || p.x1 > tagRight ? { ...p, x0: Math.max(0, p.x0), x1: Math.min(tagRight, p.x1) } : p));
+      .map((p) => (p.x0 < 0 || p.x1 > tagRight ? clipPiece(p, 0, tagRight) : p));
     const hitSeg = hitSteps
       ? hitSteps.length
         ? [hitSteps[0].x0, hitSteps[0].y0, hitSteps[hitSteps.length - 1].x1, hitSteps[hitSteps.length - 1].y1]
         : null
       : clipSegmentToRect(x0, y0, x1, y1, 0, 0, tagRight, bounding.height);
     if (hitSeg) {
-      // A stepped line's clone: a drawing cannot be a staircase, so it is
-      // straight from the first stepped candle to the stroke's end (the
-      // newest candle when it reaches it), at the step values there.
+      // A ramped line's clone: a drawing cannot bend, so it is straight
+      // from the first candle to the stroke's end (the newest candle when it
+      // reaches it), at the line's values there.
       // From the line's geometry, not the culled pieces, so the clone does
       // not change as the view scrolls.
-      const stepPoint = (c: number, j: number): { timestamp: number; value: number } | null => {
+      const stepPoint = (c: number): { timestamp: number; value: number } | null => {
         timestamps ??= dataList.map((d) => d.timestamp);
-        const timestamp = tsAtIndex(timestamps, Math.min(lastChartIdx, c));
-        return timestamp === null ? null : { timestamp, value: projectAt(line, j) };
+        const cc = Math.min(lastChartIdx, c);
+        const timestamp = tsAtIndex(timestamps, cc);
+        return timestamp === null || !stepMap
+          ? null
+          : { timestamp, value: rampValueAt(stepMap, (j) => projectAt(line, j), cc, flatSteps) };
       };
       const toPoint = (x: number): { timestamp: number; value: number } | null => {
         timestamps ??= dataList.map((d) => d.timestamp);
@@ -3851,12 +3864,12 @@ function drawTrendlines(
         clone: (): TrendlineClone | null => {
           if (pieces && stepMap) {
             const jA = Math.floor(jLeft);
-            const a = stepPoint(Math.round(stepMap.posOf(jA) + 0.5), jA);
+            const a = stepPoint(Math.round(stepMap.posOf(jA) + 0.5));
             const reachesNow = stepEndPos >= lastChartIdx;
             const b =
               tool === "segment" || !reachesNow
-                ? stepPoint(Math.round(stepEndPos - 0.5), stepEndJ)
-                : stepPoint(lastChartIdx, stepMap.barOf(lastChartIdx));
+                ? stepPoint(Math.round(stepEndPos - 0.5))
+                : stepPoint(lastChartIdx);
             if (!a || !b || a.timestamp === b.timestamp) return null;
             return { tool, points: [a, b] };
           }
@@ -3906,7 +3919,7 @@ function drawTrendlines(
       const idx = line.touchIdxs[t];
       const kd = touchKindAt(line, t);
       const xT = kd ? xAtPivot(idx, kd) : xAt(idx);
-      const yT = pieces ? yPx(projectAt(line, idx)) : onSegment(xT);
+      const yT = pieces ? stepY(xAxis.convertFromPixel(xT)) : onSegment(xT);
       if (xT < 0 || xT > Math.min(tagRight, x1) || yT < 0 || yT > bounding.height)
         continue;
       ctx.beginPath();
@@ -3977,8 +3990,8 @@ function drawTrendlines(
     let xEnd = xAt(drawEdge);
     let yEnd = yAxis.convertToPixel(projectAt(line, drawEdge));
     if (pieces) {
-      // On the step under the newest candle when the line reaches it, else
-      // where the stroke stops.
+      // On the flat piece under the newest candle when the line reaches it,
+      // else where the stroke stops.
       const xNow = xAxis.convertToPixel(lastChartIdx);
       xEnd = x1 >= xNow ? xNow : x1;
       yEnd = x1 >= xNow ? stepY(lastChartIdx) : y1;

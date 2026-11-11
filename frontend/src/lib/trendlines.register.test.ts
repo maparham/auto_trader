@@ -104,6 +104,7 @@ describe("TRENDLINES registration", () => {
     const style = resolveInputs("TRENDLINES", undefined).filter((i) => i.tab === "style");
     expect(style.every((i) => i.source === "extend")).toBe(true);
     expect(groupInputs(style).map((c) => c.map((i) => i.label))).toEqual([
+      ["Pinned line look"],
       ["Show pivots", "Mark line pivots", "Show pivot depth"],
       ["Mark crossings", "Fan edges only"],
       ["Show pivot◦ & crossing• counts"],

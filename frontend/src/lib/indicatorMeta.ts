@@ -1179,6 +1179,26 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: "Where a line stops on the right, and whether it runs back before its first anchor.",
       },
       {
+        key: "pinnedStyle",
+        label: "Pinned line look",
+        type: "select",
+        source: "extend",
+        field: "pinnedStyle",
+        section: "Pinned lines",
+        tab: "style",
+        default: TRENDLINES_EXTEND_DEFAULTS.pinnedStyle,
+        options: [
+          { value: "ramp", label: "Ramp" },
+          { value: "steps", label: "Steps" },
+        ],
+        tip: [
+          "How a line pinned to a higher timeframe draws on a lower chart.",
+          "Ramp: runs from each higher bar's value to the next. The newest bar stays flat.",
+          "Steps: one flat piece per higher bar.",
+          "Both cross each higher bar's open at the same price.",
+        ],
+      },
+      {
         key: "showPivots",
         label: "Show pivots",
         type: "boolean",
