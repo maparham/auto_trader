@@ -3,8 +3,8 @@ import { lineKey, projectAt } from "./trendlines";
 import { runDebugSync } from "./trendlinesDebug";
 import { explain } from "./trendlinesDebugExplain";
 import {
-  cycleDebugGroup, debugInputFor, debugLookup, debugState, debugTarget, debugWindow, requestDebug, setDebugSim,
-  setDebugTarget,
+  cycleDebugGroup, debugInputFor, debugLookup, debugState, debugTarget, debugWindow, requestDebug, resetDebug,
+  setDebugSim, setDebugTarget,
 } from "./trendlinesDebugStore";
 import { TRENDLINES_DEFAULTS } from "./trendlinesOutputs";
 import { synthBars } from "./trendlinesSynth.testutil";
@@ -72,6 +72,11 @@ describe("debugWindow", () => {
   it("buckets so a small pan reuses the same window", () => {
     const id = (j: number) => j;
     expect(debugWindow(1000, 1100, id)).toEqual(debugWindow(1010, 1110, id));
+  });
+  it("a small zoom keeps the bucket size", () => {
+    const id = (j: number) => j;
+    const size = ([a, b]: [number, number]) => b - a;
+    expect(size(debugWindow(1000, 1300, id))).toBe(size(debugWindow(1000, 1290, id)));
   });
 });
 
@@ -212,13 +217,59 @@ describe("requestDebug", () => {
     expect(v.measured).toBeCloseTo(Math.abs(projectAt(c.line, 799) - moved) / atr);
   });
 
-  it("a run for a new window keeps the previous result up while pending", async () => {
+  it("a view inside the cached run's window reuses it: no re-run on zoom in", async () => {
     const chart = fakeChart();
     requestDebug(chart, "candle_pane", "TL", debugInputFor(bars, TRENDLINES_DEFAULTS, {}, 799, [0, 799]) as never);
     const e = debugState(chart, "TL");
     await vi.waitFor(() => expect(e.result).not.toBeNull());
+    const inner = debugInputFor(bars, TRENDLINES_DEFAULTS, {}, 799, [300, 700]) as never;
+    expect(requestDebug(chart, "candle_pane", "TL", inner)).toBe(e.result);
+    expect(e.pending).toBeNull();
+  });
+
+  it("live is what the draw shows: null while new settings re-run", async () => {
+    const chart = fakeChart();
+    const inp = debugInputFor(bars, TRENDLINES_DEFAULTS, {}, 799, [0, 799]) as never;
+    requestDebug(chart, "candle_pane", "TL", inp);
+    const e = debugState(chart, "TL");
+    await vi.waitFor(() => expect(e.result).not.toBeNull());
+    requestDebug(chart, "candle_pane", "TL", inp);
+    expect(e.live).toBe(e.result);
+    // One result replacing another still moves liveRev (the UI's snapshot).
+    const rev = e.liveRev;
+    const prev = e.live;
+    e.result = { ...prev! };
+    requestDebug(chart, "candle_pane", "TL", inp);
+    expect(e.live).toBe(e.result);
+    expect(e.liveRev).toBe(rev + 1);
+    const other = debugInputFor(bars, { ...TRENDLINES_DEFAULTS, minTouches: 3 }, {}, 799, [0, 799]) as never;
+    requestDebug(chart, "candle_pane", "TL", other);
+    expect(e.result).not.toBeNull();
+    expect(e.live).toBeNull();
+  });
+
+  it("resetDebug drops the target and the results, keeps the strip's toggles", async () => {
+    const chart = fakeChart();
+    setDebugTarget(chart, "candle_pane", "TL", { t1: bars[100].timestamp, p1: 1, t2: bars[400].timestamp, p2: 2 });
+    cycleDebugGroup(chart, "candle_pane", "TL", "slope", 3);
+    requestDebug(chart, "candle_pane", "TL", debugInputFor(bars, TRENDLINES_DEFAULTS, {}, 799, [0, 799]) as never);
+    const e = debugState(chart, "TL");
+    await vi.waitFor(() => expect(e.result).not.toBeNull());
+    resetDebug(chart);
+    expect(e.target).toBeNull();
+    expect(e.result).toBeNull();
+    expect(e.live).toBeNull();
+    expect(e.key).toBe("");
+    expect(e.hidden.has("slope")).toBe(true);
+  });
+
+  it("a run for a new window keeps the previous result up while pending", async () => {
+    const chart = fakeChart();
+    requestDebug(chart, "candle_pane", "TL", debugInputFor(bars, TRENDLINES_DEFAULTS, {}, 799, [200, 799]) as never);
+    const e = debugState(chart, "TL");
+    await vi.waitFor(() => expect(e.result).not.toBeNull());
     const prev = e.result;
-    const moved = debugInputFor(bars, TRENDLINES_DEFAULTS, {}, 799, [200, 799]) as never;
+    const moved = debugInputFor(bars, TRENDLINES_DEFAULTS, {}, 799, [0, 799]) as never;
     expect(requestDebug(chart, "candle_pane", "TL", moved)).toBe(prev);
     expect(e.pending).not.toBeNull();
     expect(requestDebug(chart, "candle_pane", "TL", moved)).toBe(prev);

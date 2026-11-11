@@ -126,6 +126,21 @@ function poolIndexOf(pool: TlState["pool"], idx: number, kind: PivotKind): numbe
   return -1;
 }
 
+/** Step 2a of stepTrendlinesBar for one line and one accepted pivot. */
+function scoreTouch(line: TrendLine, k: number, price: number, kind: PivotKind, tolA: number, cfg: TrendlinesConfig): void {
+  if (k <= line.i2) return;
+  const w = touchWeight(line, k, price, kind, cfg.touchMult * tolA, cfg.pierceMult * tolA);
+  if (w <= 0) return;
+  line.touches += w;
+  line.touchIdxs.push(k);
+  line.touchKinds.push(kind);
+  const gap = k - line.maxTouchIdx;
+  if (gap > line.maxTouchGap) line.maxTouchGap = gap;
+  if (gap < line.minTouchGap) line.minTouchGap = gap;
+  line.maxTouchIdx = k;
+  line.lastTouchIdx = k;
+}
+
 interface RecordingSink extends TlSink {
   records: DebugRecord[];
   rejectedPivots: RejectedPivot[];
@@ -165,6 +180,15 @@ function createSink(lo: number, hi: number, forced: ForcedPair[], maxStepping: n
     const q2 = poolIndexOf(st.pool, f.i2, f.k2);
     const poolGap = q1 < 0 ? null : (q2 >= 0 ? q2 : st.pool.idxs.length) - q1;
     const inMajor = q1 >= 0 && st.majors.q.includes(q1);
+    // Added late (at the eval bar): the pivots after the second anchor were
+    // never scored against it, so score them now, in bar order, exactly as
+    // pivotTouch would have.
+    if (i !== f.i2 + cfg.pivotLen)
+      for (let q = firstPoolAtOrAfter(st.pool, f.i2 + 1); q < st.pool.idxs.length; q++) {
+        const k = st.pool.idxs[q];
+        const tolA = st.atr[k];
+        if (tolA !== null) scoreTouch(line, k, priceOf(st, k, st.pool.kinds[q]), st.pool.kinds[q], tolA, cfg);
+      }
     track({
       line, origin: "forced", bornAt: i, endedAt: null,
       forced: { ...f, poolGap, inMajor, unconfirmed },
@@ -183,22 +207,7 @@ function createSink(lo: number, hi: number, forced: ForcedPair[], maxStepping: n
     pivotTouch(st, k, price, kind, cfg) {
       const tolA = st.atr[k];
       if (tolA === null) return;
-      // Same bookkeeping as step 2a of stepTrendlinesBar.
-      for (const r of stepping) {
-        const line = r.line;
-        if (k <= line.i2) continue;
-        const w = touchWeight(line, k, price, kind, cfg.touchMult * tolA, cfg.pierceMult * tolA);
-        if (w > 0) {
-          line.touches += w;
-          line.touchIdxs.push(k);
-          line.touchKinds.push(kind);
-          const gap = k - line.maxTouchIdx;
-          if (gap > line.maxTouchGap) line.maxTouchGap = gap;
-          if (gap < line.minTouchGap) line.minTouchGap = gap;
-          line.maxTouchIdx = k;
-          line.lastTouchIdx = k;
-        }
-      }
+      for (const r of stepping) scoreTouch(r.line, k, price, kind, tolA, cfg);
     },
     seedRejected(st, q, k, kind, price, i, cfg, gate) {
       const i1 = st.pool.idxs[q];
@@ -279,13 +288,16 @@ export function runDebugSync(input: DebugRunInput): DebugRun {
 
 const yieldToMain = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-/** The same run in chunks of bars, yielding between them. Resolves null when
- * `signal` aborts (checked at every yield and before starting). */
+/** The same run in chunks of bars, yielding before the first and between
+ * them. Resolves null when `signal` aborts (checked at every yield). */
 export async function runDebugAsync(
   input: DebugRunInput,
   signal?: AbortSignal,
   chunk = 1500,
 ): Promise<DebugRun | null> {
+  // Nothing synchronous: the draw path calls this, and the setup plus a
+  // generator's first chunk would otherwise run inside that frame.
+  await yieldToMain();
   if (signal?.aborted) return null;
   const { st, sink } = prepare(input);
   for (const _ of steps(input, st, sink, chunk)) {

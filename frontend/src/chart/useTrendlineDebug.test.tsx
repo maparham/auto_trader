@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { act, renderHook } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { applyDebugChanges, useTrendlineDebug } from "./useTrendlineDebug";
 import { TRENDLINES_DEFAULTS } from "../lib/indicators/trendlinesOutputs";
 import { runDebugSync, type DebugRunInput } from "../lib/indicators/trendlinesDebug";
@@ -62,6 +62,7 @@ describe("useTrendlineDebug", () => {
     };
     const e = debugState(chart, "TL_B");
     e.result = explain(runDebugSync(input));
+    e.live = e.result;
     e.input = input;
     e.key = "k";
     const cand = e.result.candidates.find((c) => !c.drawn)!;
@@ -74,5 +75,38 @@ describe("useTrendlineDebug", () => {
     });
     expect(result.current.popup).not.toBeNull();
     unmount();
+  });
+
+  it("a lookup point click stays the lookup's until the menu's deferred pick has run", () => {
+    const inds = [{ name: "TL", extendData: { debug: true } }];
+    const chart = {
+      getIndicators: (f: { name?: string }) => (f.name ? inds.filter((i) => i.name === f.name) : inds),
+      overrideIndicator: vi.fn(),
+      convertFromPixel: () => ({ timestamp: 1, value: 2 }),
+    };
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const { result, unmount } = renderHook(() => useTrendlineDebug({
+      chartRef: { current: chart as never }, containerRef: { current: el },
+      overlays: { getSelectedDrawingId: () => null } as never,
+      scope: "s", epicRef: { current: "E" }, brokerIdRef: { current: "b" },
+    }));
+    const view = render(<>{result.current.bar}</>);
+    act(() => { fireEvent.click(screen.getByText("Check a line")); });
+    vi.useFakeTimers();
+    try {
+      fireEvent.pointerDown(el, { button: 0, clientX: 30, clientY: 40 });
+      fireEvent.pointerUp(window, { button: 0, clientX: 30, clientY: 40 });
+      // The menu's pick runs in a timeout queued at pointerup: still owned.
+      expect(result.current.ownsClick(30, 40)).toBe(true);
+      // Consumed: a later click there is a normal one.
+      expect(result.current.ownsClick(30, 40)).toBe(false);
+      act(() => { vi.runAllTimers(); });
+    } finally {
+      vi.useRealTimers();
+      view.unmount();
+      unmount();
+      el.remove();
+    }
   });
 });

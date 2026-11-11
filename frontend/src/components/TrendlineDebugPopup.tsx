@@ -25,7 +25,7 @@ export function settingLabel(field: keyof TrendlinesConfig): string {
 }
 
 const GATE_TEXT: Partial<Record<Verdict["gate"], string>> = {
-  unconfirmed: "Not confirmed yet", fractal: "Not a pivot", window: "Too far back to pair",
+  floor: "Before the computed range", unconfirmed: "Not confirmed yet", fractal: "Not a pivot", window: "Too far back to pair",
   liveCap: `Dropped by the ${MAX_LIVE} live line cap`, stale: "Untouched too long",
   fanMerged: "Merged into its fan", merged: "Merged into a nearer line", perPivot: "Too many lines at a pivot", maxLines: "Past Max Trendlines",
 };
@@ -157,6 +157,12 @@ export default function TrendlineDebugPopup(p: TrendlineDebugPopupProps) {
       {cand.fate?.kind === "merged" || cand.fate?.kind === "fanMerged" ? <div className="tl-dbg-note">Winner glows on the chart.</div> : null}
       {extra && extra.kind !== "drawn" ? (
         <div className="tl-dbg-note">If it were live it would still lose: {FATE_TEXT[extra.kind] ?? extra.kind}.</div>
+      ) : null}
+      {impossible.some((v) => v.gate === "floor") ? (
+        <div className="tl-dbg-note">
+          Trendlines computes from a little before the view.
+          <InfoTip text={["The line starts before that.", "Scroll back until its start is on screen."]} />
+        </div>
       ) : null}
       {impossible.some((v) => v.gate === "liveCap") ? (
         <div className="tl-dbg-note">

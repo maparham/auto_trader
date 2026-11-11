@@ -11,7 +11,7 @@ import { parseTrendlinesConfig, type TrendlinesConfig } from "../lib/indicators/
 import type { TrendlinesExtend } from "../lib/indicators/trendlines";
 import { findTrendlineSegment, type TrendlineHit } from "../lib/indicators/trendlineMarks";
 import {
-  cycleDebugGroup, debugLookup, debugState, debugTarget, setDebugSim, setDebugTarget, subscribeDebugAny,
+  cycleDebugGroup, debugLookup, debugState, debugTarget, resetDebug, setDebugSim, setDebugTarget, subscribeDebugAny,
 } from "../lib/indicators/trendlinesDebugStore";
 import { DBG_KEY_PREFIX, reasonTag } from "../lib/indicators/trendlinesDebugDraw";
 import { pickTrendline } from "./useTrendlineMenu";
@@ -79,6 +79,9 @@ function debugInstance(chart: Chart): { paneId: string; name: string } | null {
 
 export function useTrendlineDebug({ chartRef, containerRef, overlays, scope, epicRef, brokerIdRef }: Args): {
   openFor: (hit: TrendlineHit, clientX: number, clientY: number) => boolean;
+  /** True (once) when the click at this point was a lookup press: the line
+   * menu then neither picks a line nor opens a popup for it. */
+  ownsClick: (clientX: number, clientY: number) => boolean;
   popup: ReactNode;
   bar: ReactNode;
 } {
@@ -89,8 +92,8 @@ export function useTrendlineDebug({ chartRef, containerRef, overlays, scope, epi
   const [undo, setUndo] = useState<Undo | null>(null);
   const [armed, setArmed] = useState<{ first: { t: number; p: number } | null } | null>(null);
   // The client point of an arming press, until its release has passed. The
-  // menu's pointerup (registered first, on window) still hit tests that
-  // release; openFor must not turn a lookup click into a popup.
+  // menu's pointerup still hit tests that release, in a timeout of its own;
+  // ownsClick and openFor must not turn a lookup click into a pick or popup.
   const armPressRef = useRef<{ x: number; y: number } | null>(null);
   // Read on every render: the chart is created after this hook first runs,
   // and the store's notify is what re-renders us once it exists.
@@ -100,23 +103,45 @@ export function useTrendlineDebug({ chartRef, containerRef, overlays, scope, epi
   // so a debug toggle between two results still reads as a change. The
   // popup's instance can be a second debug-on one, so it is named as well.
   const openName = open?.name;
+  // `liveRev` moves whenever the result the draw shows changes (null while
+  // a re-run for new settings or a new target is pending).
   useSyncExternalStore(subscribe, () => {
     const chart = chartRef.current;
     const i = chart ? debugInstance(chart) : null;
-    const strip = chart && i ? `${i.name}:${debugState(chart, i.name).rev}` : "";
-    return chart && openName ? `${strip}|${openName}:${debugState(chart, openName).rev}` : strip;
+    const sig = (n: string) => {
+      const e = debugState(chart!, n);
+      return `${n}:${e.rev}:${e.liveRev}`;
+    };
+    const strip = chart && i ? sig(i.name) : "";
+    return chart && openName ? `${strip}|${sig(openName)}` : strip;
   });
+
+  // A symbol switch reuses the chart: the old symbol's target and results
+  // must not carry over. epicRef is a ref, read at render (the host
+  // re-renders on a symbol change).
+  const epicNow = epicRef.current;
+  const epicSeen = useRef(epicNow);
+  useEffect(() => {
+    if (epicSeen.current === epicNow) return;
+    epicSeen.current = epicNow;
+    const c = chartRef.current;
+    if (c) resetDebug(c);
+    setArmed(null);
+    setOpen(null);
+  }, [epicNow, chartRef]);
 
   // The strip belongs to the first debug-on instance; the popup to whichever
   // instance the clicked line came from (open.name).
   const inst = chart ? debugInstance(chart) : null;
   const entry = chart && inst ? debugState(chart, inst.name) : null;
-  const res = entry?.result ?? null;
+  // `live`, not `result`: a result for superseded settings or a superseded
+  // target is not what the chart shows, and its fixes no longer apply.
+  const res = entry?.live ?? null;
   const input = entry?.input ?? null;
   const openOn = !!(chart && open && (chart.getIndicators({ paneId: open.paneId, name: open.name })[0]
     ?.extendData as TrendlinesExtend | undefined)?.debug);
   const pEntry = chart && open && openOn ? debugState(chart, open.name) : null;
-  const pRes = pEntry?.result ?? null;
+  const pRes = pEntry?.live ?? null;
   const pInput = pEntry?.input ?? null;
   const candKey = open
     ? open.key.startsWith(DBG_KEY_PREFIX) ? open.key.slice(DBG_KEY_PREFIX.length) : open.key
@@ -132,6 +157,13 @@ export function useTrendlineDebug({ chartRef, containerRef, overlays, scope, epi
     () => (starts?.length ? starts : bars ? bars.map((b) => b.timestamp) : []),
     [bars, starts],
   );
+
+  const ownsClick = useCallback((clientX: number, clientY: number): boolean => {
+    const ap = armPressRef.current;
+    if (!ap || Math.abs(ap.x - clientX) > 12 || Math.abs(ap.y - clientY) > 12) return false;
+    armPressRef.current = null;
+    return true;
+  }, []);
 
   const openFor = useCallback((hit: TrendlineHit, clientX: number, clientY: number): boolean => {
     const c = chartRef.current;
@@ -233,9 +265,12 @@ export function useTrendlineDebug({ chartRef, containerRef, overlays, scope, epi
       e.preventDefault();
       e.stopImmediatePropagation();
       armPressRef.current = { x: e.clientX, y: e.clientY };
-      // Registered after the menu's own window listener, so it clears the
-      // mark only once that listener has seen the release.
-      window.addEventListener("pointerup", () => { armPressRef.current = null; }, { capture: true, once: true });
+      // Cleared in a timeout queued AFTER the menu's own (its pointerup
+      // listener was registered first and defers its pick with a timeout),
+      // so the menu still sees the mark when it hit tests this release.
+      window.addEventListener("pointerup", () => {
+        setTimeout(() => { armPressRef.current = null; }, 0);
+      }, { capture: true, once: true });
       if (!armed.first) setArmed({ first: { t: pt.timestamp, p: pt.value } });
       else {
         setDebugTarget(c, instPane, instName, { t1: armed.first.t, p1: armed.first.p, t2: pt.timestamp, p2: pt.value });
@@ -392,5 +427,5 @@ export function useTrendlineDebug({ chartRef, containerRef, overlays, scope, epi
       />
     );
   }
-  return { openFor, popup, bar };
+  return { openFor, ownsClick, popup, bar };
 }

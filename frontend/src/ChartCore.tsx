@@ -1840,7 +1840,7 @@ export default function ChartCore({
     epic: symbol.epic, broker: brokerId, precision: effPrecision, quoteOnly: !supportsStreaming(brokerId),
   };
   const trendlineMenu = useTrendlineMenu({
-    chartRef, containerRef, overlays, scope, epicRef, onDebugPick: trendlineDebug.openFor,
+    chartRef, containerRef, overlays, scope, epicRef, onDebugPick: trendlineDebug.openFor, ownsClick: trendlineDebug.ownsClick,
     lineAlert: {
       ctx: alertContext,
       resolutionRef: resRef,

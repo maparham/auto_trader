@@ -120,13 +120,14 @@ describe("useTrendlineMenu line notes", () => {
 describe("useTrendlineMenu click pick", () => {
   afterEach(() => { cleanup(); vi.useRealTimers(); });
   beforeEach(() => { hit.seg.key = "1:2"; vi.useFakeTimers(); });
-  function click(took: boolean) {
+  function click(took: boolean, owned = false) {
     const el = document.createElement("div");
     const pick = vi.fn(() => true);
+    const ownsClick = vi.fn(() => owned);
     renderHook(() =>
       useTrendlineMenu({
         chartRef: { current: { getIndicators: () => [{ name: "TL", paneId: "candle_pane", extendData: {} }] } as never },
-        containerRef: { current: el }, scope: "s", epicRef: { current: "E" }, onDebugPick: pick,
+        containerRef: { current: el }, scope: "s", epicRef: { current: "E" }, onDebugPick: pick, ownsClick,
         overlays: { isDrawing: () => false, peekOverlayRightClick: () => false, clickToken: () => null, clickTookOwnOverlay: () => took } as never,
       }),
     );
@@ -140,5 +141,8 @@ describe("useTrendlineMenu click pick", () => {
   });
   it("yields to a drawing klinecharts took the click for", () => {
     expect(click(true)).not.toHaveBeenCalled();
+  });
+  it("a debug lookup's point click picks no line and opens no popup", () => {
+    expect(click(false, true)).not.toHaveBeenCalled();
   });
 });

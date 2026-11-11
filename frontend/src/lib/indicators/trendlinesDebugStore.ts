@@ -32,6 +32,14 @@ export interface DebugEntry {
   /** Groups painted in full rather than sampled (DEBUG_SAMPLE nearest). */
   expanded: Set<string>;
   rev: number;
+  /** What the draw last showed (requestDebug's return): the UI reads this,
+   * never `result`, which can belong to superseded settings or a superseded
+   * target while their re-run is pending. */
+  live: TlDebugResult | null;
+  /** Bumped whenever `live` changes, including from one result to another:
+   * the UI's snapshot reads it, since `rev` is bumped BEFORE the draw moves
+   * `live` and a render in between would otherwise keep the old one. */
+  liveRev: number;
   paneId: string;
   input: DebugRunInput | null;
   /** The target resolved against one bars array: recomputed only when the
@@ -70,7 +78,7 @@ export function debugState(chart: object, name: string): DebugEntry {
   if (!e) {
     e = {
       key: "", run: null, result: null, close: null, reexplain: false, pending: null, target: null, targetError: null,
-      sim: { ...SIM_DEFAULTS }, hidden: new Set(), expanded: new Set(), rev: 0, paneId: "candle_pane",
+      sim: { ...SIM_DEFAULTS }, hidden: new Set(), expanded: new Set(), rev: 0, live: null, liveRev: 0, paneId: "candle_pane",
       input: null, tmemo: null, lmemo: null,
     };
     byName.set(name, e);
@@ -105,7 +113,16 @@ export function noteDebugOn(chart: object, name: string, on: boolean): void {
   if (!set) DEBUG_ON.set(chart, (set = new Set()));
   if (set.has(name) === on) return;
   if (on) set.add(name);
-  else set.delete(name);
+  else {
+    set.delete(name);
+    // Turned back on later, the first render must not show this result:
+    // the settings may have changed meanwhile. The draw sets it again.
+    const e = STORE.get(chart)?.get(name);
+    if (e && e.live) {
+      e.live = null;
+      e.liveRev++;
+    }
+  }
   notify(chart);
 }
 
@@ -120,11 +137,14 @@ export function repaintDebug(chart: object, paneId: string, name: string): void 
  * Bucketed off the CENTER of the range rather than its two edges
  * independently: bucketing `a` and `b` each on their own can put them in
  * different cells right at a boundary (a span whose right edge sits exactly
- * on a bucket line), which would defeat the whole point of bucketing. */
+ * on a bucket line), which would defeat the whole point of bucketing. The
+ * bucket is a power of two, so a zoom only changes it when the span crosses
+ * one; a zoom IN keeps the old result anyway (requestDebug: a run whose
+ * window contains the view is reused). */
 export function debugWindow(from: number, to: number, toLine: (j: number) => number): [number, number] {
   const a = Math.floor(toLine(from));
   const b = Math.ceil(toLine(to));
-  const bucket = Math.max(50, Math.round((b - a) / 2));
+  const bucket = Math.max(64, 2 ** Math.ceil(Math.log2(Math.max(1, (b - a) / 2))));
   const cell = Math.floor((a + b) / 2 / bucket);
   return [cell * bucket - bucket, cell * bucket + 2 * bucket];
 }
@@ -186,9 +206,15 @@ const baseKeyFor = (inp: DebugRunInput, e: DebugEntry) =>
     e.target ? `${e.target.t1}:${e.target.p1}:${e.target.t2}:${e.target.p2}` : "",
   ].join("|");
 
-/** The run key. The close is NOT in it (see DebugEntry.run). */
-const keyFor = (inp: DebugRunInput, e: DebugEntry) => `${baseKeyFor(inp, e)}#${inp.window[0]}|${inp.window[1]}`;
+// The run key is `${base}#${lo}|${hi}`. The close is NOT in it (see DebugEntry.run).
 const baseOf = (key: string) => key.slice(0, key.indexOf("#"));
+/** True when `key`'s run was for the same base and a window containing `w`:
+ * records are kept for the whole window, so a view inside it needs no re-run. */
+const serves = (key: string, base: string, w: readonly [number, number]): boolean => {
+  if (!key || baseOf(key) !== base) return false;
+  const [a, b] = key.slice(key.indexOf("#") + 1).split("|").map(Number);
+  return a <= w[0] && b >= w[1];
+};
 
 /** The entry's target in `input`'s bar space, memoised (see tmemo). */
 export function debugTarget(
@@ -244,14 +270,29 @@ export function requestDebug(
   chart: object, paneId: string, name: string, input: DebugRunInput,
 ): TlDebugResult | null {
   const e = debugState(chart, name);
+  const out = requestDebugInner(chart, paneId, name, e, input);
+  if (out !== e.live) {
+    e.live = out;
+    e.liveRev++;
+    // Called from the draw: tell the strip and popup off it.
+    queueMicrotask(() => notify(chart));
+  }
+  return out;
+}
+
+function requestDebugInner(
+  chart: object, paneId: string, name: string, e: DebugEntry, input: DebugRunInput,
+): TlDebugResult | null {
   e.paneId = paneId;
   const t = debugTarget(e, input);
   e.targetError = t && "error" in t.tgt ? t.tgt.error : null;
   const forced = t ? t.forced : input.forced;
   const full: DebugRunInput = { ...input, forced };
   if (full.evalClose !== undefined) e.close = full.evalClose;
-  const key = keyFor(full, e);
-  const stale = e.result && e.key && baseOf(e.key) === baseOf(key) ? e.result : null;
+  const base = baseKeyFor(full, e);
+  const stale = e.result && e.key && baseOf(e.key) === base ? e.result : null;
+  // The cached run, or the pending one, covers this view: no new run.
+  const key = serves(e.key, base, full.window) ? e.key : `${base}#${full.window[0]}|${full.window[1]}`;
   if (e.key === key) {
     // Back on the cached key (a pan out and back): a run started for the
     // other key is moot now, and left pending it would land and replace
@@ -263,7 +304,7 @@ export function requestDebug(
     scheduleReexplain(chart, paneId, name, e);
     return e.result;
   }
-  if (e.pending?.key === key) return stale;
+  if (e.pending && (e.pending.key === key || serves(e.pending.key, base, full.window))) return stale;
   e.pending?.ctl.abort();
   const ctl = new AbortController();
   e.pending = { key, ctl };
@@ -295,6 +336,23 @@ export function requestDebug(
       e.result = null;
     });
   return stale;
+}
+
+/** Drop the target, the runs and the results of every Trendlines instance
+ * on `chart` (the strip's group toggles and limits stay). A symbol switch
+ * reuses the chart, and a target is a pair of times and prices on the OLD
+ * symbol. */
+export function resetDebug(chart: object): void {
+  const byName = STORE.get(chart);
+  if (!byName) return;
+  for (const e of byName.values()) {
+    e.pending?.ctl.abort();
+    Object.assign(e, {
+      key: "", run: null, result: null, live: null, liveRev: e.liveRev + 1, close: null, reexplain: false, pending: null,
+      target: null, targetError: null, input: null, tmemo: null, lmemo: null,
+    });
+  }
+  notify(chart);
 }
 
 export function setDebugTarget(chart: object, paneId: string, name: string, target: TargetLine | null): void {

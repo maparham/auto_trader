@@ -86,7 +86,7 @@ function needFor(v: Verdict, cfg: TrendlinesConfig): number | null {
     case "fanMerged": return m === null ? null : Math.max(0, floorTo(m - 1e-9, 0.01));
     case "perPivot": return m;
     case "maxLines": return m !== null && m <= MAX_MAX_LINES ? m : null;
-    case "liveCap": return null;
+    case "liveCap": case "floor": return null;
   }
 }
 

@@ -34,7 +34,7 @@ import type { TrendlinesConfig } from "./trendlinesOutputs";
 import type { DebugRecord, DebugRun, RejectedPivot } from "./trendlinesDebug";
 
 export type Gate =
-  | "unconfirmed" | "fractal" | "size" | "reach" | "window"
+  | "floor" | "unconfirmed" | "fractal" | "size" | "reach" | "window"
   | "lookback" | "slopeMax" | "slopeMin" | "backClearance" | "liveCap" | "stale"
   | "maxTouches" | "maxSpan" | "maxTouchSpacing" | "minTouchSpacing" | "maxCrossings"
   | "minTouches" | "minSpan" | "minCrossings" | "distanceAtr" | "distancePct"
@@ -42,7 +42,7 @@ export type Gate =
 
 /** Pipeline order: the first failing gate in this order is the primary reason. */
 export const GATE_ORDER: Gate[] = [
-  "unconfirmed", "fractal", "size", "reach", "window",
+  "floor", "unconfirmed", "fractal", "size", "reach", "window",
   "lookback", "slopeMax", "slopeMin", "backClearance", "liveCap", "stale",
   "maxTouches", "maxSpan", "maxTouchSpacing", "minTouchSpacing", "maxCrossings",
   "minTouches", "minSpan", "minCrossings", "distanceAtr", "distancePct",
@@ -51,7 +51,7 @@ export const GATE_ORDER: Gate[] = [
 
 /** The strip's reason groups, one short word each. */
 export const GATE_GROUP: Record<Gate, string> = {
-  unconfirmed: "anchors", fractal: "anchors", size: "anchors", reach: "anchors", window: "anchors",
+  floor: "anchors", unconfirmed: "anchors", fractal: "anchors", size: "anchors", reach: "anchors", window: "anchors",
   lookback: "lookback", slopeMax: "slope", slopeMin: "slope", backClearance: "back clearance",
   liveCap: "live cap", stale: "projection",
   maxTouches: "touches", minTouches: "touches", maxSpan: "span", minSpan: "span",
@@ -230,6 +230,10 @@ function anchorVerdicts(rec: DebugRecord, run: DebugRun): Verdict[] {
   const { st, input } = run;
   const cfg = input.cfg;
   const out: Verdict[] = [];
+  // The detector starts at the compute floor: an anchor before it was never
+  // a pivot to it, and the line's touches there were never counted.
+  if (f.i1 < st.startIdx)
+    out.push({ gate: "floor", field: null, measured: null, limit: null, pass: false, anchor: 1 });
   if (f.unconfirmed)
     out.push({
       gate: "unconfirmed", field: "pivotLen", measured: input.evalIdx - f.i2,

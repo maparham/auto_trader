@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runDebugSync, runDebugAsync, type DebugRunInput } from "./trendlinesDebug";
+import { explain } from "./trendlinesDebugExplain";
 import { aboveSlope, buildTlState, hasBackClearance, isLive, withinSlope } from "./trendlines";
 import { TRENDLINES_DEFAULTS, type TrendlinesConfig } from "./trendlinesOutputs";
 import { synthBars } from "./trendlinesSynth.testutil";
@@ -121,6 +122,25 @@ describe("debug sink", () => {
     // Most recent win across died records as well.
     const died = run.records.filter((r) => r.origin === "died");
     expect(Math.max(...died.map((r) => r.endedAt as number))).toBeGreaterThan(bars.length - 150);
+  });
+
+  it("a forced pair added late (before the floor) still scores the pivots after it", () => {
+    // Confirm bar 405 is under the floor (500): no afterConfirm ever sees it,
+    // so it is added at the eval bar and must catch up on later touches.
+    const f = { i1: 100, k1: "low" as const, i2: 400, k2: "low" as const };
+    const run = runDebugSync(input({ touchMult: 50 }, { startIdx: 500, forced: [f] }));
+    const rec = run.records.find((r) => r.origin === "forced")!;
+    expect(rec.bornAt).toBe(bars.length - 1);
+    const pool = run.st.pool.idxs.filter((k) => run.st.atr[k] !== null);
+    expect(pool.length).toBeGreaterThan(0);
+    // Before the fix it stopped at its second anchor (lastTouchIdx 400).
+    const later = rec.line.touchIdxs.filter((k) => k > 400);
+    expect(later.length).toBeGreaterThan(0);
+    for (const k of later) expect(pool).toContain(k);
+    expect(rec.line.lastTouchIdx).toBe(Math.max(...later));
+    // And its first reason names the compute floor.
+    const cand = explain(run).candidates.find((c) => c.origin === "forced")!;
+    expect(cand.failed[0].gate).toBe("floor");
   });
 
   it("async run equals sync run and honours abort", async () => {

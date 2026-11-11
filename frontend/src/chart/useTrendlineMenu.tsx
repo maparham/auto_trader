@@ -235,6 +235,8 @@ interface Args {
   /** Debug mode's popup: called with every picked line; true when it took
    * the pick (the instance has debug on). */
   onDebugPick?: (hit: TrendlineHit, clientX: number, clientY: number) => boolean;
+  /** Debug lookup: true when this click was its point pick, not a line pick. */
+  ownsClick?: (clientX: number, clientY: number) => boolean;
   /** "Add alert" on a line. Absent (tests, read-only surfaces) hides it. */
   lineAlert?: {
     ctx: React.MutableRefObject<{ epic: string; broker: string; precision: number }>;
@@ -254,7 +256,7 @@ interface MenuState {
   hit: TrendlineHit;
 }
 
-export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epicRef, onDebugPick, lineAlert }: Args): {
+export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epicRef, onDebugPick, ownsClick, lineAlert }: Args): {
   /** Right-click entry, for ChartCore's contextmenu handler: opens the menu
    * when a line is under the pointer and says so, so the caller yields. */
   openAt: (clientX: number, clientY: number) => boolean;
@@ -265,6 +267,8 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
   const closeNote = useCallback(() => setNoteEdit(null), []);
   const onDebugPickRef = useRef(onDebugPick);
   onDebugPickRef.current = onDebugPick;
+  const ownsClickRef = useRef(ownsClick);
+  ownsClickRef.current = ownsClick;
   const lineAlertRef = useRef(lineAlert);
   lineAlertRef.current = lineAlert;
 
@@ -372,6 +376,7 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
       // own ray lies on its line and is not one of those.
       setTimeout(() => {
         if (chartRef.current !== chart) return;
+        if (ownsClickRef.current?.(clientX, clientY)) return;
         if (overlays.clickTookOwnOverlay(p.click)) {
           pickTrendline(chart, null);
           return;
