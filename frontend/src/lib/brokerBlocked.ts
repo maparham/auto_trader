@@ -11,11 +11,14 @@ import { toast, dismissToast } from "./notify";
 
 const KEY = "broker-blocked";
 // Which failure the on-screen toast describes, or null when none is showing.
-let active: "blocked" | "broker" | "server" | null = null;
+// A broker's own message is keyed by its text, so a changed message replaces
+// the toast while a repeat of the same one stays edge-triggered.
+type Kind = "blocked" | "broker" | "server" | `message:${string}`;
+let active: Kind | null = null;
 
 /** Swap the toast when the failure changes kind (e.g. a blocked network turns
  * out to be a broker outage); a repeat of the same kind stays edge-triggered. */
-function claim(kind: "blocked" | "broker" | "server"): boolean {
+function claim(kind: Kind): boolean {
   if (active === kind) return false;
   if (active) dismissToast(KEY);
   active = kind;
@@ -34,8 +37,19 @@ export function reportBrokerBlocked(detail?: string): void {
 }
 
 /** A broker call failed because the broker itself (`brokerName`) or our own
- * server is down, not the user's network. Same sticky, edge-triggered toast. */
-export function reportBrokerOutage(who: "broker" | "server", brokerName: string): void {
+ * server is down, not the user's network. Same sticky, edge-triggered toast.
+ * `message` is the backend's own text for the user (e.g. the MT5 terminal is
+ * logged out), shown in place of the generic wording. */
+export function reportBrokerOutage(
+  who: "broker" | "server",
+  brokerName: string,
+  message?: string | null,
+): void {
+  if (message) {
+    if (!claim(`message:${message}`)) return;
+    toast(`${brokerName}: ${message}`, { duration: null, key: KEY });
+    return;
+  }
   if (!claim(who)) return;
   toast(
     who === "broker"

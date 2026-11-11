@@ -185,7 +185,7 @@ export function useAccounts(isDirty: boolean, tradingSettings: Settings["trading
           // network path (WAF / restricted connection) instead of hiding it.
           if (e instanceof BrokerBlockedError) reportBrokerBlocked(e.message);
           else if (e instanceof BrokerOutageError) {
-            reportBrokerOutage(e.who, brokerLabel(brokerOf(activeAccount)));
+            reportBrokerOutage(e.who, brokerLabel(brokerOf(activeAccount)), e.userMessage);
           }
         });
     };

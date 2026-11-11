@@ -18,7 +18,7 @@ from auto_trader.brokers.mt5_mcp import (
     MT5MCPClient,
     MT5MCPExecutionBroker,
 )
-from auto_trader.core.broker_health import BrokerReconnecting
+from auto_trader.core.broker_health import BrokerLoggedOut, BrokerReconnecting
 from auto_trader.core.models import Order, OrderStatus, OrderType, Resolution, Side
 
 
@@ -626,3 +626,47 @@ def test_meta_names_type_and_yahoo_ticker_for_shares():
     assert meta["type"] == "SHARES" and meta["yahooTicker"] == "BKNG"
     fx = run(b.get_market_meta("EURUSD"))
     assert fx["type"] == "CURRENCIES" and fx["yahooTicker"] is None
+
+
+def _account_info(connected):
+    return {"account": {"broker": "Ava Trade Markets Ltd.", "type": "real", "server": "Ava-Real 1-MT5",
+                        "balance": 100.0, "equity": 90.0, "margin_free": 80.0, "margin": 10.0,
+                        "currency": "EUR"},
+            "terminal": {"server_connected": connected}}
+
+
+def test_account_summary_reads_figures_while_logged_in():
+    ex, _ = _exec({"get_trading_account_info": _account_info(True)})
+    s = run(ex.get_account_summary())
+    assert s["balance"] == 100.0 and s["profitLoss"] == pytest.approx(-10.0)
+
+
+def test_account_summary_refuses_when_terminal_is_logged_out():
+    """The terminal keeps serving cached figures after a refused login; the
+    summary must say so instead of passing stale numbers off as live."""
+    ex, _ = _exec({"get_trading_account_info": _account_info(False)})
+    with pytest.raises(BrokerLoggedOut, match="not logged in to Ava-Real 1-MT5"):
+        run(ex.get_account_summary())
+    assert ex._data.display_name == "Ava Trade Markets Ltd. (live, self-hosted)"
+
+
+def test_positions_follow_the_last_login_verdict():
+    """The positions poll must not report the broker healthy (clearing the
+    UI's warning) between two account reads that find it logged out."""
+    info = _account_info(False)
+    ex, _ = _exec({"get_trading_account_info": lambda _a: info})
+    assert run(ex.get_positions())  # no account read yet: no verdict
+    with pytest.raises(BrokerLoggedOut):
+        run(ex.get_account_summary())
+    with pytest.raises(BrokerLoggedOut):
+        run(ex.get_positions())
+    info["terminal"]["server_connected"] = True
+    run(ex.get_account_summary())
+    assert run(ex.get_positions())
+
+
+def test_account_summary_without_terminal_block_is_not_logged_out():
+    info = _account_info(True)
+    del info["terminal"]
+    ex, _ = _exec({"get_trading_account_info": info})
+    assert run(ex.get_account_summary())["equity"] == 90.0

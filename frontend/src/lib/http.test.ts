@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { apiFetch, errorDetail, setUnauthorizedHandler } from "./http";
+import {
+  apiFetch,
+  BrokerOutageError,
+  errorDetail,
+  setUnauthorizedHandler,
+  throwIfBrokerBlocked,
+} from "./http";
 import { setTokenGetter } from "./authToken";
 
 function jsonRes(body: unknown, status = 422): Response {
@@ -110,5 +116,27 @@ describe("apiFetch 401 retry", () => {
     expect(out.status).toBe(500);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(signOut).not.toHaveBeenCalled();
+  });
+});
+
+describe("throwIfBrokerBlocked broker message", () => {
+  const res = (headers: Record<string, string>) =>
+    new Response(JSON.stringify({ detail: "The MT5 terminal is not logged in." }), {
+      status: 503,
+      headers: { "Content-Type": "application/json", ...headers },
+    });
+
+  it("carries the backend's own text when X-Broker-Message is set", async () => {
+    const err = await throwIfBrokerBlocked(
+      res({ "X-Failure-Cause": "broker", "X-Broker-Message": "1" }),
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(BrokerOutageError);
+    expect(err.userMessage).toBe("The MT5 terminal is not logged in.");
+  });
+
+  it("leaves userMessage null on a plain broker outage", async () => {
+    const err = await throwIfBrokerBlocked(res({ "X-Failure-Cause": "broker" })).catch((e) => e);
+    expect(err).toBeInstanceOf(BrokerOutageError);
+    expect(err.userMessage).toBeNull();
   });
 });

@@ -74,6 +74,14 @@ class BrokerDown(Exception):
     cause = CAUSE_BROKER
 
 
+class BrokerLoggedOut(BrokerDown):
+    """The broker's own client answers but is not logged in to its trade
+    server (the MT5 terminal reporting `server_connected: false`), so what it
+    serves is cached and anything it sends upstream fails. The message is
+    written for the user: the API passes it to the UI verbatim, marked with
+    X-Broker-Message."""
+
+
 class BrokerBlocked(Exception):
     """The network path to the broker is blocked before its API (WAF/firewall).
 

@@ -36,10 +36,14 @@ export function failureCause(res: Response): FailureCause | null {
  */
 export class BrokerOutageError extends Error {
   readonly who: "broker" | "server";
-  constructor(who: "broker" | "server", message: string) {
+  /** Text the backend wrote for the user (X-Broker-Message), shown as is
+   *  instead of the generic "isn't responding" wording. */
+  readonly userMessage: string | null;
+  constructor(who: "broker" | "server", message: string, userMessage: string | null = null) {
     super(message);
     this.name = "BrokerOutageError";
     this.who = who;
+    this.userMessage = userMessage;
   }
 }
 
@@ -74,7 +78,9 @@ export async function throwIfBrokerBlocked(res: Response): Promise<void> {
   }
   const cause = failureCause(res);
   if (cause === "broker" || cause === "server") {
-    throw new BrokerOutageError(cause, await errorDetail(res));
+    const detail = await errorDetail(res);
+    const userMessage = res.headers.get("X-Broker-Message") === "1" ? detail : null;
+    throw new BrokerOutageError(cause, detail, userMessage);
   }
 }
 

@@ -619,7 +619,7 @@ async function _refresh(): Promise<void> {
     // but a blocked network path (WAF / restricted connection) is surfaced,
     // since silently painting last-known figures hides a dead broker.
     if (e instanceof BrokerBlockedError) reportBrokerBlocked(e.message);
-    else if (e instanceof BrokerOutageError) reportBrokerOutage(e.who, brokerLabel(brokerOf(account)));
+    else if (e instanceof BrokerOutageError) reportBrokerOutage(e.who, brokerLabel(brokerOf(account)), e.userMessage);
   }
 }
 

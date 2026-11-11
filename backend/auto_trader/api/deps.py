@@ -34,6 +34,7 @@ from auto_trader.core.broker_health import (
     BrokerBlocked,
     BrokerDown,
     BrokerHealth,
+    BrokerLoggedOut,
     BrokerReconnecting,
     BrokerTimeout,
     BrokerUnavailable,
@@ -183,7 +184,13 @@ def broker_down_http(label: str, e: BrokerDown) -> HTTPException:
 
     Shared by guarded() and the execution routes. X-Failure-Cause tells the
     frontend the broker is at fault, so it says so instead of blaming the
-    user's network or our server."""
+    user's network or our server. A BrokerLoggedOut carries a message written
+    for the user, so it goes out bare and X-Broker-Message tells the frontend
+    to show it as is."""
+    if isinstance(e, BrokerLoggedOut):
+        return HTTPException(
+            503, str(e), headers={"X-Failure-Cause": CAUSE_BROKER, "X-Broker-Message": "1"}
+        )
     return HTTPException(
         503, f"{label}: {e}", headers={"X-Failure-Cause": CAUSE_BROKER}
     )

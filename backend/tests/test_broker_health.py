@@ -296,3 +296,15 @@ def test_failure_cause_reads_exceptions_and_http_headers() -> None:
     assert failure_cause(BrokerTimeout("k", "server")) == "server"
     assert failure_cause(HTTPException(503, "d", headers={"X-Failure-Cause": "blocked"})) == "blocked"
     assert failure_cause(RuntimeError("boom")) is None
+
+
+def test_logged_out_broker_sends_its_message_bare() -> None:
+    from auto_trader.api.deps import broker_down_http
+    from auto_trader.core.broker_health import BrokerDown, BrokerLoggedOut
+
+    e = broker_down_http("account summary failed", BrokerLoggedOut("Log in again."))
+    assert e.status_code == 503 and e.detail == "Log in again."
+    assert e.headers == {"X-Failure-Cause": "broker", "X-Broker-Message": "1"}
+    plain = broker_down_http("account summary failed", BrokerDown("edge 502"))
+    assert plain.detail == "account summary failed: edge 502"
+    assert "X-Broker-Message" not in plain.headers
