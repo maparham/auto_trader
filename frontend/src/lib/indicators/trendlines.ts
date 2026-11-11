@@ -43,6 +43,7 @@ import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 import { minPositiveGap } from "../barInterval";
 import { htfBarEndMs } from "../mtfForming";
 import { clipSegmentToRect, DRAW_CLIP_PAD } from "./shared";
+import { buildSteps, stepMapFor, stepRange, strokeSteps, type StepPiece } from "./trendlineSteps";
 import { afterNextPaint, clearIndicatorBusy, markIndicatorBusy } from "../indicatorBusy";
 import {
   cloneToolFor,
@@ -2897,8 +2898,8 @@ export function trendlineIdxMap(
   // (kNext), and each candle after it holds `step` pin bars, the most any
   // recent fully covered candle held. Between the last pin bar (cLast) and
   // kNext the map is linear, so it stays continuous and never runs back.
-  // A coarser pin keeps calendar time: its stroke is drawn through its anchor
-  // candles (pinnedAnchorBars) and does not lean on this. The 1.2 admits a
+  // A coarser pin keeps calendar time: its stroke is drawn as steps on a
+  // map of its own (trendlineSteps) and does not lean on this. The 1.2 admits a
   // 30-day MONTH pin on a monthly chart whose median gap is 31 days.
   const countBars = htfMs <= barMs * 1.2;
   let cFirst = 0;
@@ -3004,6 +3005,11 @@ export function crossingChartIdx(
   /** The side the HTF close crossed ONTO. Defaults to the side chart bar
    * `last` closed on. */
   want?: number,
+  /** Stepped lines (coarser pin): `ownStep` judges both closes of a turn
+   * against the candle's OWN step, so a riser between two candles is never
+   * a crossing by itself; `forward: false` skips the next-HTF-bar search,
+   * which only the straight stroke needed. */
+  opts?: { ownStep?: boolean; forward?: boolean },
 ): number {
   if (map.identity) return j;
   const last = map.toChartClose(j);
@@ -3017,10 +3023,11 @@ export function crossingChartIdx(
   const closeSide = (c: number) => side(c, dataList[c].close);
   const to = want ?? closeSide(last);
   if (to === 0) return last;
-  const turned = (c: number) => c > 0 && closeSide(c) === to && closeSide(c - 1) !== to;
+  const turned = (c: number) =>
+    c > 0 && closeSide(c) === to && (opts?.ownStep ? side(c, dataList[c - 1].close) : closeSide(c - 1)) !== to;
   const lo = Math.max(0, Math.floor(map.toChart(j - 1)));
   for (let c = last; c >= lo; c--) if (turned(c)) return c;
-  const hi = Math.min(n - 1, map.toChartClose(j + 1));
+  const hi = opts?.forward === false ? last : Math.min(n - 1, map.toChartClose(j + 1));
   for (let c = last + 1; c <= hi; c++) if (turned(c)) return c;
   const spans = (c: number) => side(c, dataList[c].high) >= 0 && side(c, dataList[c].low) <= 0;
   for (let d = 0; last - d >= lo || last + d <= hi; d++) {
@@ -3066,34 +3073,6 @@ export function pinnedEndY(
   const yB = yAt(projectAt(line, jB));
   const slope = (yB - yA) / (xB - xA);
   return { y0: yA + slope * (x0 - xA), y1: yA + slope * (x1 - xA) };
-}
-
-/** The chart bars of a pinned line's two anchors, so the stroke can be drawn
- * the way TradingView draws a trendline on another timeframe: straight in
- * CHART bars through both anchor candles, extended in chart bars. The line is
- * straight in HTF bars, and a chart day does not always hold the same number
- * of chart bars (a session that grew from 16 to 24 hours, a half day), so
- * no single chart-space segment can follow the HTF projection everywhere.
- * Drawn from its two ends instead, it sagged off the second anchor (TSLA 1D
- * pin on 4H: 2.6 below the pivot that defines it). Through the anchors it
- * touches both pivots on every timeframe; past them it can read a few points
- * off the HTF values that the outputs and alerts use, as TradingView's does.
- * `snap` maps an HTF pivot to the candle that traded its extreme. Null when a
- * kind is unknown, either candle is not a loaded bar, or they coincide: the
- * caller keeps the HTF projection (pinnedEndY). */
-export function pinnedAnchorBars(
-  i1: number,
-  k1: PivotKind | null,
-  i2: number,
-  k2: PivotKind | null,
-  snap: (j: number, kind: PivotKind) => number,
-  n: number,
-): [number, number] | null {
-  if (!k1 || !k2) return null;
-  const c1 = snap(i1, k1);
-  const c2 = snap(i2, k2);
-  const loaded = (c: number) => Number.isInteger(c) && c >= 0 && c < n;
-  return loaded(c1) && loaded(c2) && c2 > c1 ? [c1, c2] : null;
 }
 
 /** Two chart bars on the HTF line a pin-timeframe line alert watches, for
@@ -3455,9 +3434,12 @@ function drawTrendlines(
   // Coarser-pin snap: a bar index that IS a pivot/touch maps to the chart
   // candle that traded the extreme, not the HTF bar's opening candle.
   const snap = mtf ? htfExtremeSnap(dataList, mtf, toChart) : null;
-  // Only a COARSER pin draws through its anchor candles (pinnedAnchorBars);
-  // a finer one is more precise than the chart's own bars.
+  // Only a COARSER pin draws as steps; a finer one is more precise than the
+  // chart's own bars.
   const coarserPin = !!mtf && (mtf.htfMs ?? 0) > chartBarMs(dataList);
+  // A coarser pin draws one horizontal step per HTF bar (trendlineSteps), so
+  // every chart timeframe shows the same price at the same moment.
+  const stepMap = coarserPin && mtf ? stepMapFor(dataList, mtf) : null;
   const xAtPivot = (j: number, kind: PivotKind) =>
     snap ? xAxis.convertToPixel(snap(j, kind)) : xAt(j);
   // A CLOSURE called on every exit, not a call in one place, and that is the
@@ -3677,7 +3659,15 @@ function drawTrendlines(
       : lastChartIdx;
   // Back into the lines' own space: lineExtent runs the line out to a BAR, and
   // under a timeframe pin that bar is an HTF one.
-  const edgeIdx = toLine(edgeChartIdx);
+  const edgeIdx = stepMap ? stepMap.jAt(edgeChartIdx) : toLine(edgeChartIdx);
+  // Steps measure their ends in HTF bars against the last CLOSED bar; the
+  // forming bar is added by stepRange, not by a fractional draw edge.
+  const extentEdge = stepMap ? lastIdx : drawEdge;
+  // The chart positions at the pane's edges, one bar padded, for culling steps.
+  const posAtX = (x: number) =>
+    barPx > 0 ? lastChartIdx + (x - xAxis.convertToPixel(lastChartIdx)) / barPx : lastChartIdx;
+  const posMin = posAtX(0) - 1;
+  const posMax = posAtX(bounding.width) + 1;
 
   ctx.save();
   ctx.font = "10px sans-serif";
@@ -3719,7 +3709,7 @@ function drawTrendlines(
     );
     // A highlighted line and everything it carries take the highlight colour.
     const color = isBold ? hlStyle.color : lineColor;
-    const { jLeft, jRight } = lineExtent(line, mode, cfg, drawn, drawEdge, null, forceToLastBar);
+    const { jLeft, jRight } = lineExtent(line, mode, cfg, drawn, extentEdge, null, forceToLastBar);
     // A line endpoint that is one of the line's own touch bars (the anchors
     // always are) snaps to the extreme's candle; a projected end (a ray's
     // horizon, a meeting) keeps the plain time mapping. Snapped by whatever
@@ -3732,43 +3722,59 @@ function drawTrendlines(
       const kd = kindAt(j);
       return kd ? xAtPivot(j, kd) : xAt(j);
     };
-    const x0 = xAtLine(jLeft);
-    const x1 = xAtLine(jRight);
     // The double-clicked line runs on to the pane's right edge as a dashed
     // extension: a visual cue for where it leads and what it meets, never
     // saved and never read by calc. Same lineExtent, so it starts exactly
     // where the solid stroke stops.
     const jExt =
       stops && ext?.extendedLines?.includes(key)
-        ? lineExtent(line, mode, cfg, drawn, drawEdge, edgeIdx, forceToLastBar).jRight
+        ? lineExtent(line, mode, cfg, drawn, extentEdge, edgeIdx, forceToLastBar).jRight
         : jRight;
-    const xExt = jExt > jRight ? xAt(jExt) : x1;
-    if (Math.max(x1, xExt) <= 0 || x0 >= bounding.width) continue;
     const yPx = (price: number) => yAxis.convertToPixel(price);
-    // Coarser pin: straight in chart bars through both anchor candles, as
-    // TradingView draws a trendline on another timeframe (pinnedAnchorBars).
-    const anchorBars =
-      coarserPin && snap
-        ? pinnedAnchorBars(
-            line.i1, kindAt(line.i1) ?? line.k1 ?? null,
-            line.i2, kindAt(line.i2) ?? line.k2 ?? null,
-            snap, dataList.length,
-          )
-        : null;
-    const endY = (jR: number, xR: number): { y0: number; y1: number } => {
-      if (anchorBars) {
-        const xa = xAxis.convertToPixel(anchorBars[0]);
-        const xb = xAxis.convertToPixel(anchorBars[1]);
-        const ya = yPx(line.p1);
-        const yb = yPx(line.p2);
-        const at = (x: number) => ya + ((yb - ya) * (x - xa)) / (xb - xa);
-        return { y0: at(x0), y1: at(xR) };
-      }
-      return mtf
+    const endY = (jR: number, xR: number): { y0: number; y1: number } =>
+      mtf
         ? pinnedEndY(line, jLeft, jR, x0, xR, toLine(0), toLine(lastChartIdx), xAt, yPx)
         : { y0: yPx(projectAt(line, jLeft)), y1: yPx(projectAt(line, jR)) };
-    };
-    const { y0, y1 } = endY(jRight, x1);
+    let x0: number;
+    let x1: number;
+    let xExt: number;
+    let y0: number;
+    let y1: number;
+    // Coarser pin: the stepped stroke and its dashed extension.
+    let pieces: StepPiece[] | null = null;
+    let extPieces: StepPiece[] | null = null;
+    if (stepMap) {
+      const valueAt = (j: number) => projectAt(line, j);
+      const { jTo, endPos } = stepRange(jRight, lastIdx, stepMap);
+      const opts = { xOf: (pos: number) => xAxis.convertToPixel(pos), yOf: yPx, posMin, posMax, endPos };
+      pieces = buildSteps(stepMap, valueAt, jLeft, jTo, opts);
+      if (!pieces.length) continue;
+      x0 = pieces[0].x0;
+      y0 = pieces[0].y0;
+      x1 = pieces[pieces.length - 1].x1;
+      y1 = pieces[pieces.length - 1].y1;
+      if (jExt > jRight) {
+        // From where the solid stroke stopped, on to the pane's edge.
+        const solidEnd = endPos ?? stepMap.posOf(Number.isInteger(jTo) ? jTo + 1 : jTo);
+        extPieces = buildSteps(stepMap, valueAt, Math.floor(stepMap.jAt(solidEnd)), jExt, {
+          ...opts,
+          posMin: Math.max(posMin, solidEnd),
+          endPos: undefined,
+        })
+          .filter((p) => p.x1 > x1)
+          .map((p) => (p.x0 < x1 ? { ...p, x0: x1 } : p));
+      }
+      xExt = extPieces?.length ? extPieces[extPieces.length - 1].x1 : x1;
+    } else {
+      x0 = xAtLine(jLeft);
+      x1 = xAtLine(jRight);
+      xExt = jExt > jRight ? xAt(jExt) : x1;
+      if (Math.max(x1, xExt) <= 0 || x0 >= bounding.width) continue;
+      ({ y0, y1 } = endY(jRight, x1));
+    }
+    // A stepped line's price over chart candle c: the step of c's HTF bar.
+    const stepY = (c: number): number =>
+      yPx(projectAt(line, stepMap!.barOf(Math.max(0, Math.min(stepMap!.nChart - 1, Math.round(c))))));
     // Marks (the touch rings) ride the SEGMENT AS DRAWN rather
     // than projecting themselves: under a timeframe pin the index map is only
     // piecewise linear (a weekend compresses on the chart but not in time), so
@@ -3786,12 +3792,15 @@ function drawTrendlines(
     // The picked line: a wide translucent under-stroke, solid, beneath it.
     // The hovered one gets the same glow, fainter, and so does every line of
     // an emphasized instance.
-    if (seg && (key === selectedKey || key === hoveredKey || emphasized)) {
+    if ((pieces || seg) && (key === selectedKey || key === hoveredKey || emphasized)) {
       ctx.globalAlpha = key === selectedKey ? TL_SELECT_GLOW_ALPHA : TL_HOVER_GLOW_ALPHA;
       ctx.lineWidth = look.width + TL_SELECT_GLOW;
-      ctx.beginPath();
-      ctx.moveTo(seg[0], seg[1]);
-      ctx.lineTo(seg[2], seg[3]);
+      if (pieces) strokeSteps(ctx, pieces);
+      else if (seg) {
+        ctx.beginPath();
+        ctx.moveTo(seg[0], seg[1]);
+        ctx.lineTo(seg[2], seg[3]);
+      }
       ctx.stroke();
     }
     ctx.globalAlpha = look.alpha;
@@ -3807,13 +3816,20 @@ function drawTrendlines(
     // outside their tiny fake pane. Only the
     // absurd overshoots — a 1D pin's 250-day horizon on a 1m chart — are cut.
     // (`seg` is computed above, before the selection glow.)
-    if (seg) {
+    if (pieces) {
+      strokeSteps(ctx, pieces);
+      ctx.stroke();
+    } else if (seg) {
       ctx.beginPath();
       ctx.moveTo(seg[0], seg[1]);
       ctx.lineTo(seg[2], seg[3]);
       ctx.stroke();
     }
-    if (xExt > x1) {
+    if (extPieces?.length) {
+      ctx.setLineDash(TL_EXTEND_DASH);
+      strokeSteps(ctx, extPieces);
+      ctx.stroke();
+    } else if (!pieces && xExt > x1) {
       const extSeg = clipSegmentToRect(
         x1, y1, xExt, endY(jExt, xExt).y1,
         -DRAW_CLIP_PAD, -DRAW_CLIP_PAD,
@@ -3857,20 +3873,6 @@ function drawTrendlines(
         // it. Under a pin lastIdx is already closed: the coordinator computes
         // Trendlines on closed HTF bars only, Wait on or off. The formingIdx
         // step-back only guards a stash that carries a folded forming bar.
-        // Drawn through its anchor candles (coarser pin): the stroke frozen in
-        // CHART bars, for a line alert that fires where the stroke is, as
-        // TradingView's does (lineGate's chartFrame). Picked lines keep the
-        // pin's alertLine so rules on the pin's timeframe can still use them.
-        ...(anchorBars
-          ? {
-              chartLine: () =>
-                alertLineOf(
-                  { i1: anchorBars[0], p1: line.p1, i2: anchorBars[1], p2: line.p2 },
-                  (timestamps ??= dataList.map((d) => d.timestamp)),
-                  lastChartIdx - 1,
-                ),
-            }
-          : {}),
         alertLine: () =>
           alertLineOf(
             line,
@@ -3907,7 +3909,7 @@ function drawTrendlines(
       const idx = line.touchIdxs[t];
       const kd = touchKindAt(line, t);
       const xT = kd ? xAtPivot(idx, kd) : xAt(idx);
-      const yT = onSegment(xT);
+      const yT = pieces ? yPx(projectAt(line, idx)) : onSegment(xT);
       if (xT < 0 || xT > Math.min(tagRight, x1) || yT < 0 || yT > bounding.height)
         continue;
       ctx.beginPath();
@@ -3929,8 +3931,9 @@ function drawTrendlines(
       const crossR = TL_CROSS_RADIUS * crossScale;
       // Side of the DRAWN segment, in pixels (y grows downward), so the
       // chosen candle is one whose close visibly sits across the line.
+      const lineYAt = (c: number): number => (pieces ? stepY(c) : onSegment(xAxis.convertToPixel(c)));
       const sideDrawn = (c: number, price: number): number => {
-        const d = yPx(price) - onSegment(xAxis.convertToPixel(c));
+        const d = yPx(price) - lineYAt(c);
         return d < 0 ? 1 : d > 0 ? -1 : 0;
       };
       // Sides alternate with every counted crossing and the last one ended on
@@ -3939,11 +3942,14 @@ function drawTrendlines(
       for (let k = 0; k < crossIdxs.length; k++) {
         const want = (crossIdxs.length - 1 - k) % 2 === 0 ? line.lastSign : -line.lastSign;
         const cIdx = mtf
-          ? crossingChartIdx(line, crossIdxs[k], idxMap, dataList, sideDrawn, want || undefined)
+          ? crossingChartIdx(
+              line, crossIdxs[k], idxMap, dataList, sideDrawn, want || undefined,
+              pieces ? { ownStep: true, forward: false } : undefined,
+            )
           : crossIdxs[k];
         if (!Number.isFinite(cIdx)) continue;
         const xC = xAxis.convertToPixel(cIdx);
-        const yC = onSegment(xC);
+        const yC = pieces ? lineYAt(cIdx) : onSegment(xC);
         if (xC < 0 || xC > Math.min(tagRight, x1) || yC < 0 || yC > bounding.height)
           continue;
         ctx.beginPath();
@@ -3971,8 +3977,15 @@ function drawTrendlines(
     // line's natural end: that moves with the mode (last touch in segment, a
     // meeting in cross) and scattered the tags across the chart, while the
     // newest bar lines them up in one column beside price.
-    const xEnd = xAt(drawEdge);
-    const yEnd = yAxis.convertToPixel(projectAt(line, drawEdge));
+    let xEnd = xAt(drawEdge);
+    let yEnd = yAxis.convertToPixel(projectAt(line, drawEdge));
+    if (pieces) {
+      // On the step under the newest candle when the line reaches it, else
+      // where the stroke stops.
+      const xNow = xAxis.convertToPixel(lastChartIdx);
+      xEnd = x1 >= xNow ? xNow : x1;
+      yEnd = x1 >= xNow ? stepY(lastChartIdx) : y1;
+    }
     const rank = rankPool?.includes(line) ? strengthRank(rankPool, line) : undefined;
     // The user's note rides after the tag, on the same row, or takes the
     // tag's place when there is none. Hidden lines never get here.
@@ -3990,7 +4003,7 @@ function drawTrendlines(
     const wTag = label && noteText ? wLabel + TL_NOTE_GAP + wNote : wLabel || wNote;
     const xTag = Math.min(xEnd + TL_TAG_GAP, tagRight - wTag);
     let yTag =
-      xEnd === x0
+      pieces || xEnd === x0
         ? yEnd
         : y0 + ((yEnd - y0) * (xTag - x0)) / (xEnd - x0);
     yTag = clearTagRow(placedTags, xTag, yTag, wTag, bounding.height);

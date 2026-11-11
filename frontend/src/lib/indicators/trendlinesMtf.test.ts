@@ -12,7 +12,6 @@ import {
   crossingChartIdx,
   pinnedEndY,
   pinnedAlertStroke,
-  pinnedAnchorBars,
   lineKey,
   TL_PIVOT_ARM,
   TRENDLINES_TEMPLATE,
@@ -228,6 +227,7 @@ function draw(
 ) {
   const segments: Seg[] = [];
   const rings: Array<{ x: number; y: number }> = [];
+  const dots: Array<{ x: number; y: number }> = [];
   let cur = { x: 0, y: 0 };
   let start = { x: 0, y: 0 };
   let width = 1;
@@ -258,6 +258,7 @@ function draw(
     // Touch rings only (radius TL_TOUCH_RADIUS); the crossing dot is wider.
     arc: (x: number, y: number, r: number) => {
       if (r === 2) rings.push({ x, y });
+      else dots.push({ x, y });
     },
   };
   const ext = { mtf, dedupe: false, nearPrice: false, ...over };
@@ -271,17 +272,81 @@ function draw(
     xAxis: { convertToPixel: (i: number) => i },
     yAxis: { convertToPixel: (p: number) => 400 - p },
   } as never);
-  return { segments, rings, chart };
+  return { segments, rings, dots, chart };
 }
 
+/** The horizontal pieces of a stepped stroke (risers and carets excluded). */
+const flats = (segs: Seg[]) => segs.filter((s) => s.y0 === s.y1 && s.x1 > s.x0);
+/** The price a stepped stroke shows over chart position x. */
+const stepPriceAt = (segs: Seg[], x: number): number | undefined => {
+  const f = flats(segs).find((s) => s.x0 <= x && x <= s.x1);
+  return f ? 400 - f.y0 : undefined;
+};
+
 describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
-  it("puts an HTF anchor on the chart bar that shares its timestamp", () => {
+  it("draws a coarser pin as one step per HTF bar", () => {
     const { segments } = draw(chartBars(), stash());
-    expect(segments).toHaveLength(1);
-    // HTF bar 1 opens at T0 + 1h, which is chart bar 4 — NOT chart bar 1, which
-    // is what reading the index straight off the line would give.
-    expect(segments[0].x0).toBeCloseTo(4, 6);
-    expect(segments[0].y0).toBeCloseTo(400 - 110, 6);
+    const f = flats(segments);
+    // HTF bar 1 is chart bars 4..7, so its step runs from 3.5 to 7.5 at the
+    // line's value there (110), then each HTF bar steps down by 2.
+    expect(f[0]).toEqual({ x0: 3.5, x1: 7.5, y0: 400 - 110, y1: 400 - 110 });
+    expect(f[1]).toEqual({ x0: 7.5, x1: 11.5, y0: 400 - 108, y1: 400 - 108 });
+    // A vertical riser joins them.
+    expect(segments).toContainEqual({ x0: 7.5, y0: 400 - 110, x1: 7.5, y1: 400 - 108 });
+  });
+
+  it("anchor steps equal p1 and p2", () => {
+    const { segments } = draw(chartBars(), stash());
+    for (const x of [4, 5, 6, 7]) expect(stepPriceAt(segments, x)).toBe(110);
+    for (const x of [12, 13, 14, 15]) expect(stepPriceAt(segments, x)).toBe(106);
+  });
+
+  it("same price at the same moment on two chart timeframes", () => {
+    // The same 1h pin on a 15m chart and on a 30m chart.
+    const fine = chartBars();
+    const coarse = Array.from({ length: 20 }, (_, i) => bar(T0 + i * 2 * CHART_MS));
+    const a = draw(fine, stash()).segments;
+    const b = draw(coarse, stash({ chartMs: 2 * CHART_MS })).segments;
+    for (let i = 4; i < 40; i++) {
+      const k = Math.floor(i / 2); // the 30m candle holding 15m candle i
+      expect(stepPriceAt(a, i)).toBeDefined();
+      expect(stepPriceAt(a, i)).toBe(stepPriceAt(b, k));
+    }
+  });
+
+  it("lastbar mode adds the forming step through the newest candle", () => {
+    for (const waitClose of [true, false]) {
+      const { segments } = draw(chartBars(), stash({ waitClose }), { extend: "lastbar" });
+      const f = flats(segments);
+      const end = f[f.length - 1];
+      // Chart bars 36..39 are HTF bar 9, the one the newest candle is in.
+      expect(end.x1).toBe(39.5);
+      expect(400 - end.y0).toBe(110 - 2 * (9 - 1));
+    }
+  });
+
+  it("segment mode ends with the last touch's HTF bar", () => {
+    const { segments } = draw(chartBars(), stash(), { extend: "segment" });
+    const f = flats(segments);
+    expect(f[f.length - 1].x1).toBe(15.5);
+  });
+
+  it("anchor before loaded history", () => {
+    // History starts at chart bar 8 (HTF bar 2): anchor 1's bar is not loaded.
+    const bars = chartBars().slice(8);
+    const { segments } = draw(bars, stash());
+    // Chart bars 0..3 of this list are HTF bar 2, at the line's value there.
+    for (const x of [0, 1, 2, 3]) expect(stepPriceAt(segments, x)).toBe(108);
+  });
+
+  it("crossing mark needs a close across its own step", () => {
+    // Closes sit at 100.5 throughout. HTF bar 5's step is 102 and bar 6's is
+    // 100, so the HTF close changes side at bar 6 only because the line
+    // stepped down: no chart candle crossed its own step, so no mark.
+    const bars = chartBars().map((b) => bar(b.timestamp, 100.5));
+    const crossed = { ...htfLine, crossings: 1, crossIdxs: [6], lastSign: 1 };
+    const { dots } = draw(bars, stash({ htfLines: [crossed] }), { showCrossings: true });
+    expect(dots).toHaveLength(0);
   });
 
   it("extends past the newest chart bar rather than stopping at it", () => {
@@ -289,17 +354,13 @@ describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
     // the loaded chart data. Clamping it onto the last bar would rotate the
     // line, which is why the index map extrapolates instead.
     const { segments } = draw(chartBars(), stash());
-    expect(segments[0].x1).toBeGreaterThan(39);
+    expect(Math.max(...segments.map((g) => g.x1))).toBeGreaterThan(39);
   });
 
-  it("rings each touch ON the drawn segment", () => {
+  it("rings each touch ON its step", () => {
     const { segments, rings } = draw(chartBars(), stash());
-    const s = segments[0];
     expect(rings).toHaveLength(2);
-    for (const r of rings) {
-      const y = s.y0 + ((s.y1 - s.y0) * (r.x - s.x0)) / (s.x1 - s.x0);
-      expect(r.y).toBeCloseTo(y, 6);
-    }
+    for (const r of rings) expect(400 - r.y).toBe(stepPriceAt(segments, r.x));
     // The touches are HTF bars 1 and 3, four chart bars apart.
     expect(rings.map((r) => Math.round(r.x))).toEqual([4, 12]);
   });
@@ -321,7 +382,7 @@ describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
     // One line (the fixture's) plus the caret's two slanted edges. The base
     // edge spans BOTH arms, so this filter keeps only the slanted pair.
     const arms = segments.filter(
-      (s) => s.x0 !== s.x1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
+      (s) => s.x0 !== s.x1 && s.y0 !== s.y1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
     );
     expect(arms).toHaveLength(2);
     // HTF bar 1 is chart bar 4, and the caret sits ABOVE the high it marks
@@ -335,7 +396,8 @@ describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
   it("paints no marks with both pivot-mark settings off", () => {
     const mtf = stash({ htfPivots: HTF_PIVOTS });
     const off = { showPivots: false, showLinePivots: false };
-    expect(draw(chartBars(), mtf, off).segments).toHaveLength(1);
+    const { segments } = draw(chartBars(), mtf, off);
+    expect(segments.filter((s) => s.x0 !== s.x1 && s.y0 !== s.y1)).toHaveLength(0);
   });
 });
 
@@ -353,7 +415,7 @@ describe("TRENDLINES_TEMPLATE.draw snaps HTF extremes onto their chart bars", ()
       showLinePivots: false,
     });
     const arms = segments.filter(
-      (s) => s.x0 !== s.x1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
+      (s) => s.x0 !== s.x1 && s.y0 !== s.y1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
     );
     expect(arms).toHaveLength(2);
     // The tip is shared by both slanted edges — one leaves it, the closing one
@@ -367,25 +429,20 @@ describe("TRENDLINES_TEMPLATE.draw snaps HTF extremes onto their chart bars", ()
     bars[6] = bar(T0 + 6 * CHART_MS, 110); // HTF bar 1's high (anchor 1)
     bars[13] = bar(T0 + 13 * CHART_MS, 106); // HTF bar 3's high (anchor 2)
     const { segments, rings } = draw(bars, stash());
-    expect(segments[0].x0).toBeCloseTo(6, 6);
-    expect(segments[0].y0).toBeCloseTo(400 - 110, 6);
+    expect(stepPriceAt(segments, 6)).toBe(110);
     expect(rings.map((r) => Math.round(r.x))).toEqual([6, 13]);
-    // Straight in chart bars THROUGH both anchors, so each ring sits on its
-    // own pivot's price, not on the HTF projection between the ends.
+    // Each ring sits on its own pivot's price: the step of its HTF bar.
     expect(rings.map((r) => 400 - r.y)).toEqual([110, 106]);
   });
 
-  it("passes through both anchors when an HTF bar holds fewer chart bars", () => {
+  it("keeps both anchors' steps when an HTF bar holds fewer chart bars", () => {
     // HTF bar 2 lost half its session (chart bars 8 and 9), as when a
-    // market's hours change: anchor 2 (HTF bar 3) opens on chart bar 10, not
-    // 12. The HTF projection between the stroke's ends would miss it.
+    // market's hours change: anchor 2 (HTF bar 3) opens on chart bar 10.
     const bars = chartBars().filter((_, i) => i !== 8 && i !== 9);
     const { segments } = draw(bars, stash());
-    const s = segments[0];
-    const yAt = (x: number) => s.y0 + ((s.y1 - s.y0) * (x - s.x0)) / (s.x1 - s.x0);
-    expect(s.x0).toBeCloseTo(4, 6);
-    expect(s.y0).toBeCloseTo(400 - 110, 6);
-    expect(yAt(10)).toBeCloseTo(400 - 106, 6);
+    expect(stepPriceAt(segments, 4)).toBe(110);
+    expect(stepPriceAt(segments, 8)).toBe(108); // HTF bar 2's two candles
+    for (const x of [10, 11, 12, 13]) expect(stepPriceAt(segments, x)).toBe(106);
   });
 
   it("falls back to the HTF bar's start when its span is not fully loaded", () => {
@@ -404,7 +461,7 @@ describe("TRENDLINES_TEMPLATE.draw snaps HTF extremes onto their chart bars", ()
       showLinePivots: false,
     });
     const arms = segments.filter(
-      (s) => s.x0 !== s.x1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
+      (s) => s.x0 !== s.x1 && s.y0 !== s.y1 && Math.abs(s.x1 - s.x0) <= TL_PIVOT_ARM,
     );
     expect(arms).toHaveLength(2);
     for (const a of arms)
@@ -500,7 +557,7 @@ describe("TRENDLINES_TEMPLATE.draw with a pre-touchKinds stash", () => {
 
   it("draws the line instead of throwing", () => {
     expect(() => draw(chartBars(), kindless())).not.toThrow();
-    expect(draw(chartBars(), kindless()).segments).toHaveLength(1);
+    expect(flats(draw(chartBars(), kindless()).segments).length).toBeGreaterThan(0);
   });
 
   it("still rings every touch, on the unsnapped bar", () => {
@@ -718,19 +775,6 @@ describe("crossingChartIdx", () => {
   });
 });
 
-describe("pinnedAnchorBars", () => {
-  const snap = (j: number) => j * 4 + 1;
-  it("maps both anchors to their snapped candles", () => {
-    expect(pinnedAnchorBars(1, "low", 3, "high", snap, 40)).toEqual([5, 13]);
-  });
-  it("is null when a kind is unknown, a candle is not loaded, or they coincide", () => {
-    expect(pinnedAnchorBars(1, null, 3, "high", snap, 40)).toBeNull();
-    expect(pinnedAnchorBars(1, "low", 12, "high", snap, 40)).toBeNull();
-    expect(pinnedAnchorBars(1, "low", 3, "high", () => 2.5, 40)).toBeNull();
-    expect(pinnedAnchorBars(1, "low", 1, "high", snap, 40)).toBeNull();
-  });
-});
-
 describe("pinnedEndY", () => {
   // Rising line: 100 at HTF bar 0, +10 per HTF bar. Pixels: xAt maps a line
   // index to 10px per bar INSIDE the loaded range [2, 6] but the calendar
@@ -813,15 +857,6 @@ describe("TRENDLINES_TEMPLATE.draw records the line as an alert sees it", () => 
   it("skips a folded forming HTF bar, so tRef is the newest CLOSED pin bar", () => {
     expect(segOf(stash({ formingIdx: 9 }))?.alertLine?.()).toEqual({
       slope: -2, tRef: T0 + 8 * HTF_MS, pRef: 96,
-      t1: T0 + HTF_MS, p1: 110, t2: T0 + 3 * HTF_MS, p2: 106,
-    });
-  });
-
-  it("also offers the stroke in CHART bars through its anchor candles", () => {
-    // Anchors snap to chart bars 4 and 12 (110 and 106): -0.5 per chart bar,
-    // referenced at the newest closed chart bar (38).
-    expect(segOf(stash())?.chartLine?.()).toEqual({
-      slope: -0.5, tRef: T0 + 38 * CHART_MS, pRef: 93,
       t1: T0 + HTF_MS, p1: 110, t2: T0 + 3 * HTF_MS, p2: 106,
     });
   });
