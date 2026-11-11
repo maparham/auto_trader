@@ -16,6 +16,7 @@ import { catalogueMatches, matchingTabIds } from "./lib/tabSearch";
 import type { PriceSide, TabStrip } from "./theme";
 import { fmtBarChange, useTabBarChange } from "./lib/tabBarChange";
 import { fetchAllMarkets, type Instrument } from "./lib/feed";
+import { emptyHistory, recent, step, visit } from "./lib/tabHistory";
 
 // Where the floating clone of the dragged chip sits for a given cursor point:
 // the grab offset, clamped to the tab bar (the chip rides the bar only).
@@ -380,6 +381,35 @@ export default function TabBar({
   const ctxTab = ctxMenu != null ? tabs.find((t) => t.id === ctxMenu.tabId) : undefined;
   const [mergePick, setMergePick] = useState<{ x: number; y: number; tabId: string } | null>(null);
 
+  // Visited-tab history: Ctrl+Option+←/→ (or Cmd+Option, which Chrome keeps
+  // for its own tabs, so that one only reaches the desktop app) step back and
+  // forward, and the empty search lists recent tabs. Updated during render on
+  // an activeId change (React's adjust-state-on-prop-change pattern), so the
+  // first render after a switch already has it. Session-only.
+  const [history, setHistory] = useState(() => visit(emptyHistory, activeId));
+  if (history.mru[0] !== activeId) setHistory(visit(history, activeId));
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (!e.altKey || !(e.ctrlKey || e.metaKey) || e.shiftKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (
+        el != null &&
+        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      const live = new Set(tabs.map((t) => t.id));
+      const next = step(history, e.key === "ArrowLeft" ? -1 : 1, live, activeId);
+      if (next == null) return;
+      setHistory(next.history);
+      onSelect(next.id);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [history, tabs, activeId, onSelect]);
+
   // Find-open-symbol search: collapsed magnifier ⇄ inline input.
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -433,7 +463,22 @@ export default function TabBar({
   // Keyboard highlight in the dropdown; re-anchored to the top on every query
   // change (the list under the cursor is new).
   const [fallbackIdx, setFallbackIdx] = useState(0);
-  useEffect(() => setFallbackIdx(0), [searchQuery]);
+  useEffect(() => setFallbackIdx(0), [searchQuery, searchOpen]);
+
+  // An empty search lists the last visited tabs instead, newest first.
+  const recentTabs =
+    searchOpen && searchQuery.trim() === ""
+      ? recent(history, new Set(tabs.map((t) => t.id)), activeId)
+          .map((id) => tabs.find((t) => t.id === id))
+          .filter((t): t is ChartTab => t != null)
+      : [];
+  const pickRecent = useCallback(
+    (id: string) => {
+      onSelect(id);
+      closeSearch();
+    },
+    [onSelect, closeSearch],
+  );
 
   const pickFallback = useCallback(
     (s: Instrument) => {
@@ -497,9 +542,11 @@ export default function TabBar({
     [tabs, activeId, onSelect],
   );
 
-  // Bare [ / ] step through the tabs. Every conventional tab-cycling chord
-  // (Ctrl+Tab, Ctrl+PageUp/Down, Cmd+Alt+Arrow) is claimed by the browser
-  // itself and can't be intercepted by a page, so this uses single keys —
+  // Bare [ / ] step through the tabs by position. Every conventional
+  // tab-cycling chord (Ctrl+Tab, Ctrl+PageUp/Down, Cmd+Alt+Arrow) is claimed
+  // by the browser itself and can't be intercepted by a page, so this uses
+  // single keys (Cmd+Alt+Arrow is bound to visit history above, for the
+  // desktop app, where nothing claims it) —
   // suppressed whenever an editable element has focus.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -622,23 +669,35 @@ export default function TabBar({
           onChange={(e) => onSearchQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Escape") closeSearch();
-            if (!fallbackOpen || fallbackHits.length === 0) return;
+            const rows = fallbackOpen ? fallbackHits.length : recentTabs.length;
+            if (rows === 0) return;
             if (e.key === "ArrowDown") {
               e.preventDefault();
-              setFallbackIdx((i) => Math.min(i + 1, fallbackHits.length - 1));
+              setFallbackIdx((i) => Math.min(i + 1, rows - 1));
             } else if (e.key === "ArrowUp") {
               e.preventDefault();
               setFallbackIdx((i) => Math.max(i - 1, 0));
             } else if (e.key === "Enter") {
               e.preventDefault();
-              const hit = fallbackHits[fallbackIdx] ?? fallbackHits[0];
-              if (hit != null) pickFallback(hit);
+              if (fallbackOpen) {
+                const hit = fallbackHits[fallbackIdx] ?? fallbackHits[0];
+                if (hit != null) pickFallback(hit);
+              } else {
+                const t = recentTabs[fallbackIdx] ?? recentTabs[0];
+                if (t != null) pickRecent(t.id);
+              }
             }
           }}
           autoFocus
         />
       ) : (
-        <Tooltip content="Find open symbol (Ctrl/Cmd+F)">
+        <Tooltip
+          content={[
+            "Find open symbol (Ctrl/Cmd+F)",
+            "Empty search lists recent tabs",
+            "Back / forward: Ctrl+Option+← / →",
+          ]}
+        >
           <button
             className="tab-search"
             aria-label="Find open symbol"
@@ -686,6 +745,32 @@ export default function TabBar({
               ))}
             </>
           )}
+        </div>
+      )}
+      {recentTabs.length > 0 && (
+        <div className="tab-search-dropdown" role="listbox" aria-label="Recent tabs">
+          <div className="tab-search-dropdown-label">Recent</div>
+          {recentTabs.map((t, i) => {
+            const lead = leadOf(t);
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="option"
+                aria-selected={i === fallbackIdx}
+                className={"tab-search-dropdown-row" + (i === fallbackIdx ? " on" : "")}
+                onMouseEnter={() => setFallbackIdx(i)}
+                onClick={() => pickRecent(t.id)}
+              >
+                <SymbolIcon epic={lead.symbol.epic} type={lead.symbol.type} className="ss-icon" />
+                <span className="tab-search-dropdown-epic">{lead.symbol.epic}</span>
+                <span className="tab-search-dropdown-name">
+                  {lead.period.label}
+                  {t.cells.length > 1 ? ` · ${t.cells.length} charts` : ""}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

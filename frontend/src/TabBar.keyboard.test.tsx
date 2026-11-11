@@ -147,3 +147,69 @@ function Harness({ activeId, onSelect }: { activeId: string; onSelect: (id: stri
     />
   );
 }
+
+// Visit history: Ctrl+Option+←/→ and Cmd+Option+←/→ step back and forward
+// through the tabs the user has activated, and an empty search lists them.
+function renderControlled(start = "t1") {
+  const onSelect = vi.fn();
+  const props = {
+    tabs: TABS,
+    closedEpics: {},
+    alertTabIds: new Set<string>(),
+    onSelect,
+    onAdd: vi.fn(),
+    onClose: vi.fn(),
+    onReorder: vi.fn(),
+    onMerge: vi.fn(),
+    searchQuery: "",
+    onSearchQuery: vi.fn(),
+    brokerId: "capital",
+    onOpenSymbol: vi.fn(),
+  };
+  const { rerender } = render(<TabBar {...props} activeId={start} />);
+  const go = (id: string) => rerender(<TabBar {...props} activeId={id} />);
+  return { onSelect, go };
+}
+
+it("Ctrl+Option and Cmd+Option arrows walk the visit history", () => {
+  const { onSelect, go } = renderControlled("t1");
+  go("t3");
+  go("t2");
+  fireEvent.keyDown(document, { key: "ArrowLeft", ctrlKey: true, altKey: true });
+  expect(onSelect).toHaveBeenLastCalledWith("t3");
+  go("t3");
+  fireEvent.keyDown(document, { key: "ArrowLeft", metaKey: true, altKey: true });
+  expect(onSelect).toHaveBeenLastCalledWith("t1");
+  go("t1");
+  fireEvent.keyDown(document, { key: "ArrowRight", ctrlKey: true, altKey: true });
+  expect(onSelect).toHaveBeenLastCalledWith("t3");
+});
+
+it("ignores the history chord without both modifiers or inside a text field", () => {
+  const { onSelect, go } = renderControlled("t1");
+  go("t2");
+  fireEvent.keyDown(document, { key: "ArrowLeft", altKey: true });
+  fireEvent.keyDown(document, { key: "ArrowLeft", ctrlKey: true });
+  const input = document.createElement("input");
+  document.body.appendChild(input);
+  input.focus();
+  fireEvent.keyDown(input, { key: "ArrowLeft", ctrlKey: true, altKey: true });
+  input.remove();
+  expect(onSelect).not.toHaveBeenCalled();
+});
+
+it("an empty search lists recent tabs, newest first, and Enter opens one", () => {
+  const { onSelect, go } = renderControlled("t1");
+  go("t3");
+  go("t2");
+  fireEvent.click(screen.getByRole("button", { name: "Find open symbol" }));
+  const list = screen.getByRole("listbox", { name: "Recent tabs" });
+  const rows = Array.from(list.querySelectorAll('[role="option"]')).map(
+    (r) => r.querySelector(".tab-search-dropdown-epic")?.textContent,
+  );
+  expect(rows).toEqual(["US100", "EURUSD"]);
+  const input = screen.getByRole("textbox", { name: "Find open symbol" });
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(onSelect).toHaveBeenLastCalledWith("t1");
+});
