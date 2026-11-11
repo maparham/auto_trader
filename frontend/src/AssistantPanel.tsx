@@ -29,6 +29,9 @@ function saveFontSize(n: number): void {
   try { localStorage.setItem(FONT_KEY, String(n)); } catch { /* storage unavailable */ }
 }
 
+// A turn with more change lines than this folds them behind "N changes".
+const CHANGES_FOLD_OVER = 3;
+
 const EXAMPLES = [
   "Add rising trendlines on the daily",
   "Show me where RSI was oversold last month",
@@ -246,7 +249,10 @@ export default function AssistantPanel({ cellId = null, cellIds, chart = null, o
 
   // The open question's options, pickable with 1..n while the composer is empty.
   const lastTurn = s.turns.at(-1);
-  const openOptions = !s.busy && lastTurn?.role === "assistant" && lastTurn.ask ? lastTurn.ask.options : [];
+  // That question is docked above the composer rather than left in the
+  // transcript, so it stays in view however long the answer above it is.
+  const openAsk = !s.busy && lastTurn?.role === "assistant" && lastTurn.ask ? lastTurn.ask : null;
+  const openOptions = openAsk ? openAsk.options : [];
   const pickByKey = (e: KeyboardEvent) => {
     if (draft || e.altKey || e.ctrlKey || e.metaKey) return false;
     const n = Number(e.key);
@@ -342,13 +348,20 @@ export default function AssistantPanel({ cellId = null, cellIds, chart = null, o
     // user clicked marked (the next user turn records the pick).
     const next = s.turns[i + 1];
     const picked = next?.role === "user" && next.pickedFrom ? next.text : null;
+    const labels = collapseLabels(t.changes.map((c) => c.label));
+    const changeList = <ul>{labels.map((l, j) => <li key={j}>{l}</li>)}</ul>;
     return (
       <div key={i} className="as-assistant">
         {t.trimmedBefore && <div className="as-muted">Earlier messages were trimmed from the model's view.</div>}
         {t.text && <Markdown text={t.text} />}
         {t.changes.length > 0 && (
           <div className={`as-changes${t.undone ? " as-changes-undone" : ""}`}>
-            <ul>{collapseLabels(t.changes.map((c) => c.label)).map((l, j) => <li key={j}>{l}</li>)}</ul>
+            {labels.length > CHANGES_FOLD_OVER ? (
+              <details className="as-changes-fold">
+                <summary>{labels.length} changes<span className="as-chev" aria-hidden="true">›</span></summary>
+                {changeList}
+              </details>
+            ) : changeList}
             <div className="as-changes-act">
               {t.undone ? (
                 i === redoIdx ? (
@@ -377,8 +390,11 @@ export default function AssistantPanel({ cellId = null, cellIds, chart = null, o
             </div>
           </div>
         )}
-        {t.ask && (
-          <div className={`as-ask${pendingAsk ? " as-ask-pending" : ""}`}>
+        {t.ask && pendingAsk && t.ask.lead && !t.text.includes(t.ask.lead) && (
+          <p className="as-p"><Inline text={t.ask.lead} /></p>
+        )}
+        {t.ask && !pendingAsk && (
+          <div className="as-ask">
             {t.ask.lead && !t.text.includes(t.ask.lead) && <p className="as-p"><Inline text={t.ask.lead} /></p>}
             <div className="as-question">{t.ask.question}</div>
             {t.ask.details && (
@@ -387,26 +403,12 @@ export default function AssistantPanel({ cellId = null, cellIds, chart = null, o
                 <Markdown text={t.ask.details} />
               </details>
             )}
-            {!pendingAsk && t.ask.options.length > 0 && i < s.turns.length - 1 && (
+            {t.ask.options.length > 0 && i < s.turns.length - 1 && (
               <div className="as-chips as-chips-answered">
                 {t.ask.options.map((o) => (
                   <button key={o.label} disabled aria-pressed={o.label === picked}
                     className={`as-chip${o.label === picked ? " as-chip-picked" : ""}`}>{o.label}</button>
                 ))}
-              </div>
-            )}
-            {pendingAsk && (
-              <div className="as-chips">
-                {t.ask.options.map((o, k) => (
-                  <Tooltip key={o.label} content={o.description ?? o.label}>
-                    <button className={`as-chip${k === 0 ? " as-chip-primary" : ""}`} onClick={() => submit(o.label)}>
-                      <span className="as-chip-num" aria-hidden="true">{k + 1}</span><span>{o.label}</span>
-                    </button>
-                  </Tooltip>
-                ))}
-                <button className="as-chip as-chip-other" onClick={() => inputRef.current?.focus()}>
-                  Something else…
-                </button>
               </div>
             )}
           </div>
@@ -458,13 +460,15 @@ export default function AssistantPanel({ cellId = null, cellIds, chart = null, o
               disabled={fontSize >= FONT_MAX} onClick={() => changeFont(1)}>A+</button>
           </Tooltip>
         </span>
-        <Tooltip content="New chat">
-          <button className="modal-close as-new" aria-label="New chat" disabled={s.busy || s.turns.length === 0}
+        <Tooltip content="Clear chat">
+          <button className="modal-close as-new" aria-label="Clear chat" disabled={s.busy || s.turns.length === 0}
             onClick={() => session?.reset()}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
               strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M8 2.5H3.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V8" />
-              <path d="M11.5 2.2l2.3 2.3L8.5 9.8 6 10.3l.5-2.5z" />
+              <path d="M2.5 4h11" />
+              <path d="M6 4V2.5h4V4" />
+              <path d="M3.8 4l.7 9a1 1 0 0 0 1 .9h5a1 1 0 0 0 1-.9l.7-9" />
+              <path d="M6.7 6.5v4.5M9.3 6.5v4.5" />
             </svg>
           </button>
         </Tooltip>
@@ -485,9 +489,38 @@ export default function AssistantPanel({ cellId = null, cellIds, chart = null, o
         ) : (
           s.turns.map(renderTurn)
         )}
-        {s.busy && <div className="as-working">Working…{s.working ? ` ${workingLabel(s.working)}` : ""}</div>}
+        {s.busy && (
+          <div className="as-working">
+            <span className="as-spin" aria-hidden="true" />
+            Working…{s.working ? ` ${workingLabel(s.working)}` : ""}
+          </div>
+        )}
       </div>
       <div className="as-composer">
+        {openAsk && (
+          <div className="as-ask-dock" role="group" aria-label="Question">
+            <div className="as-question">{openAsk.question}</div>
+            {openAsk.details && (
+              <details className="as-why"
+                onToggle={() => bodyRef.current?.scrollTo?.({ top: bodyRef.current.scrollHeight })}>
+                <summary>More</summary>
+                <Markdown text={openAsk.details} />
+              </details>
+            )}
+            <div className="as-chips">
+              {openAsk.options.map((o, k) => (
+                <Tooltip key={o.label} content={o.description ?? o.label} asChild>
+                  <button className={`as-chip${k === 0 ? " as-chip-primary" : ""}`} onClick={() => submit(o.label)}>
+                    <span className="as-chip-num" aria-hidden="true">{k + 1}</span><span>{o.label}</span>
+                  </button>
+                </Tooltip>
+              ))}
+              <button className="as-chip as-chip-other" onClick={() => inputRef.current?.focus()}>
+                Something else…
+              </button>
+            </div>
+          </div>
+        )}
         {chart && (
           <div className="as-target">
             <Tooltip content={["This chat belongs to this chart.", "Each chart has its own chat."]}>

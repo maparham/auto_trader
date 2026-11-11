@@ -90,6 +90,44 @@ describe("AssistantPanel", () => {
     expect(send).toHaveBeenCalledWith("Falling");
   });
 
+  it("docks an open question above the composer, not in the transcript", () => {
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "assistant", text: "Your line is manual.", changes: [], undone: false,
+        ask: { question: "Match it?", options: [{ label: "Yes" }, { label: "No" }] } },
+    ] });
+    const { container } = render(<AssistantPanel cellId="c1" onClose={() => {}} />);
+    const dock = container.querySelector(".as-composer .as-ask-dock")!;
+    expect(dock.textContent).toContain("Match it?");
+    expect(container.querySelector(".as-body")!.textContent).not.toContain("Match it?");
+  });
+
+  it("keeps the lead in the transcript and the question there while busy, with no dock", () => {
+    const ask = { lead: "It skips your line.", question: "Match it?", options: [{ label: "Yes" }] };
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "assistant", text: "", changes: [], undone: false, ask },
+    ] });
+    const { container, rerender } = render(<AssistantPanel cellId="c1" onClose={() => {}} />);
+    expect(container.querySelector(".as-body")!.textContent).toContain("It skips your line.");
+    fireEvent.click(screen.getByText("Yes"));
+    expect(send).toHaveBeenCalledWith("Yes");
+    state.set({ ...state.value, busy: true });
+    rerender(<AssistantPanel cellId="c1" onClose={() => {}} />);
+    expect(container.querySelector(".as-ask-dock")).toBeNull();
+    expect(screen.getAllByText("Match it?")).toHaveLength(1);
+  });
+
+  it("folds more than three change lines behind a count", () => {
+    const ch = (label: string) => ({ label, cellId: "c1", undoable: false });
+    state.set({ ...state.value, busy: false, working: null, turns: [
+      { role: "assistant", text: "", undone: false,
+        changes: [ch("Added RSI"), ch("Drew a ray"), ch("Moved the visible range"), ch("Added EMA")] },
+    ] });
+    const { container } = render(<AssistantPanel cellId="c1" onClose={() => {}} />);
+    const fold = container.querySelector("details.as-changes-fold") as HTMLDetailsElement;
+    expect(fold.open).toBe(false);
+    expect(fold.querySelector("summary")!.textContent).toContain("4 changes");
+  });
+
   it("folds an ask's details behind More", () => {
     state.set({ ...state.value, turns: [
       { role: "user", text: "why" },
@@ -347,7 +385,7 @@ describe("AssistantPanel", () => {
     expect(toBlocks("Intro\n1. one\n2. two\n\n• a").map((b) => b.kind)).toEqual(["p", "ol", "ul"]);
   });
 
-  it("shows Send only with a draft, and New chat in the head", () => {
+  it("shows Send only with a draft, and Clear chat in the head", () => {
     state.set({ ...state.value, busy: false, working: null, turns: [
       { role: "user", text: "hi" },
     ] });
@@ -355,7 +393,7 @@ describe("AssistantPanel", () => {
     expect(screen.queryByRole("button", { name: /^send$/i })).toBeNull();
     fireEvent.change(screen.getByPlaceholderText(/describe what you want/i), { target: { value: "x" } });
     expect(screen.getByRole("button", { name: /^send$/i })).toBeTruthy();
-    expect((screen.getByRole("button", { name: /new chat/i }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: /clear chat/i }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("offers Redo on an undone turn until the user sends again", () => {
