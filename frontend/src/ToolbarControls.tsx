@@ -513,7 +513,8 @@ function TicketIcon() {
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
       stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
       aria-hidden="true">
-      <path d="M3 17l6-6 4 4 7-7M14 8h5v5" />
+      <path d="M8 20V4M3.5 8.5 8 4l4.5 4.5" stroke="var(--pos)" />
+      <path d="M16 4v16M11.5 15.5 16 20l4.5-4.5" stroke="var(--neg)" />
     </svg>
   );
 }
