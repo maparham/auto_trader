@@ -44,7 +44,7 @@ import { getIndicatorById, getIndicatorsByPane } from "../lib/indicators";
 import { loadIndicatorAlerts, loadLineAlerts } from "../lib/alertsApi";
 import { alertTimeframeOf, chartValueOf, lineAlertShown } from "../lib/indicatorAlertInstance";
 import type { AlertCurveBellTag } from "./AlertCurveBells";
-import { bellPastCurveEnd, gapAlongLine, stepPastTags } from "./lineAlertBellPlace";
+import { bellPastCurveEnd, gapAlongLine, lineEndX, stepPastTags } from "./lineAlertBellPlace";
 import { indTypeOf } from "../lib/customIndicators";
 import { dashSliceBounds, getBacktestAggregate, tradeDashes } from "../lib/backtest";
 import { type AggPill } from "../BacktestAggMarkers";
@@ -919,8 +919,13 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         const paneTop = chart.getSize(paneId)?.top ?? 0;
         // Right edge of the plot, left of the price axis strip.
         const plotRight = chart.getSize(paneId, "main")?.width ?? Infinity;
+        // A stepped line runs on to the newest candle's right edge: the gap
+        // starts there, or a zoomed-in bell sits on the line's tip.
+        const endX = lineEndX(
+          last.x, chart.getBarSpace?.().halfBar ?? 0, controller.indicatorAlerts.rayStepped(a.id),
+        );
         const { x, y } = stepPastTags(
-          gapAlongLine(last.x, (q1.y - q0.y) / (q1.x - q0.x), LINE_BELL_GAP, LINE_BELL_SIZE / 2 + 2),
+          gapAlongLine(endX, (q1.y - q0.y) / (q1.x - q0.x), LINE_BELL_GAP, LINE_BELL_SIZE / 2 + 2),
           yAt, getTrendlineTags(chart, paneId), paneTop, LINE_BELL_SIZE,
         );
         // Culled rather than clamped once it would sit on the price axis (the

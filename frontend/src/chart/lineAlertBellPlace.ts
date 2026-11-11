@@ -33,6 +33,15 @@ export function stepPastTags(
 }
 
 /**
+ * Where an alert line's stroke ends, given the newest candle's center x: a
+ * straight line stops there, a stepped one (alertSteps) runs on to the
+ * candle's right edge.
+ */
+export function lineEndX(lastX: number, halfBar: number, stepped: boolean): number {
+  return stepped ? lastX + halfBar : lastX;
+}
+
+/**
  * The bell's x past a line ending at `x0`: `gap` px from the end measured
  * ALONG the line (slope `m` in px/px), so a steep line, as every line is when
  * zoomed out, does not carry the bell far above or below where it ends. At

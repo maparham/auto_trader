@@ -197,6 +197,8 @@ describe("IndicatorAlertLines: line alerts", () => {
       name: "alertSteps",
       points: [...stepsTo(9), { timestamp: bars[39].timestamp, value: 97 }],
     });
+    // The steps run to the newest candle's right edge; the bell starts there.
+    expect(lines.rayStepped("al-l")).toBe(true);
     lines.refreshRays();
     expect(chart.overrideOverlay).not.toHaveBeenCalled();
     bars.push({ timestamp: T0 + 40 * M15, open: 100, high: 100, low: 100, close: 100, volume: 1 });
@@ -223,6 +225,7 @@ describe("IndicatorAlertLines: line alerts", () => {
     expect(lines.rayPoints("al-l")).toEqual([{ timestamp: 2, value: 10 }, { timestamp: 6, value: 12 }]);
     lines.refreshRays();
     expect(lines.rayPoints("al-l")).toEqual([{ timestamp: 2, value: 10 }, { timestamp: 6, value: 12 }]);
+    expect(lines.rayStepped("al-l")).toBe(false);
   });
 });
 

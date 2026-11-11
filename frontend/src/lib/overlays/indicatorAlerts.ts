@@ -180,6 +180,8 @@ export class IndicatorAlertLines {
   // TrendLine list, which can re-extend its second touch as new bars arrive
   // and would otherwise lose a match the alert itself never moved off.
   private lastPoints = new Map<string, RayPoints>();
+  // Alert ids whose ray draws as steps (alertSteps), for rayStepped().
+  private stepped = new Set<string>();
   // The visibility the drawn lines currently carry (the sidebar eye).
   private shownHidden = false;
 
@@ -196,6 +198,7 @@ export class IndicatorAlertLines {
       this.drawn.clear();
       this.rays.clear();
       this.lastPoints.clear();
+      this.stepped.clear();
     }
     this.chart = chart;
     this.scope = scope;
@@ -331,6 +334,7 @@ export class IndicatorAlertLines {
   private reconcileRays(c: Chart, hidden: boolean, hiddenChanged: boolean): void {
     const want = this.wantedRays();
     this.lastPoints = new Map([...want].map(([id, w]) => [id, w.points]));
+    this.stepped = new Set([...want].filter(([, w]) => w.name === "alertSteps").map(([id]) => id));
     for (const [id, geo] of this.rays) {
       const w = want.get(id);
       if (!w) {
@@ -390,6 +394,12 @@ export class IndicatorAlertLines {
    * last bar; independent of the live TRENDLINES detection moving on. */
   rayPoints(alertId: string): RayPoints | null {
     return this.lastPoints.get(alertId) ?? null;
+  }
+
+  /** Whether the alert's line draws as steps: it then runs on to the newest
+   * candle's right edge rather than stopping at its center. */
+  rayStepped(alertId: string): boolean {
+    return this.stepped.has(alertId);
   }
 
   lines(): Array<{ alertId: string; paneId: string; value: number }> {
