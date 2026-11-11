@@ -294,9 +294,6 @@ class MT5MCPBroker(MarketDataBroker):
         self.client = client or MT5MCPClient(url, key)
         self._offset = timedelta(minutes=server_utc_offset_minutes)
         self._symbols: dict[str, dict] = {}
-        # The user-facing message from the last account read that found the
-        # terminal logged out, or None while it is logged in (check_logged_in).
-        self._logged_out: str | None = None
         # (epic, period) -> (oldest bar seen, monotonic time it last moved)
         self._depth: dict[tuple[str, str], tuple[datetime, float]] = {}
         # (epic, period) -> (newest bar seen, monotonic time it last moved)
@@ -795,30 +792,21 @@ class MT5MCPBroker(MarketDataBroker):
         env = _ACCOUNT_ENV.get(str(acct.get("type") or "").lower())
         self.display_name = f"{name} ({env}, self-hosted)" if env else f"{name} (self-hosted)"
 
-    def check_logged_in(self, info: dict | None) -> None:
+    @staticmethod
+    def check_logged_in(info: dict | None) -> None:
         """Raise BrokerLoggedOut when the terminal says it is not connected to
         its trade server. The terminal keeps answering from its cache after a
         lost or refused login (an "Invalid account" after a password reset),
-        so every read still succeeds while prices freeze and orders fail.
-        Remembers the answer for raise_if_logged_out."""
+        so every read still succeeds while prices freeze and orders fail."""
         terminal = (info or {}).get("terminal") or {}
         if terminal.get("server_connected") is not False:
-            self._logged_out = None
             return
         server = ((info or {}).get("account") or {}).get("server")
         where = f" to {server}" if server else ""
-        self._logged_out = (
+        raise BrokerLoggedOut(
             f"The MT5 terminal is not logged in{where}. Its data is stale and orders "
             "will fail. Log in again in the terminal."
         )
-        raise BrokerLoggedOut(self._logged_out)
-
-    def raise_if_logged_out(self) -> None:
-        """Refuse with the last account read's verdict, so the positions poll
-        does not report the broker healthy (and clear the UI's warning) while
-        the account poll says it is logged out."""
-        if self._logged_out:
-            raise BrokerLoggedOut(self._logged_out)
 
     def start_display_name_fetch(self) -> None:
         """One background read of the account's broker name. A no-op outside a
@@ -993,7 +981,13 @@ class MT5MCPExecutionBroker(ExecutionBroker):
         }
 
     async def get_positions(self, epic: str | None = None) -> list[Position]:
-        self._data.raise_if_logged_out()
+        # Checked on every read, not cached from the account poll: positions are
+        # polled on their own (live engine, mobile), and a remembered verdict
+        # would outlive a re-login or miss a fresh logout. The terminal is
+        # local, so the extra read costs milliseconds.
+        info = await self._data.call("get_trading_account_info")
+        self._data.note_account_info(info)
+        self._data.check_logged_in(info)
         out: list[Position] = []
         for p in (await self._raw_positions()).get("positions") or []:
             symbol = p.get("symbol")

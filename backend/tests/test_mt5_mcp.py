@@ -239,6 +239,7 @@ POSITION = {"position_id": 555, "action": "sell", "symbol": "EURUSD", "create_ti
 
 def _exec(extra_tools=None):
     tools = {"get_marketwatch_symbols": {"symbols": [EURUSD]},
+             "get_trading_account_info": {"account": {}, "terminal": {"server_connected": True}},
              "get_trading_open_positions": {"positions": [POSITION], "orders": []}}
     tools.update(extra_tools or {})
     data = _broker(tools)
@@ -650,18 +651,14 @@ def test_account_summary_refuses_when_terminal_is_logged_out():
     assert ex._data.display_name == "Ava Trade Markets Ltd. (live, self-hosted)"
 
 
-def test_positions_follow_the_last_login_verdict():
-    """The positions poll must not report the broker healthy (clearing the
-    UI's warning) between two account reads that find it logged out."""
+def test_positions_check_the_login_on_every_read():
+    """Positions are polled on their own (live engine, mobile), so each read
+    asks the terminal: a logout shows at once and a re-login clears at once."""
     info = _account_info(False)
     ex, _ = _exec({"get_trading_account_info": lambda _a: info})
-    assert run(ex.get_positions())  # no account read yet: no verdict
-    with pytest.raises(BrokerLoggedOut):
-        run(ex.get_account_summary())
     with pytest.raises(BrokerLoggedOut):
         run(ex.get_positions())
     info["terminal"]["server_connected"] = True
-    run(ex.get_account_summary())
     assert run(ex.get_positions())
 
 
