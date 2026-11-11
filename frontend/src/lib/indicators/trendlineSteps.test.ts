@@ -107,6 +107,16 @@ describe("buildHtfStepMap", () => {
     for (let c = n - 7; c < n; c++) expect(map.barOf(c)).toBe(map.forming + 1);
   });
 
+  it("a forming bar longer than perBar stays one bar", () => {
+    // A long session (nine candles) on the forming day: the pin's bar is
+    // decided by time, not by counting perBar candles.
+    const closed = tradingDays(10);
+    const long = Array.from({ length: 9 }, (_, h) => MON + 14 * DAY + 13.5 * H + h * H);
+    const times = [...hourly(closed), ...long];
+    const map = mapOf(times, startsOf(closed));
+    for (let c = times.length - 9; c < times.length; c++) expect(map.barOf(c)).toBe(map.forming);
+  });
+
   it("DST straddle", () => {
     // The broker's daily open moves from 00:00 to 23:00 the previous day in
     // the second week; 4H candles stay on fixed UTC hours.
@@ -191,6 +201,13 @@ describe("stepRange", () => {
 
   it("a line reaching the last closed bar runs through the forming bar to the newest candle", () => {
     expect(stepRange(lastIdx, lastIdx, map)).toEqual({ jTo: map.forming, endPos: times.length - 0.5 });
+  });
+
+  it("runs to the newest candle's bar when a stale stash leaves several", () => {
+    const thu = days.slice(0, 9);
+    const stale = mapOf(hourly([...days, 14]), startsOf(thu));
+    const r = stepRange(stale.forming - 1, stale.forming - 1, stale);
+    expect(r.jTo).toBe(stale.forming + 1);
   });
 
   it("anything else is unchanged", () => {

@@ -260,6 +260,8 @@ function draw(
       else dots.push({ x, y });
     },
   };
+  // `xShift` scrolls the view: chart bar i sits at pixel i - xShift.
+  const shift = typeof over.xShift === "number" ? over.xShift : 0;
   const ext = { mtf, dedupe: false, nearPrice: false, ...over };
   const result = TRENDLINES_TEMPLATE.calc!(bars, { calcParams: PARAMS, extendData: ext } as never);
   const chart = { getDataList: () => bars, getSize: () => ({ width: 0 }) };
@@ -268,7 +270,7 @@ function draw(
     chart,
     indicator: { result, calcParams: PARAMS, extendData: ext, paneId: "candle_pane", name: "TRENDLINES" },
     bounding: { width: 400, height: 400 },
-    xAxis: { convertToPixel: (i: number) => i, convertFromPixel: (x: number) => x },
+    xAxis: { convertToPixel: (i: number) => i - shift, convertFromPixel: (x: number) => x + shift },
     yAxis: { convertToPixel: (p: number) => 400 - p, convertFromPixel: (y: number) => 400 - y },
   } as never);
   return { segments, rings, dots, chart };
@@ -322,6 +324,13 @@ describe("TRENDLINES_TEMPLATE.draw under a pin", () => {
       expect(end.x1).toBe(39.5);
       expect(400 - end.y0).toBe(110 - 2 * (9 - 1));
     }
+  });
+
+  it("keeps a double-clicked line's extension when its solid part is scrolled off", () => {
+    const key = lineKey(htfLine, chartBars(), htfStarts());
+    // The segment stops at chart bar 15; the view starts at chart bar 20.
+    const { segments } = draw(chartBars(), stash(), { extend: "segment", extendedLines: [key], xShift: 20 });
+    expect(flats(segments).some((f) => f.x1 > 0)).toBe(true);
   });
 
   it("segment mode ends with the last touch's HTF bar", () => {
@@ -873,6 +882,12 @@ describe("clone of a stepped line", () => {
       { timestamp: T0 + 4 * CHART_MS, value: 110 },
       { timestamp: T0 + 39 * CHART_MS, value: 110 - 2 * (9 - 1) },
     ]);
+  });
+
+  it("does not change when the view scrolls", () => {
+    const at = (xShift: number, extend: string) => segOf({ xShift, extend })?.clone()?.points;
+    expect(at(10, "ray")).toEqual(at(0, "ray"));
+    expect(at(10, "segment")).toEqual(at(0, "segment"));
   });
 
   it("ends a segment where its steps end", () => {

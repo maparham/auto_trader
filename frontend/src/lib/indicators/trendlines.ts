@@ -3697,27 +3697,38 @@ function drawTrendlines(
     // Coarser pin: the stepped stroke and its dashed extension.
     let pieces: StepPiece[] | null = null;
     let extPieces: StepPiece[] | null = null;
+    // The solid steps' true end (chart position) and last HTF bar, uncut by
+    // the viewport, for the extension and the clone.
+    let stepEndPos = 0;
+    let stepEndJ = 0;
     if (stepMap) {
       const valueAt = (j: number) => projectAt(line, j);
       const { jTo, endPos } = stepRange(jRight, lastIdx, stepMap);
       const opts = { xOf: (pos: number) => xAxis.convertToPixel(pos), yOf: yPx, posMin, posMax, endPos };
       pieces = buildSteps(stepMap, valueAt, jLeft, jTo, opts);
-      if (!pieces.length) continue;
-      x0 = pieces[0].x0;
-      y0 = pieces[0].y0;
-      x1 = pieces[pieces.length - 1].x1;
-      y1 = pieces[pieces.length - 1].y1;
+      stepEndJ = Math.floor(jTo);
+      stepEndPos = Math.min(
+        endPos ?? Infinity,
+        Number.isInteger(jTo) ? (stepMap.span(jTo)?.to ?? stepMap.posOf(jTo + 1)) : stepMap.posOf(jTo),
+      );
+      x1 = xAxis.convertToPixel(stepEndPos);
+      y1 = yPx(valueAt(stepEndJ));
+      x0 = pieces.length ? pieces[0].x0 : x1;
+      y0 = pieces.length ? pieces[0].y0 : y1;
       if (jExt > jRight) {
         // From where the solid stroke stopped, on to the pane's edge.
-        const solidEnd = endPos ?? stepMap.posOf(Number.isInteger(jTo) ? jTo + 1 : jTo);
+        const solidEnd = stepEndPos;
+        const solidX = x1;
         extPieces = buildSteps(stepMap, valueAt, Math.floor(stepMap.jAt(solidEnd)), jExt, {
           ...opts,
           posMin: Math.max(posMin, solidEnd),
           endPos: undefined,
         })
-          .filter((p) => p.x1 > x1)
-          .map((p) => (p.x0 < x1 ? { ...p, x0: x1 } : p));
+          .filter((p) => p.x1 > solidX)
+          .map((p) => (p.x0 < solidX ? { ...p, x0: solidX } : p));
       }
+      // Nothing of the line on the pane: neither its steps nor its extension.
+      if (!pieces.length && !extPieces?.length) continue;
       xExt = extPieces?.length ? extPieces[extPieces.length - 1].x1 : x1;
     } else {
       x0 = xAtLine(jLeft);
@@ -3746,7 +3757,7 @@ function drawTrendlines(
     // The picked line: a wide translucent under-stroke, solid, beneath it.
     // The hovered one gets the same glow, fainter, and so does every line of
     // an emphasized instance.
-    if ((pieces || seg) && (key === selectedKey || key === hoveredKey || emphasized)) {
+    if ((pieces ? pieces.length : seg) && (key === selectedKey || key === hoveredKey || emphasized)) {
       ctx.globalAlpha = key === selectedKey ? TL_SELECT_GLOW_ALPHA : TL_HOVER_GLOW_ALPHA;
       ctx.lineWidth = look.width + TL_SELECT_GLOW;
       if (pieces) strokeSteps(ctx, pieces);
@@ -3771,8 +3782,10 @@ function drawTrendlines(
     // absurd overshoots — a 1D pin's 250-day horizon on a 1m chart — are cut.
     // (`seg` is computed above, before the selection glow.)
     if (pieces) {
-      strokeSteps(ctx, pieces);
-      ctx.stroke();
+      if (pieces.length) {
+        strokeSteps(ctx, pieces);
+        ctx.stroke();
+      }
     } else if (seg) {
       ctx.beginPath();
       ctx.moveTo(seg[0], seg[1]);
@@ -3813,11 +3826,12 @@ function drawTrendlines(
       // A stepped line's clone: a drawing cannot be a staircase, so it is
       // straight from the first stepped candle to the stroke's end (the
       // newest candle when it reaches it), at the step values there.
-      const stepPoint = (c: number): { timestamp: number; value: number } | null => {
+      // From the line's geometry, not the culled pieces, so the clone does
+      // not change as the view scrolls.
+      const stepPoint = (c: number, j: number): { timestamp: number; value: number } | null => {
         timestamps ??= dataList.map((d) => d.timestamp);
-        const k = Math.max(0, Math.min(lastChartIdx, c));
-        const timestamp = tsAtIndex(timestamps, k);
-        return timestamp === null ? null : { timestamp, value: projectAt(line, stepMap!.barOf(k)) };
+        const timestamp = tsAtIndex(timestamps, Math.min(lastChartIdx, c));
+        return timestamp === null ? null : { timestamp, value: projectAt(line, j) };
       };
       const toPoint = (x: number): { timestamp: number; value: number } | null => {
         timestamps ??= dataList.map((d) => d.timestamp);
@@ -3835,12 +3849,14 @@ function drawTrendlines(
         // the newest bar (ray / extended run on by themselves), so the
         // drawing lies on the stroke the user saw.
         clone: (): TrendlineClone | null => {
-          if (pieces) {
-            const posOf = (x: number) => xAxis.convertFromPixel(x);
-            const a = stepPoint(Math.round(posOf(pieces[0].x0) + 0.5));
-            const xNow = xAxis.convertToPixel(lastChartIdx);
-            const end = tool === "segment" || x1 < xNow ? Math.round(posOf(x1) - 0.5) : lastChartIdx;
-            const b = stepPoint(end);
+          if (pieces && stepMap) {
+            const jA = Math.floor(jLeft);
+            const a = stepPoint(Math.round(stepMap.posOf(jA) + 0.5), jA);
+            const reachesNow = stepEndPos >= lastChartIdx;
+            const b =
+              tool === "segment" || !reachesNow
+                ? stepPoint(Math.round(stepEndPos - 0.5), stepEndJ)
+                : stepPoint(lastChartIdx, stepMap.barOf(lastChartIdx));
             if (!a || !b || a.timestamp === b.timestamp) return null;
             return { tool, points: [a, b] };
           }

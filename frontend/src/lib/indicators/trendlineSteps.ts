@@ -44,8 +44,10 @@ const PER_BAR_SAMPLE = 5;
  *  - history: candle c is in bar j when starts[j] <= t_c < starts[j + 1], by
  *    its OPEN time (a candle straddling a boundary belongs to the bar it
  *    opens in);
- *  - candles at or after the last start's close belong to the forming bar
- *    and, past perBar of them (a stale stash), to the bars after it;
+ *  - candles at or after the last start's close belong to the forming bar,
+ *    which runs one HTF period (htfBarEndMs) from its first candle; a candle
+ *    past that opens the next bar (a stale stash), by TIME, not by counting
+ *    perBar candles (a forming month can hold more sessions than the median);
  *  - candles before starts[0] count back from bar -1 the same way;
  *  - bars beyond either end are projected perBar candles wide.
  */
@@ -102,10 +104,19 @@ export function buildHtfStepMap(
     perBar = Math.max(1, Math.round(htfMs / medianGap(timeAt, nChart, htfMs)));
   }
   for (let c = 0; c < before; c++) bar[c] = -1 - Math.floor((before - 1 - c) / perBar);
-  for (let c = firstAfter; c < nChart; c++) bar[c] = nS + Math.floor((c - firstAfter) / perBar);
+  let g = nS - 1;
+  let gEnd = -Infinity;
+  for (let c = firstAfter; c < nChart; c++) {
+    const t = timeAt(c);
+    if (t >= gEnd) {
+      g++;
+      gEnd = htfBarEndMs(t, htfMs, timeframe);
+    }
+    bar[c] = g;
+  }
 
-  const afterStart = firstAfter - 0.5;
   const firstBar = nChart ? bar[0] : nS;
+  const lastBar = nChart ? bar[nChart - 1] : nS - 1;
   // Leftmost loaded candle edge of each bar in range, by binary search on the
   // non-decreasing bar array.
   const lowerBound = (want: number): number => {
@@ -118,26 +129,35 @@ export function buildHtfStepMap(
     }
     return lo;
   };
+  // A bar the data holds: its candles. The newest candle's bar, when it is
+  // the forming one (or later), runs on at least perBar candles into the
+  // future, since it has not finished.
+  const loaded = (jj: number): { from: number; to: number } | null => {
+    const a = lowerBound(jj);
+    if (a >= nChart || bar[a] !== jj) return null;
+    const b = lowerBound(jj + 1);
+    const to = jj === lastBar && jj >= nS ? Math.max(b, a + perBar) : b;
+    return { from: a - 0.5, to: to - 0.5 };
+  };
+  // Where the projected future starts: the end of the newest candle's bar.
+  const lastTo = nChart ? loaded(lastBar)!.to : -0.5;
   const span = (jj: number): { from: number; to: number } | null => {
-    if (jj >= nS) {
-      const from = afterStart + (jj - nS) * perBar;
+    if (jj > lastBar) {
+      const from = lastTo + (jj - lastBar - 1) * perBar;
       return { from, to: from + perBar };
     }
     if (jj < firstBar) {
       const to = -0.5 - (firstBar - 1 - jj) * perBar;
       return { from: to - perBar, to };
     }
-    const a = lowerBound(jj);
-    if (a >= nChart || bar[a] !== jj) return null;
-    const b = lowerBound(jj + 1);
-    return { from: a - 0.5, to: b - 0.5 };
+    return loaded(jj);
   };
   const nonNullFrom = (k: number): number => {
     for (let jj = k; jj < nS; jj++) {
       const s = span(jj);
       if (s) return s.from;
     }
-    return afterStart;
+    return lastTo;
   };
   return {
     nChart,
@@ -152,7 +172,7 @@ export function buildHtfStepMap(
       return s.from + (jj - k) * (s.to - s.from);
     },
     jAt: (pos) => {
-      if (pos >= afterStart) return nS + (pos - afterStart) / perBar;
+      if (pos >= lastTo) return lastBar + 1 + (pos - lastTo) / perBar;
       if (pos < -0.5 || !nChart) return firstBar - (-0.5 - pos) / perBar;
       const c = Math.min(nChart - 1, Math.max(0, Math.round(pos)));
       const k = bar[c];
@@ -261,7 +281,10 @@ export function stepRange(
   lastIdx: number,
   map: HtfStepMap,
 ): { jTo: number; endPos?: number } {
-  if (Number.isInteger(jRight) && jRight === lastIdx) return { jTo: map.forming, endPos: map.nChart - 1 + 0.5 };
+  if (Number.isInteger(jRight) && jRight === lastIdx)
+    // Through the newest candle's bar: the forming one, or a later one when
+    // a stale stash left the newest candles past it.
+    return { jTo: Math.max(map.forming, map.nChart ? map.barOf(map.nChart - 1) : map.forming), endPos: map.nChart - 1 + 0.5 };
   return { jTo: jRight };
 }
 
