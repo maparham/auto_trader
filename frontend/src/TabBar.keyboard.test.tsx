@@ -213,3 +213,22 @@ it("an empty search lists recent tabs, newest first, and Enter opens one", () =>
   fireEvent.keyDown(input, { key: "Enter" });
   expect(onSelect).toHaveBeenLastCalledWith("t1");
 });
+
+it("plain Cmd+arrows walk the history in the desktop shell only", () => {
+  const { onSelect, go } = renderControlled("t1");
+  go("t2");
+  const ev = () => {
+    const e = new KeyboardEvent("keydown", { key: "ArrowLeft", metaKey: true, cancelable: true });
+    document.dispatchEvent(e);
+    return e;
+  };
+  expect(ev().defaultPrevented).toBe(false);
+  expect(onSelect).not.toHaveBeenCalled();
+  (window as unknown as Record<string, unknown>).__TAURI__ = {};
+  try {
+    expect(ev().defaultPrevented).toBe(true);
+    expect(onSelect).toHaveBeenLastCalledWith("t1");
+  } finally {
+    delete (window as unknown as Record<string, unknown>).__TAURI__;
+  }
+});

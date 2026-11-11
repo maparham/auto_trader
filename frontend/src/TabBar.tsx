@@ -17,6 +17,7 @@ import type { PriceSide, TabStrip } from "./theme";
 import { fmtBarChange, useTabBarChange } from "./lib/tabBarChange";
 import { fetchAllMarkets, type Instrument } from "./lib/feed";
 import { emptyHistory, recent, step, visit } from "./lib/tabHistory";
+import { inShell } from "./lib/shellBridge";
 
 // Where the floating clone of the dragged chip sits for a given cursor point:
 // the grab offset, clamped to the tab bar (the chip rides the bar only).
@@ -383,7 +384,9 @@ export default function TabBar({
 
   // Visited-tab history: Ctrl+Option+←/→ (or Cmd+Option, which Chrome keeps
   // for its own tabs, so that one only reaches the desktop app) step back and
-  // forward, and the empty search lists recent tabs. Updated during render on
+  // forward, and the empty search lists recent tabs. In the desktop app plain
+  // Cmd+←/→ does the same: the webview would otherwise take it as page
+  // Back/Forward and reload the app. Updated during render on
   // an activeId change (React's adjust-state-on-prop-change pattern), so the
   // first render after a switch already has it. Session-only.
   const [history, setHistory] = useState(() => visit(emptyHistory, activeId));
@@ -391,7 +394,10 @@ export default function TabBar({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-      if (!e.altKey || !(e.ctrlKey || e.metaKey) || e.shiftKey) return;
+      if (e.shiftKey) return;
+      const chord = e.altKey && (e.ctrlKey || e.metaKey);
+      const shellCmd = e.metaKey && !e.altKey && !e.ctrlKey && inShell();
+      if (!chord && !shellCmd) return;
       const el = document.activeElement as HTMLElement | null;
       if (
         el != null &&
