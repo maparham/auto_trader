@@ -27,6 +27,8 @@ from auto_trader.core.alert_engine import ALERT_ENGINE
 from auto_trader.core.alert_kinds import INDICATOR, KINDS, carry_output, upgrade_params
 from auto_trader.core.alert_store import ALERT_STORE
 from auto_trader.core.candle_aggregate import resolution_seconds
+from auto_trader.core.position_alert_kind import POSITION_KIND, is_watchable
+from auto_trader.core.position_watch import POSITION_WATCH
 from auto_trader.core.push_notify import PUSH
 from auto_trader.core.telegram_notify import TELEGRAM
 from auto_trader.indicators.alert_series import IndicatorKey, config_json, config_of
@@ -61,7 +63,7 @@ def _validate_id(alert_id: str) -> None:
 
 
 def _validate_kind(kind: str) -> None:
-    if kind not in KINDS and kind != "account":
+    if kind not in KINDS and kind not in ("account", "position"):
         raise HTTPException(422, f"unknown alert kind: {kind!r}")
 
 
@@ -72,6 +74,14 @@ def _check_account(account: str) -> None:
     exec_broker = registry.exec.get(account) if registry is not None else None
     if exec_broker is None or not is_monitorable(account, exec_broker.env):
         raise HTTPException(422, "account_not_monitorable")
+
+
+def _check_watchable(account: str) -> None:
+    """A position alert's `broker` is a registered exec account the watcher
+    may poll (anything but MetaApi)."""
+    registry = deps._registry
+    if registry is None or registry.exec.get(account) is None or not is_watchable(account):
+        raise HTTPException(422, "account_not_watchable")
 
 
 def _streams(broker: str) -> Callable[[], bool]:
@@ -109,6 +119,9 @@ def _validate_params(kind: str, params: dict[str, Any], broker: str) -> None:
         if kind == "account":
             ACCOUNT_KIND.validate(params)
             _check_account(broker)
+        elif kind == "position":
+            POSITION_KIND.validate(params)
+            _check_watchable(broker)
         else:
             KINDS[kind].validate(params, _streams(broker))
     except ValueError as e:
@@ -116,7 +129,11 @@ def _validate_params(kind: str, params: dict[str, Any], broker: str) -> None:
 
 
 def _sig(kind: str, params: dict[str, Any]) -> str:
-    return ACCOUNT_KIND.sig(params) if kind == "account" else KINDS[kind].sig(params)
+    if kind == "account":
+        return ACCOUNT_KIND.sig(params)
+    if kind == "position":
+        return POSITION_KIND.sig(params)
+    return KINDS[kind].sig(params)
 
 
 async def _check_duplicate(
@@ -150,6 +167,23 @@ async def _check_line_ref(broker: str, epic: str, params: dict[str, Any]) -> Non
         raise HTTPException(503, "Couldn't load bars to check this line; try again")
     if params["tRef"] not in {candle_ms(b) for b in bars}:
         raise HTTPException(422, "Chart and server bars disagree; reload the chart")
+
+
+async def _check_position(account: str, epic: str, params: dict[str, Any]) -> None:
+    """The deal must exist now, on this epic, with a level on the watched side
+    (and not a trailing stop on the SL side)."""
+    try:
+        snap = await POSITION_WATCH.snapshot(account, params["dealId"])
+    except Exception:
+        log.warning("position alert: snapshot failed for %s", account, exc_info=True)
+        raise HTTPException(503, "Couldn't reach the broker; try again") from None
+    if snap is None or snap.epic != epic:
+        raise HTTPException(422, "position_not_found")
+    side = params["side"]
+    if (snap.sl if side == "sl" else snap.tp) is None:
+        raise HTTPException(422, "no_level")
+    if side == "sl" and snap.trailing:
+        raise HTTPException(422, "trailing_stop")
 
 
 class CreateAlertBody(BaseModel):
@@ -200,6 +234,8 @@ async def _notify(
     # Account alerts belong to the monitor; the price engine must never see them.
     if kind == "account":
         ACCOUNT_MONITOR.on_alert_changed(user, row, alert_id)
+    elif kind == "position":
+        POSITION_WATCH.on_alert_changed(user, row, alert_id)
     else:
         ALERT_ENGINE.on_alert_changed(user, row, alert_id)
     await broadcast_to_user(
@@ -223,6 +259,9 @@ async def list_alerts(request: Request) -> dict[str, Any]:
         if r.get("kind") == "account":
             r.update(acct.get(r["id"], {"current": None, "firedTiers": [], "monitored": False,
                                         "unmonitoredReason": "not started"}))
+    for r in rows:
+        if r.get("kind") == "position":
+            r.update(POSITION_WATCH.status(user, r["id"]))
     return {"alerts": [_decorate(r) for r in rows]}
 
 
@@ -230,7 +269,7 @@ async def list_alerts(request: Request) -> dict[str, Any]:
 async def create_alert(request: Request, body: CreateAlertBody, origin: str = Query("")) -> dict[str, Any]:
     _validate_id(body.id)
     _validate_kind(body.kind)
-    if body.kind == "account":
+    if body.kind in ("account", "position"):
         deps.require_admin(request)
     _validate_params(body.kind, body.params, body.broker)
     _validate_precision(body.precision)
@@ -239,6 +278,8 @@ async def create_alert(request: Request, body: CreateAlertBody, origin: str = Qu
     await _check_duplicate(user, body.broker, body.epic, body.kind, body.params)
     if body.kind == "line":
         await _check_line_ref(body.broker, body.epic, body.params)
+    if body.kind == "position":
+        await _check_position(body.broker, body.epic, body.params)
 
     notify = {ch: True for ch in _NOTIFY_CHANNELS}
     if body.notify:
@@ -446,9 +487,13 @@ async def patch_alert(
     current = next((r for r in existing if r["id"] == alert_id), None)
     if current is None:
         raise HTTPException(404, f"alert not found: {alert_id}")
-    if current.get("kind") == "account":
+    if current.get("kind") in ("account", "position"):
         deps.require_admin(request)
     if "params" in patch:
+        if current.get("kind") == "position" and any(
+            k in patch["params"] and patch["params"][k] != current["params"].get(k) for k in ("dealId", "side")
+        ):
+            raise HTTPException(422, "A position alert's deal and side can't be changed")
         if current.get("kind") == "line" and _LINE_GEOMETRY.intersection(patch["params"]):
             # The line is frozen at creation and tRef/pRef belong to the
             # server (the engine's rebase writes through AlertStore.update
