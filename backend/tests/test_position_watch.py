@@ -42,9 +42,11 @@ class FakeExec:
 class FakeEngine:
     def __init__(self):
         self.feeds: dict[str, set] = {}
+        self.calls: list[set] = []
 
     def set_extra_feeds(self, owner, pairs):
         self.feeds[owner] = set(pairs)
+        self.calls.append(set(pairs))
 
 
 class Harness:
@@ -343,3 +345,101 @@ def test_listen_to_registers_once():
     w.listen_to(e)
     w.listen_to(e)
     assert e.fns == [w.on_tick]
+
+
+def test_delete_during_poll_keeps_other_pairs(tmp_path):
+    async def main():
+        h = Harness(tmp_path)
+        h.exec.positions.append(Position(epic="DE40", side=Side.SELL, quantity=1, open_level=50.0,
+                                         deal_id="D2", stop_level=60.0))
+        await h.add("sl", deal="D1")
+        await h.add("sl", deal="D2")
+        h.w._started = True  # reconcile on delete, without spawning loops' polls first
+        await h.w.poll_once(ACCT)
+        h.engine.calls.clear()
+        h.exec.positions = [p for p in h.exec.positions if p.deal_id == "D2"]
+        await h.w.poll_once(ACCT)
+        assert h.engine.calls, "feeds were republished"
+        assert all(("capital-live", "DE40") in c for c in h.engine.calls)
+        assert h.engine.feeds["position"] == {("capital-live", "DE40")}
+        await h.w.stop()
+    run(main())
+
+
+def test_token_survives_row_deleted_during_history_write(tmp_path):
+    async def main():
+        h = Harness(tmp_path)
+        await h.add()
+        await h.w.poll_once(ACCT)
+        orig = h.store.add_triggered
+
+        async def add_triggered(uid, entry):
+            await h.store.delete("u1", "p-sl-D1")
+            h.w.on_alert_changed("u1", None, "p-sl-D1")
+            return await orig(uid, entry)
+        h.store.add_triggered = add_triggered
+        await h.tick(104.0)
+        got = h.w.take_remove_token(h.fired()[0]["removeToken"])
+        assert got is not None and got[:6] == ("u1", "p-sl-D1", ACCT, "D1", "sl", 100.0)
+        await h.w.stop()
+    run(main())
+
+
+def test_user_delete_mid_poll_no_second_delete(tmp_path):
+    async def main():
+        h = Harness(tmp_path)
+        await h.add("sl")
+        await h.add("tp")
+        await h.w.poll_once(ACCT)
+        orig = h.store.delete
+        watch_deletes: list[str] = []
+
+        async def delete(uid, aid):
+            watch_deletes.append(aid)
+            ok = await orig(uid, aid)
+            if len(watch_deletes) == 1:
+                # The user deletes the other row while the watch is awaiting.
+                other = "p-tp-D1" if aid == "p-sl-D1" else "p-sl-D1"
+                await orig("u1", other)
+                h.w.on_alert_changed("u1", None, other)
+            return ok
+        h.store.delete = delete
+        h.exec.positions = []
+        await h.w.poll_once(ACCT)
+        assert len(watch_deletes) == 1
+        assert len(h.changed()) == 1
+        assert h.w._seen_level == {} and h.w._fired == {}
+        assert await h.store.list_all() == []
+        await h.w.stop()
+    run(main())
+
+
+def test_start_after_previous_lifespan_is_clean(tmp_path):
+    async def main():
+        h = Harness(tmp_path)
+        await h.add()
+        await h.w.poll_once(ACCT)
+        await h.tick(104.0)
+        assert h.w.status("u1", "p-sl-D1")["fired"] is True
+        h.w.mint_remove_token("u1", "p-sl-D1", 100.0)
+        await h.w.stop()
+        await h.w.start()
+        try:
+            assert h.w._snap == {} and h.w._fired == {} and h.w._seen_level == {}
+            assert h.w._atr == {} and h.w._atr_bucket == {} and h.w._tokens == {}
+            assert h.w.status("u1", "p-sl-D1") == {"level": None, "distanceAtr": None,
+                                                   "fired": False, "trailing": False}
+        finally:
+            await h.w.stop()
+    run(main())
+
+
+def test_stop_clears_extra_feeds(tmp_path):
+    async def main():
+        h = Harness(tmp_path)
+        await h.add()
+        await h.w.poll_once(ACCT)
+        assert h.engine.feeds["position"]
+        await h.w.stop()
+        assert h.engine.feeds["position"] == set()
+    run(main())

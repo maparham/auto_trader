@@ -141,7 +141,17 @@ class PositionWatch:
 
     async def start(self) -> None:
         assert self._store is not None
+        # A previous lifespan's state must not leak into this one (as
+        # AlertEngine.start does): stale snaps would index dead deals.
         self._alerts.clear()
+        self._snap.clear()
+        self._fired.clear()
+        self._seen_level.clear()
+        self._last_price.clear()
+        self._by_feed = {}
+        self._atr.clear()
+        self._atr_bucket.clear()
+        self._tokens.clear()
         for user_id, row in await self._store.list_all():
             if row.get("kind") == "position":
                 self._alerts.setdefault(row["broker"], []).append((user_id, row))
@@ -156,6 +166,12 @@ class PositionWatch:
             t.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        self._by_feed = {}
+        if self._engine is not None:
+            try:
+                self._engine.set_extra_feeds(FEED_OWNER, set())
+            except Exception:
+                log.warning("position watch: clearing extra feeds failed", exc_info=True)
 
     def _reconcile(self) -> None:
         needed = {
@@ -246,31 +262,49 @@ class PositionWatch:
             log.warning("position watch: get_positions failed for %s: %s", account, exc)
             return
         by_deal = {p.deal_id: _snap_of(p) for p in positions}
-        for key in [k for k in self._snap if k[0] == account]:
-            del self._snap[key]
+        # Everything up to the swap is synchronous: build this account's
+        # snaps locally, swap them in and rebuild the index ONCE, before any
+        # await. Deleting row by row while _snap was half-built made every
+        # _delete's reconcile publish a partial feed set (feed churn, skipped
+        # ticks on deals not yet re-added).
+        new_snaps: dict[tuple[str, str], Snap] = {}
+        doomed: list[tuple[str, dict]] = []
         for user_id, row in list(self._alerts.get(account, [])):
             params = row["params"]
             deal, side = params["dealId"], params["side"]
             snap = by_deal.get(deal)
             level = _level(snap, side) if snap is not None else None
             if level is None:
-                await self._delete(user_id, row, account)
+                doomed.append((user_id, row))
                 continue
-            self._snap[(account, deal)] = snap
+            new_snaps[(account, deal)] = snap
             key = (user_id, row["id"])
             if self._seen_level.get(key) != level:
                 if key in self._seen_level:
                     self._fired[key] = False  # the level moved: re-arm
                 self._seen_level[key] = level
+        for key in [k for k in self._snap if k[0] == account]:
+            del self._snap[key]
+        self._snap.update(new_snaps)
         self._rebuild_index()
+        for user_id, row in doomed:
+            await self._delete(user_id, row, account)
         await self._refresh_atrs({pair for pair in self._by_feed if pair[0] == data_broker_of(account)})
 
     async def _delete(self, user_id: str, row: dict, account: str) -> None:
+        """Delete a row whose deal or level is gone. Re-checks the registry
+        first and after the store call: the user may have deleted it while
+        this poll was awaiting, and that must not cause a second delete or a
+        spurious changed broadcast."""
         assert self._store is not None and self._broadcast is not None
+        if self._find_in(account, user_id, row["id"]) is None:
+            return
         try:
-            await self._store.delete(user_id, row["id"])
+            deleted = await self._store.delete(user_id, row["id"])
         except Exception:
             log.warning("position watch: delete failed user=%s alert=%s", user_id, row["id"], exc_info=True)
+            return
+        if not deleted or self._find_in(account, user_id, row["id"]) is None:
             return
         self._forget((user_id, row["id"]))
         entries = [(u, r) for (u, r) in self._alerts.get(account, []) if not (u == user_id and r["id"] == row["id"])]
@@ -366,6 +400,9 @@ class PositionWatch:
         text = headline(snap.epic, snap.side, side, level, price, atr_value, snap.upnl, snap.currency, precision)
         now_ms = int(self._clock() * 1000)
         data_broker = data_broker_of(account)
+        # Minted before any await, from what this fire already holds: the
+        # row may be deleted while add_triggered runs.
+        token = self._mint(user_id, row["id"], account, row["params"]["dealId"], side, level)
         triggered_id: int | None
         try:
             triggered_id = await self._store.add_triggered(user_id, {
@@ -382,7 +419,7 @@ class PositionWatch:
             "epic": snap.epic, "side": side, "level": level, "price": price, "atr": atr_value,
             "precision": precision, "headline": text, "message": row.get("message", ""),
             "notify": row.get("notify", {}), "time": now_ms, "triggered_id": triggered_id,
-            "removeToken": self.mint_remove_token(user_id, row["id"], level),
+            "removeToken": token,
         }
         try:
             await self._broadcast(user_id, {"key": "__alerts__:fired", "value": payload})
@@ -433,14 +470,17 @@ class PositionWatch:
         return None
 
     def mint_remove_token(self, user_id: str, alert_id: str, level: float) -> str:
-        now = self._clock()
-        for tok in [t for t, v in self._tokens.items() if now - v[6] > TOKEN_TTL_S]:
-            del self._tokens[tok]
         found = self._find(user_id, alert_id)
         account, deal, side = "", "", ""
         if found is not None:
             account, row = found
             deal, side = row["params"]["dealId"], row["params"]["side"]
+        return self._mint(user_id, alert_id, account, deal, side, level)
+
+    def _mint(self, user_id: str, alert_id: str, account: str, deal: str, side: str, level: float) -> str:
+        now = self._clock()
+        for tok in [t for t, v in self._tokens.items() if now - v[6] > TOKEN_TTL_S]:
+            del self._tokens[tok]
         tok = secrets.token_urlsafe(6)  # 6 bytes -> 8 url-safe chars
         while tok in self._tokens:
             tok = secrets.token_urlsafe(6)
