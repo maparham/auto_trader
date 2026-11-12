@@ -86,6 +86,16 @@ describe("OrderTicket exits in ATRs", () => {
     expect(input.closest(".ot-input-row")?.classList.contains("invalid")).toBe(true);
   });
 
+  it("blocks the order while a negative multiple puts the exit past the entry", async () => {
+    const input = await renderInAtrMode();
+    fireEvent.change(input, { target: { value: "-0.75" } });
+    expect(draftOrderSignal.value?.takeProfit).toBe(98.5);
+    expect(screen.getByText(/Take profit must be above the entry price/)).toBeTruthy();
+    expect((document.querySelector(".ot-action") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(input, { target: { value: "1" } });
+    expect((document.querySelector(".ot-action") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("clearing the multiple and leaving the field keeps the level", async () => {
     const input = await renderInAtrMode();
     fireEvent.change(input, { target: { value: "" } });

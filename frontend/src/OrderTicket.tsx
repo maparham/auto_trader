@@ -383,6 +383,21 @@ export default function OrderTicket({
   const pct = (level: number | null) =>
     level != null && entryPrice ? ((level - entryPrice) / entryPrice) * 100 : null;
 
+  // An exit on the wrong side of the entry (a sell's stop below it, its target
+  // above) is refused by the broker with a raw code. Flag the field and block
+  // the order here instead.
+  const buy = side === "buy";
+  const slValid = slVal == null || entryPrice == null || (buy ? slVal < entryPrice : slVal > entryPrice);
+  const tpValid = tpVal == null || entryPrice == null || (buy ? tpVal > entryPrice : tpVal < entryPrice);
+  const levelError =
+    entryPrice == null
+      ? null
+      : !slValid
+        ? `Stop loss must be ${buy ? "below" : "above"} the entry price (${entryPrice.toFixed(precision)}).`
+        : !tpValid
+          ? `Take profit must be ${buy ? "above" : "below"} the entry price (${entryPrice.toFixed(precision)}).`
+          : null;
+
   // A live account shows the broker's true figures; paper falls back to the
   // configured balance/currency (accountSummary is null for the paper sim).
   const cur = accountSummary?.currency ?? trading.accountCurrency;
@@ -401,6 +416,7 @@ export default function OrderTicket({
 
   async function submit() {
     if (submittingRef.current) return; // a previous click is still in flight
+    if (levelError) return;
     const qty = Number(quantity);
     if (!epic || !Number.isFinite(qty) || qty <= 0) {
       setMsg("Enter a valid size.");
@@ -623,6 +639,7 @@ export default function OrderTicket({
               on={tpOn}
               value={tpVal}
               pct={pct(tpVal)}
+              invalid={!tpValid}
               onToggle={(on) => toggleExit("tp", on)}
               onChange={(v) => setExit("tp", v)}
               atr={exitAtrView(atrPrefs, setAtrPrefs, "tp", atrValue, entryPrice, side === "buy", precision, resolution)}
@@ -632,6 +649,7 @@ export default function OrderTicket({
               on={slOn}
               value={slVal}
               pct={pct(slVal)}
+              invalid={!slValid}
               onToggle={(on) => toggleExit("sl", on)}
               onChange={(v) => setExit("sl", v)}
               atr={exitAtrView(atrPrefs, setAtrPrefs, "sl", atrValue, entryPrice, side === "buy", precision, resolution)}
@@ -681,7 +699,7 @@ export default function OrderTicket({
 
       <button
         className={`ot-action ot-action-${done ? "done" : side}${armed ? " ot-action-armed" : ""}`}
-        disabled={busy || done != null}
+        disabled={busy || done != null || levelError != null}
         onClick={submit}
       >
         {done ? (
@@ -696,7 +714,9 @@ export default function OrderTicket({
         )}
       </button>
 
-      <div className={`ot-msg${msg ? " show" : ""}`}>{msg ?? ""}</div>
+      <div className={`ot-msg${msg || levelError ? " show" : ""}${levelError && !msg ? " ot-msg-err" : ""}`}>
+        {msg ?? levelError ?? ""}
+      </div>
     </div>
   );
 }
