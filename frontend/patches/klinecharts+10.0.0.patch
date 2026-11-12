@@ -1,8 +1,24 @@
 diff --git a/node_modules/klinecharts/dist/index.esm.js b/node_modules/klinecharts/dist/index.esm.js
-index 7b7d9f2..6935e3a 100644
+index 7b7d9f2..7a14038 100644
 --- a/node_modules/klinecharts/dist/index.esm.js
 +++ b/node_modules/klinecharts/dist/index.esm.js
-@@ -5538,11 +5538,23 @@ var StoreImp = /** @class */ (function () {
+@@ -5475,11 +5475,13 @@ var StoreImp = /** @class */ (function () {
+                     break;
+                 }
+                 case 'backward': {
++                    var __oldPos = this._posCount();
+                     this._dataList = this._dataList.concat(data);
+                     this._dataLoadMore.backward = realMore.backward;
+-                    this._lastBarRightSideDiffBarCount -= data.length;
++                    var __addPos = this._posCount() - __oldPos;
++                    this._lastBarRightSideDiffBarCount -= __addPos;
+                     // scroll start LastBarRightSideDiffBarCount should sub data length
+-                    this._startLastBarRightSideDiffBarCount -= data.length;
++                    this._startLastBarRightSideDiffBarCount -= __addPos;
+                     adjustFlag = data.length > 0;
+                     break;
+                 }
+@@ -5538,15 +5540,28 @@ var StoreImp = /** @class */ (function () {
      StoreImp.prototype._calcOptimalBarSpace = function () {
          var specialBarSpace = 4;
          var ratio = 1 - BAR_GAP_RATIO * Math.atan(Math.max(specialBarSpace, this._barSpace) - specialBarSpace) / (Math.PI * 0.5);
@@ -31,7 +47,36 @@ index 7b7d9f2..6935e3a 100644
      };
      StoreImp.prototype._adjustVisibleRange = function () {
          var _a, _b;
-@@ -5678,7 +5690,7 @@ var StoreImp = /** @class */ (function () {
+-        var totalBarCount = this._dataList.length;
++        var totalBarCount = this._posCount();
++        var dataCount = this._dataList.length;
+         var visibleBarCount = this._totalBarSpace / this._barSpace;
+         var leftMinVisibleBarCount = 0;
+         var rightMinVisibleBarCount = 0;
+@@ -5578,6 +5593,13 @@ var StoreImp = /** @class */ (function () {
+             from = 0;
+         }
+         var realFrom = this._lastBarRightSideDiffBarCount > 0 ? Math.round(totalBarCount + this._lastBarRightSideDiffBarCount - visibleBarCount) - 1 : from;
++        var atEnd = to === totalBarCount;
++        if (this._slots()) {
++            from = Math.max(0, Math.floor(this._idxOf(from)));
++            to = atEnd ? dataCount : Math.min(dataCount, Math.ceil(this._idxOf(to)));
++            realFrom = Math.floor(this._idxOf(realFrom));
++            realTo = Math.ceil(this._idxOf(realTo));
++        }
+         this._visibleRange = { from: from, to: to, realFrom: realFrom, realTo: realTo };
+         this.executeAction('onVisibleRangeChange', this._visibleRange);
+         this._visibleRangeDataList = [];
+@@ -5614,7 +5636,7 @@ var StoreImp = /** @class */ (function () {
+                 this._processDataLoad('forward');
+             }
+         }
+-        else if (to === totalBarCount) {
++        else if (atEnd) {
+             if (this._dataLoadMore.backward) {
+                 this._processDataLoad('backward');
+             }
+@@ -5678,7 +5700,7 @@ var StoreImp = /** @class */ (function () {
              bar: this._barSpace,
              halfBar: this._barSpace / 2,
              gapBar: this._gapBarSpace,
@@ -40,18 +85,83 @@ index 7b7d9f2..6935e3a 100644
          };
      };
      StoreImp.prototype.setBarSpace = function (barSpace, adjustBeforeFunc) {
-@@ -5905,7 +5917,9 @@ var StoreImp = /** @class */ (function () {
+@@ -5783,9 +5805,7 @@ var StoreImp = /** @class */ (function () {
+         return (_a = this._dataList[dataIndex]) !== null && _a !== void 0 ? _a : null;
+     };
+     StoreImp.prototype.coordinateToFloatIndex = function (x) {
+-        var dataCount = this._dataList.length;
+-        var deltaFromRight = (this._totalBarSpace - x) / this._barSpace;
+-        var index = dataCount + this._lastBarRightSideDiffBarCount - deltaFromRight;
++        var index = this._idxOf(this._coordinateToFloatPos(x));
+         return Math.round(index * 1000000) / 1000000;
+     };
+     StoreImp.prototype.dataIndexToTimestamp = function (dataIndex) {
+@@ -5902,10 +5922,47 @@ var StoreImp = /** @class */ (function () {
+         }
+         return binarySearchNearest(this._dataList, 'timestamp', timestamp);
+     };
++    // chartkar patch (equal-width days): an optional display position per
++    // candle from globalThis.__chartkarSlots(dataList) -> { posOf, idxOf,
++    // count } | null. Positions are bar slots; a slot with no candle is drawn
++    // as an empty gap. Without a provider (or when it fails) every position
++    // equals the data index, as before.
++    StoreImp.prototype._slots = function () {
++        var b = typeof globalThis !== 'undefined' ? globalThis.__chartkarSlots : null;
++        var list = this._dataList;
++        var n = list.length;
++        if (typeof b !== 'function' || n < 2) return null;
++        var c = this._slotCache;
++        if (c && c.b === b && c.list === list && c.n === n && c.first === list[0].timestamp && c.last === list[n - 1].timestamp) return c.s;
++        var s = null;
++        try { s = b(list); } catch (e) { s = null; }
++        if (!s || typeof s.posOf !== 'function' || typeof s.idxOf !== 'function' || typeof s.count !== 'function') s = null;
++        this._slotCache = { b: b, list: list, n: n, first: list[0].timestamp, last: list[n - 1].timestamp, s: s };
++        return s;
++    };
++    StoreImp.prototype._posOf = function (i) {
++        var s = this._slots();
++        if (!s) return i;
++        try { var p = s.posOf(i); return isFinite(p) ? p : i; } catch (e) { return i; }
++    };
++    StoreImp.prototype._idxOf = function (p) {
++        var s = this._slots();
++        if (!s) return p;
++        try { var i = s.idxOf(p); return isFinite(i) ? i : p; } catch (e) { return p; }
++    };
++    StoreImp.prototype._posCount = function () {
++        var s = this._slots();
++        if (!s) return this._dataList.length;
++        try { var c = s.count(); return isFinite(c) ? c : this._dataList.length; } catch (e) { return this._dataList.length; }
++    };
++    StoreImp.prototype._coordinateToFloatPos = function (x) {
++        return this._posCount() + this._lastBarRightSideDiffBarCount - (this._totalBarSpace - x) / this._barSpace;
++    };
      StoreImp.prototype.dataIndexToCoordinate = function (dataIndex) {
-         var dataCount = this._dataList.length;
-         var deltaFromRight = dataCount + this._lastBarRightSideDiffBarCount - dataIndex;
+-        var dataCount = this._dataList.length;
+-        var deltaFromRight = dataCount + this._lastBarRightSideDiffBarCount - dataIndex;
 -        return Math.floor(this._totalBarSpace - (deltaFromRight - 0.5) * this._barSpace + 0.5);
++        var deltaFromRight = this._posCount() + this._lastBarRightSideDiffBarCount - this._posOf(dataIndex);
 +        // chartkar patch: snap to device pixels (was whole CSS pixels).
 +        var dpr = Math.max(1, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
 +        return Math.round((this._totalBarSpace - (deltaFromRight - 0.5) * this._barSpace) * dpr) / dpr;
      };
      StoreImp.prototype.coordinateToDataIndex = function (x) {
          return Math.ceil(this.coordinateToFloatIndex(x)) - 1;
-@@ -7896,7 +7910,7 @@ var CandleBarView = /** @class */ (function (_super) {
+@@ -6042,11 +6099,11 @@ var StoreImp = /** @class */ (function () {
+             }
+         }
+         var x = zoomCoordinate.x;
+-        var floatIndex = this.coordinateToFloatIndex(x);
++        var floatIndex = this._coordinateToFloatPos(x);
+         var prevBarSpace = this._barSpace;
+         var barSpace = this._barSpace + scale * (this._barSpace / SCALE_MULTIPLIER);
+         this.setBarSpace(barSpace, function () {
+-            _this._lastBarRightSideDiffBarCount += (floatIndex - _this.coordinateToFloatIndex(x));
++            _this._lastBarRightSideDiffBarCount += (floatIndex - _this._coordinateToFloatPos(x));
+         });
+         var realScale = this._barSpace / prevBarSpace;
+         if (realScale !== 1) {
+@@ -7896,7 +7953,7 @@ var CandleBarView = /** @class */ (function (_super) {
                          yAxis_1.convertToPixel(low)
                      ];
                      priceY.sort(function (a, b) { return a - b; });

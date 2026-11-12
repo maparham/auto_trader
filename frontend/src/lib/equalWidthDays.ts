@@ -122,6 +122,15 @@ type SlotsGlobal = { __chartkarSlots?: (list: unknown) => SlotGrid | null };
 export function setEqualWidthDays(next: boolean): void {
   on = next;
   const g = globalThis as SlotsGlobal;
-  if (next) g.__chartkarSlots = (list) => slotGridFor(list as readonly Stamped[]);
+  // klinecharts calls this from its layout path, where a throw would silently
+  // stop every later layout: any failure means "no grid" (identity).
+  if (next)
+    g.__chartkarSlots = (list) => {
+      try {
+        return slotGridFor(list as readonly Stamped[]);
+      } catch {
+        return null;
+      }
+    };
   else delete g.__chartkarSlots;
 }

@@ -56,4 +56,16 @@ describe("slotGridFor", () => {
     expect(slotGridFor(list)!.pos).toEqual([0, 1, 2, 3, 5]);
     setEqualWidthDays(false);
   });
+
+  it("the installed provider never throws and falls back to null", () => {
+    setEqualWidthDays(true);
+    const provider = (globalThis as { __chartkarSlots?: (l: unknown) => unknown }).__chartkarSlots!;
+    expect(provider(null)).toBeNull();
+    expect(provider([{ timestamp: NaN }, { timestamp: NaN }])).toBeNull();
+    expect(provider([null, null, null])).toBeNull();
+    const bad = { get timestamp(): number { throw new Error("boom"); } };
+    expect(provider([bad, bad])).toBeNull();
+    setEqualWidthDays(false);
+    expect((globalThis as { __chartkarSlots?: unknown }).__chartkarSlots).toBeUndefined();
+  });
 });
