@@ -149,6 +149,12 @@ def _format_fired_time(payload: dict) -> str:
     return stamp
 
 
+class RemovalRefused(Exception):
+    """Raised by `AlertHooks.describe_removal` when the Remove tap must be
+    refused with a message the user should see (the dealing gate): the
+    callback answers with `str(exc)` and no confirm message is sent."""
+
+
 @dataclass
 class AlertHooks:
     """The alert-system seams the Telegram layer needs, injected by the app
@@ -169,8 +175,9 @@ class AlertHooks:
       the row's broker/epic itself for the tab broadcast).
     - `describe_removal(user_id, token)` -> str | None — the confirm question
       for a position alert's Remove button (`Remove SL on US100 long (SL
-      18210.0)?`); None when the token is unknown, expired or not this
-      user's. Never consumes the token.
+      18210.0) · Capital live?`); None when the token is unknown, expired or
+      not this user's; raises `RemovalRefused` when the user may not deal.
+      Never consumes the token.
     - `remove_level(user_id, token)` -> str — the Yes tap: removes the SL/TP
       on the broker after every safety check and answers with the outcome.
     Both default to None (not wired): the Remove button is then not offered.
@@ -593,7 +600,10 @@ class TelegramNotify:
         if action == "prn":
             return "Cancelled", True
         if action == "pr":
-            question = await hooks.describe_removal(user_id, token)
+            try:
+                question = await hooks.describe_removal(user_id, token)
+            except RemovalRefused as refused:
+                return str(refused), False
             if question is None:
                 return "This warning was already used or has expired", False
             what = "TP" if question.startswith("Remove TP") else "SL"

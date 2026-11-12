@@ -222,7 +222,7 @@ async def test_pr_sends_confirm_message(tmp_path):
 
     body = json.loads(routes["send"].calls.last.request.content)
     assert body["chat_id"] == "chat-1"
-    assert body["text"] == "Remove SL on US100 long (SL 100.0)?"
+    assert body["text"] == "Remove SL on US100 long (SL 100.0) · Capital live?"
     assert body["reply_markup"] == {"inline_keyboard": [[
         {"text": "Yes, remove SL", "callback_data": f"pry:{tok}"},
         {"text": "Cancel", "callback_data": f"prn:{tok}"},
@@ -440,6 +440,79 @@ async def test_confirm_allows_listed_admin_hosted(tmp_path, monkeypatch):
     await _tap(f"pry:{tok}")
 
     assert _answer(routes) == "SL removed ✓"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_pr_refuses_non_admin_hosted_without_consuming(tmp_path, monkeypatch):
+    h = H(tmp_path)
+    await h.setup()
+    routes = _mock_endpoints()
+    tok = (await h.fire(104.0))["removeToken"]
+    monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example/.well-known/jwks.json")
+    monkeypatch.setenv("ADMIN_USER_IDS", "user_other")
+
+    await _tap(f"pr:{tok}")
+
+    assert _answer(routes) == "Removing a stop from Telegram needs your user id in ADMIN_USER_IDS"
+    assert not routes["send"].called
+    assert h.w.peek_remove_token(tok) is not None
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_trailing_checked_before_level(tmp_path):
+    h = H(tmp_path)
+    await h.setup(side="tp")
+    routes = _mock_endpoints()
+    tok = (await h.fire(146.0))["removeToken"]
+    h.exec.positions = [replace(h.exec.positions[0], trailing_stop=True, take_profit_level=155.0)]
+
+    await _tap(f"pry:{tok}")
+
+    assert _answer(routes) == "Trailing stop: remove it in the broker"
+    assert h.exec.modify_calls == []
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_modify_timeout_is_unconfirmed(tmp_path, monkeypatch):
+    import asyncio
+
+    import auto_trader.api.alert_hooks as hooks_mod
+
+    monkeypatch.setattr(hooks_mod, "_MODIFY_TIMEOUT_S", 0.01)
+    h = H(tmp_path)
+    await h.setup()
+    routes = _mock_endpoints()
+    tok = (await h.fire(104.0))["removeToken"]
+
+    async def slow_modify(deal_id, **kw):
+        h.exec.modify_calls.append((deal_id, kw))
+        await asyncio.sleep(1)
+
+    h.exec.modify_position = slow_modify
+
+    await _tap(f"pry:{tok}")
+
+    assert _answer(routes) == "Couldn't confirm SL removal: check the broker"
+    assert h.deleted == []
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_unknown_status_is_unconfirmed(tmp_path):
+    h = H(tmp_path)
+    await h.setup(side="tp")
+    routes = _mock_endpoints()
+    tok = (await h.fire(146.0))["removeToken"]
+    h.exec.modify_result = OrderResult(client_order_id="c", status=OrderStatus.UNKNOWN,
+                                       reason="dropped connection")
+
+    await _tap(f"pry:{tok}")
+
+    assert _answer(routes) == "Couldn't confirm TP removal: check the broker"
+    assert h.deleted == []
 
 
 @respx.mock

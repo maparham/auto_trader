@@ -18,13 +18,14 @@ from typing import Any
 
 from auto_trader.api import deps
 from auto_trader.api.auth import auth_enabled, can_deal_from_telegram
+from auto_trader.core.account_alert_kind import account_label
 from auto_trader.core.account_monitor import ACCOUNT_MONITOR
 from auto_trader.core.alert_engine import ALERT_ENGINE
 from auto_trader.core.alert_kinds import upgrade_params
 from auto_trader.core.alert_store import ALERT_STORE
 from auto_trader.core.models import Candle, OrderStatus
 from auto_trader.core.position_watch import POSITION_WATCH, TOKEN_TTL_S, PositionWatch
-from auto_trader.core.telegram_notify import AlertHooks
+from auto_trader.core.telegram_notify import AlertHooks, RemovalRefused
 
 log = logging.getLogger(__name__)
 
@@ -177,10 +178,15 @@ class PositionRemoval:
         tok = self._watch.peek_remove_token(token)
         if tok is None or tok.user_id != user_id or not self._fresh(tok):
             return None
+        if not self._can_deal(user_id):
+            # Refused on the first tap: no confirm message, token kept.
+            raise RemovalRefused(GATE_REFUSED)
         what = _label(tok.side)
         direction = {"BUY": "long", "SELL": "short"}.get(tok.direction, "")
         target = " ".join(p for p in (tok.epic, direction) if p) or "this position"
-        return f"Remove {what} on {target} ({what} {tok.level:.{tok.precision}f})?"
+        # The account is named so a demo and a live position can't be mixed up.
+        return (f"Remove {what} on {target} ({what} {tok.level:.{tok.precision}f})"
+                f" · {account_label(tok.account)}?")
 
     async def remove(self, user_id: str, token: str) -> str:
         peeked = self._watch.peek_remove_token(token)
@@ -201,28 +207,32 @@ class PositionRemoval:
             return f"Couldn't remove {what}: broker unreachable"
         if snap is None:
             return CLOSED
+        if snap.trailing:
+            return TRAILING
         current = snap.sl if tok.side == "sl" else snap.tp
         tol = 0.5 * 10 ** -tok.precision
         if current is None or not math.isclose(current, tok.level, rel_tol=0, abs_tol=tol):
             return f"{what} has changed since this warning"
         if not self._watch.has_alert(user_id, tok.alert_id):
             return ALERT_GONE
-        if snap.trailing:
-            return TRAILING
         kwargs = {"clear_stop": True} if tok.side == "sl" else {"clear_take_profit": True}
         try:
             result = await asyncio.wait_for(
                 self._get_exec(tok.account).modify_position(tok.deal_id, **kwargs),
                 timeout=_MODIFY_TIMEOUT_S,
             )
+        except (asyncio.TimeoutError, TimeoutError):
+            # The broker may still apply it: never claim it failed.
+            log.warning("telegram remove: modify timed out for %s deal %s", tok.account, tok.deal_id)
+            return f"Couldn't confirm {what} removal: check the broker"
         except Exception as exc:
             log.warning("telegram remove: modify failed for %s", tok.account, exc_info=True)
             reason = str(exc) or type(exc).__name__
             return f"Couldn't remove {what}: {reason[:_REASON_MAX]}"
-        if result.status in (OrderStatus.REJECTED, OrderStatus.UNKNOWN):
-            reason = result.reason or (
-                "rejected" if result.status is OrderStatus.REJECTED else "result unknown, check the broker"
-            )
+        if result.status is OrderStatus.UNKNOWN:
+            return f"Couldn't confirm {what} removal: check the broker"
+        if result.status is OrderStatus.REJECTED:
+            reason = result.reason or "rejected"
             return f"Couldn't remove {what}: {reason[:_REASON_MAX]}"
         log.info("telegram remove: %s cleared on %s deal %s by %s", what, tok.account, tok.deal_id, user_id)
         try:
