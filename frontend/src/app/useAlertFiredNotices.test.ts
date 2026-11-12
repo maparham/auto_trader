@@ -12,10 +12,15 @@ vi.mock("../lib/notify", async (orig) => ({
   playPing: () => {},
 }));
 const openTradeListPanel = vi.fn();
-vi.mock("../lib/signals", async (orig) => ({
-  ...(await orig<typeof import("../lib/signals")>()),
+const nav = vi.fn();
+vi.mock("../lib/signals", async (orig) => {
+  const m = await orig<typeof import("../lib/signals")>();
+  return {
+  ...m,
+  alertNavHandler: { current: (...a: unknown[]) => nav(...a) },
   openTradeListPanel: (...a: unknown[]) => openTradeListPanel(...a),
-}));
+  };
+});
 
 let fired: ((p: unknown) => void) | null = null;
 let monitor: ((p: unknown) => void) | null = null;
@@ -76,5 +81,22 @@ describe("account alert notices", () => {
 
   it("firedDetail still formats price alerts", () => {
     expect(firedDetail({ id: "x", broker: "b", epic: "E", price: 1, level: 2, condition: "crossing", message: "", precision: 2, notify: {} } as never, 2)).toBe("@ 2.00");
+  });
+});
+
+describe("position alert notices", () => {
+  beforeEach(() => { toast.mockClear(); notify.mockClear(); nav.mockClear(); });
+
+  it("toasts the headline with the bell, notifies under the epic, click navigates to the chart", () => {
+    renderHook(() => useAlertFiredNotices());
+    fired!({ id: "al-p1", broker: "capital-live", epic: "US100", kind: "position", price: 1, level: 18210, side: "sl",
+      condition: "below", message: "mind it", precision: 1, notify: {}, headline: "US100 long · near SL · 12.4 pts (0.38 ATR) away" });
+    expect(toast).toHaveBeenCalledTimes(1);
+    const [text, opts] = toast.mock.calls[0] as [string, { onClick?: () => void; key?: string }];
+    expect(text).toBe("\u{1F514} US100 long · near SL · 12.4 pts (0.38 ATR) away · mind it");
+    expect(opts.key).toBe("position|al-p1");
+    expect(notify.mock.calls[0][0]).toBe("US100");
+    opts.onClick?.();
+    expect(nav).toHaveBeenCalledWith("US100", "al-p1", 1, "capital-live");
   });
 });

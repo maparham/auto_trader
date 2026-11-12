@@ -19,6 +19,7 @@ import {
   alertGlobalEditRequest,
   indicatorAlertRequest,
   accountAlertRequest,
+  positionAlertRequest,
   lineAlertRequest,
   confirmRequest,
   saveDefaultTemplateRequest,
@@ -111,6 +112,8 @@ export function useModalRequests() {
   useEffect(() => indicatorAlertRequest.subscribe(setIndAlertReq), []);
   const [acctAlertReq, setAcctAlertReq] = useState(accountAlertRequest.value);
   useEffect(() => accountAlertRequest.subscribe(setAcctAlertReq), []);
+  const [posAlertReq, setPosAlertReq] = useState(positionAlertRequest.value);
+  useEffect(() => positionAlertRequest.subscribe(setPosAlertReq), []);
   const [lineAlertReq, setLineAlertReq] = useState(lineAlertRequest.value);
   useEffect(() => lineAlertRequest.subscribe(setLineAlertReq), []);
   const [confirm, setConfirm] = useState(confirmRequest.value);
@@ -121,7 +124,7 @@ export function useModalRequests() {
   useEffect(() => indicatorSettingsRequest.subscribe(setIndSettings), []);
   const [drawSettings, setDrawSettings] = useState(drawingSettingsRequest.value);
   useEffect(() => drawingSettingsRequest.subscribe(setDrawSettings), []);
-  return { alertReq, alertEdit, alertGlobalEdit, indAlertReq, acctAlertReq, lineAlertReq, confirm, saveDefaultReq, indSettings, drawSettings };
+  return { alertReq, alertEdit, alertGlobalEdit, indAlertReq, acctAlertReq, posAlertReq, lineAlertReq, confirm, saveDefaultReq, indSettings, drawSettings };
 }
 
 export function usePanelOpenStates(tabs: ChartTab[]) {

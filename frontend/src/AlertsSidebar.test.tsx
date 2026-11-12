@@ -55,11 +55,19 @@ const eqAlert = {
   current: 4210, firedTiers: [], monitored: true, currency: "EUR",
 };
 
+const posAlert = {
+  kind: "position" as const, id: "al-p1", account: "capital-live:live", epic: "US100", dealId: "d1",
+  side: "sl" as const, atrMult: 0.5, notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+  level: 18210, distanceAtr: 0.8, fired: false, trailing: false, precision: 1,
+};
+const posAlertNoAtr = { ...posAlert, id: "al-p2", side: "tp" as const, distanceAtr: null };
+
 // History rows and the resync spy are swapped per test (vi.mock is hoisted,
 // so they live in vi.hoisted state).
 const mocks = vi.hoisted(() => ({
   triggered: [] as unknown[],
   resync: vi.fn(async () => {}),
+  delPos: vi.fn(),
 }));
 
 vi.mock("./lib/alertsApi", async (orig) => ({
@@ -67,6 +75,8 @@ vi.mock("./lib/alertsApi", async (orig) => ({
   loadServerAlerts: () => [indAlert],
   loadAllServerAlerts: () => [indAlert],
   loadAccountAlerts: () => [acctAlert, eqAlert],
+  loadPositionAlerts: () => [posAlert, posAlertNoAtr],
+  deletePositionAlert: mocks.delPos,
   loadTriggered: () => mocks.triggered,
   resyncAlerts: mocks.resync,
 }));
@@ -220,5 +230,31 @@ describe("AlertsSidebar history: account firings", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("AlertsSidebar positions group", () => {
+  it("lists SL/TP rows, writes n/a without an em dash, and deletes after confirm", async () => {
+    const signals = await import("./lib/signals");
+    const { container } = renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: /^Alerts/ }));
+    expect(screen.getByText("Positions")).toBeTruthy();
+    expect(screen.getByText("SL · 0.5× ATR · now 0.8 ATR")).toBeTruthy();
+    const tp = screen.getByText("TP · 0.5× ATR · now n/a");
+    expect(tp.textContent).not.toContain("\u2014");
+    expect(container.textContent).not.toContain("\u2014");
+    const spy = vi.spyOn(signals, "requestConfirm");
+    fireEvent.click(screen.getAllByLabelText("Delete alert")[0]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mock.calls[0][0].onConfirm();
+    expect(mocks.delPos).toHaveBeenCalledWith("al-p1");
+  });
+
+  it("edit opens the position dialog request", async () => {
+    const signals = await import("./lib/signals");
+    renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: /^Alerts/ }));
+    fireEvent.click(screen.getAllByLabelText("Edit alert")[0]);
+    expect(signals.positionAlertRequest.value).toEqual({ account: "capital-live:live", epic: "US100", dealId: "d1", precision: 1 });
   });
 });

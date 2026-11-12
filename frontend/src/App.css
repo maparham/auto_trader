@@ -5571,6 +5571,7 @@
 .pp-iconbtn:hover:not(:disabled) { color: var(--text); background: var(--hover); }
 .pp-iconbtn:disabled { opacity: 0.5; cursor: default; }
 .pp-iconbtn.off { opacity: 0.6; }
+.pp-iconbtn-warn.on { color: var(--text); }
 .pp-iconbtn-x:hover:not(:disabled) { color: var(--neg); }
 
 .pp-tab:focus-visible,

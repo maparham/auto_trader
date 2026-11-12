@@ -86,3 +86,11 @@ describe("position alerts client", () => {
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "DELETE" });
   });
 });
+
+describe("triggeredLabel for position firings", () => {
+  it("prints the headline, like an account firing", () => {
+    const t = { time: 1, epic: "US100", condition: "below", level: 1, price: 1, message: "", kind: "position",
+      headline: "US100 long · near SL · 12.4 pts (0.38 ATR) away · SL 18210.0" } as never;
+    expect(api.triggeredLabel(t, 1)).toBe("US100 long · near SL · 12.4 pts (0.38 ATR) away · SL 18210.0");
+  });
+});

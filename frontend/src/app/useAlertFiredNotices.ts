@@ -43,6 +43,18 @@ export function useAlertFiredNotices() {
         bumpAlerts();
         return;
       }
+      if (p.kind === "position") {
+        // A position has a symbol: lead with the epic and jump to its chart.
+        const prec = Math.min(10, Math.max(0, p.precision ?? 2));
+        const text = p.message ? `${p.headline} \u00b7 ${p.message}` : p.headline ?? "Position alert";
+        const goTo = () => alertNavHandler.current?.(p.epic, p.id, prec, p.broker);
+        const key = `position|${p.id}`;
+        if (p.notify?.toast ?? true) toast(`\u{1F514} ${text}`, { onClick: goTo, duration: null, key });
+        if (p.notify?.browser ?? true) notify(p.epic, text, goTo, key);
+        if (p.notify?.sound ?? true) playPing();
+        bumpAlerts();
+        return;
+      }
       // Guard against a bad/out-of-range payload (server validates on write,
       // but a stale/mismatched deploy or hand-rolled ws message shouldn't be
       // able to RangeError out of toFixed and kill this handler).

@@ -19,6 +19,7 @@ import { loadBacktestLastUsed, saveBacktestLastUsed } from "./lib/persist";
 import AlertModal from "./AlertModal";
 import IndicatorAlertModal from "./IndicatorAlertModal";
 import AccountAlertModal from "./AccountAlertModal";
+import PositionAlertModal from "./PositionAlertModal";
 import LineAlertModal from "./LineAlertModal";
 import type { AlertNavTarget, VisibleCell } from "./AlertsSidebar";
 import ConfirmDialog from "./ConfirmDialog";
@@ -68,6 +69,7 @@ import {
   alertGlobalEditRequest,
   indicatorAlertRequest,
   accountAlertRequest,
+  positionAlertRequest,
   lineAlertRequest,
   confirmRequest,
   requestConfirm,
@@ -199,7 +201,7 @@ export default function App() {
     [],
   );
   const { showBacktestCfg, openBacktestCfg, showLive } = useDockPanels();
-  const { alertReq, alertEdit, alertGlobalEdit, indAlertReq, acctAlertReq, lineAlertReq, confirm, saveDefaultReq, indSettings, drawSettings } =
+  const { alertReq, alertEdit, alertGlobalEdit, indAlertReq, acctAlertReq, posAlertReq, lineAlertReq, confirm, saveDefaultReq, indSettings, drawSettings } =
     useModalRequests();
   // Esc on the selected trade: discard un-applied drag edits first (keeping it
   // selected), then a second Esc deselects. Window-level so it fires even when focus
@@ -209,7 +211,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (showSettings || alertReq || alertEdit || alertGlobalEdit || indAlertReq || acctAlertReq || lineAlertReq || confirm) return;
+      if (showSettings || alertReq || alertEdit || alertGlobalEdit || indAlertReq || acctAlertReq || posAlertReq || lineAlertReq || confirm) return;
       const sel = tradeLineUiSignal.value.selected;
       if (!sel) return;
       if (pendingEditsSignal.value[sel]) discardPendingEdit(sel);
@@ -218,7 +220,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showSettings, alertReq, alertEdit, alertGlobalEdit, indAlertReq, acctAlertReq, lineAlertReq, confirm]);
+  }, [showSettings, alertReq, alertEdit, alertGlobalEdit, indAlertReq, acctAlertReq, posAlertReq, lineAlertReq, confirm]);
 
   // The workspace = the current set of tabs + which tab is active. It belongs to a
   // NAMED layout (activeLayoutId) or to the device-local unsaved scratch (null).
@@ -1273,6 +1275,10 @@ export default function App() {
 
       {!isDemoMode() && acctAlertReq && (
         <AccountAlertModal request={acctAlertReq} now={Date.now()} onClose={() => accountAlertRequest.set(null)} />
+      )}
+
+      {!isDemoMode() && posAlertReq && (
+        <PositionAlertModal request={posAlertReq} onClose={() => positionAlertRequest.set(null)} />
       )}
 
       {!isDemoMode() && lineAlertReq && (

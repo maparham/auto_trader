@@ -87,6 +87,10 @@ export type AccountAlertRequest =
   | { mode: "edit"; id: string };
 export const accountAlertRequest = new Signal<AccountAlertRequest | null>(null);
 
+// Request to open the SL/TP proximity-warning dialog for one open position.
+export interface PositionAlertRequest { account: string; epic: string; dealId: string; precision: number }
+export const positionAlertRequest = new Signal<PositionAlertRequest | null>(null);
+
 // Request to open the line alert modal: create (from a trendline's menu) or
 // edit (from the alerts panel). App renders it.
 export interface LineAlertDraft {

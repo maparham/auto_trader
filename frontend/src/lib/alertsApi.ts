@@ -266,7 +266,6 @@ export function normalizeAlert(
   };
 }
 
-// One record per alert firing, across all symbols (History tab, newest first).
 /** A server-evaluated SL/TP proximity alert; `account` is the exec key. */
 export interface PositionAlert {
   kind: "position";
@@ -285,6 +284,7 @@ export interface PositionAlert {
   trailing?: boolean;
 }
 
+// One record per alert firing, across all symbols (History tab, newest first).
 export interface TriggeredAlert {
   time: number;
   epic: string;
@@ -1416,6 +1416,7 @@ export function alertLabel(a: AnyAlert, precision: number): string {
 export function triggeredLabel(t: TriggeredAlert, hp: number): string {
   // An account firing has no price axis: its text is the metric headline.
   if (t.kind === "account") return t.headline ?? "Account alert";
+  if (t.kind === "position") return t.headline ?? "Position alert";
   const level = levelText(t.target ?? "price", t.level, hp);
   return `${conditionPhrase(t.label, t.condition, t.target, level)} @ ${fmtPrice(t.price, hp)}`;
 }

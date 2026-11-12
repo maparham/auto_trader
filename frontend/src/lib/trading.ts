@@ -350,6 +350,7 @@ interface Position {
   leverage: number | null; // broker's real per-position leverage (null for paper)
   margin: number | null; // broker deposit requirement, account currency (null for paper)
   mark: number | null; // broker's current close-side price (bid for long, offer for short)
+  trailing_stop?: boolean;
 }
 
 interface WorkingOrder {
@@ -380,6 +381,7 @@ export interface TradeView {
   expiresAt: number | null; // working orders: good-till-date epoch ms; null = GTC
   leverage: number | null; // broker per-position leverage (null → fall back to configured)
   margin: number | null; // broker deposit requirement, account currency (null → estimate)
+  trailingStop?: boolean; // position carries a trailing stop (SL proximity alerts unsupported)
   mark?: number | null; // broker's current price from the positions poll (absent → chart stream only)
   source?: "manual" | "strategy"; // "strategy" = opened by the live engine (dock `strat` tag)
 }
@@ -508,6 +510,7 @@ function toTrades(positions: Position[], orders: WorkingOrder[]): TradeView[] {
         leverage: p.leverage,
         margin: p.margin,
         mark: p.mark ?? null,
+        trailingStop: p.trailing_stop ?? false,
         source: isStrategyDeal(p.deal_id) ? "strategy" : "manual",
       }),
     ),

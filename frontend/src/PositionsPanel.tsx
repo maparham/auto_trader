@@ -15,7 +15,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSignalValue } from "./lib/signalHooks";
-import { isAccountMonitorable, loadAccountAlerts, METRIC_LABELS, type AccountMetric } from "./lib/alertsApi";
+import { findPositionAlert, isAccountMonitorable, loadAccountAlerts, METRIC_LABELS, type AccountMetric } from "./lib/alertsApi";
 import {
   applyLevels,
   cancelWorkingOrder,
@@ -49,6 +49,7 @@ import {
   draggingLineSignal,
   mt5DeployStateSignal,
   accountAlertRequest,
+  positionAlertRequest,
   alertsChanged,
   requestConfirm,
   type PendingEdit,
@@ -328,6 +329,24 @@ export default function PositionsPanel({
                   <EyeIcon hidden={linesHidden} />
                 </button>
               </Tooltip>
+              {!isOrder && brokerOf(account) !== "mt5" && (() => {
+                const warnOn = !!(findPositionAlert(t.id, "sl") || findPositionAlert(t.id, "tp"));
+                return (
+                  <Tooltip content="Warn near SL/TP">
+                    <button
+                      className={`pp-iconbtn pp-iconbtn-warn${warnOn ? " on" : ""}`}
+                      aria-label="Warn near SL/TP"
+                      aria-pressed={warnOn}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        positionAlertRequest.set({ account, epic: t.epic, dealId: t.id, precision: prec });
+                      }}
+                    >
+                      <BellIcon filled={warnOn} />
+                    </button>
+                  </Tooltip>
+                );
+              })()}
               <Tooltip content="Edit levels">
                 <button
                   className="pp-iconbtn"

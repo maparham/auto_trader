@@ -21,6 +21,8 @@ import {
   alertEditRequest,
   alertGlobalEditRequest,
   accountAlertRequest,
+  positionAlertRequest,
+  tradesSignal,
   bumpAlerts,
   requestConfirm,
 } from "./lib/signals";
@@ -45,6 +47,9 @@ import {
   loadAllServerAlerts,
   deleteIndicatorAlert,
   loadAccountAlerts,
+  loadPositionAlerts,
+  deletePositionAlert,
+  type PositionAlert,
   deleteAccountAlert,
   resyncAlerts,
   accountLabel,
@@ -285,6 +290,50 @@ function AccountAlertRow({ a }: { a: AccountAlert }) {
   );
 }
 
+// One SL/TP proximity row: `US100 long · SL · 0.5× ATR · now 0.8 ATR`.
+function PositionAlertRow({ a }: { a: PositionAlert }) {
+  const trade = tradesSignal.value.find((t) => t.id === a.dealId);
+  const dir = trade ? ` ${trade.side === "buy" ? "long" : "short"}` : "";
+  const edit = () => positionAlertRequest.set({ account: a.account, epic: a.epic, dealId: a.dealId, precision: a.precision ?? 2 });
+  const sideLabel = a.side === "sl" ? "SL" : "TP";
+  const now = a.distanceAtr == null ? "now n/a" : `now ${Number(a.distanceAtr.toFixed(2))} ATR`;
+  return (
+    <div className="ap-row" onDoubleClick={edit}>
+      <div className="ap-row-main">
+        <span className="ap-sym">{a.epic}{dir}</span>
+        <span className="ap-cond">{sideLabel} · {a.atrMult}× ATR · {now}</span>
+      </div>
+      <div className="ap-row-meta">
+        <span className="ap-row-badges">
+          {a.fired && <span className="ap-badge ap-tier fired">Fired</span>}
+        </span>
+        <div className="ap-row-actions">
+          <Tooltip content="Edit alert">
+            <button className="ap-icon-btn" aria-label="Edit alert" onClick={(e) => { e.stopPropagation(); edit(); }}>
+              <EditIcon />
+            </button>
+          </Tooltip>
+          <Tooltip content="Delete alert">
+            <button
+              className="ap-icon-btn"
+              aria-label="Delete alert"
+              onClick={(e) => {
+                e.stopPropagation();
+                requestConfirm({
+                  message: `Delete this ${sideLabel} warning on ${a.epic}?`,
+                  onConfirm: () => deletePositionAlert(a.id),
+                });
+              }}
+            >
+              <TrashIcon />
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   // The focused cell's controller — its overlay manager owns the live alert lines
   // shown here. epic/precision are the focused cell's too.
@@ -442,7 +491,7 @@ export default function AlertsSidebar({
     const unsub = alertsChanged.subscribe(bump);
     const id = setInterval(() => {
       bump();
-      if (loadAccountAlerts().length > 0) void resyncAlerts();
+      if (loadAccountAlerts().length > 0 || loadPositionAlerts().length > 0) void resyncAlerts();
     }, 30_000);
     return () => {
       unsub();
@@ -551,7 +600,8 @@ export default function AlertsSidebar({
   // Account alerts (balance metrics) sit above both lists on the live tab, whatever
   // the symbol scope. Re-read on every alertsChanged bump, like the rest.
   const accountAlerts = loadAccountAlerts();
-  const accountCount = accountAlerts.length;
+  const positionAlerts = loadPositionAlerts();
+  const accountCount = accountAlerts.length + positionAlerts.length;
   // History is persisted; re-read on every firing (alertsChanged) and on mount.
   const [historyState, setHistoryState] = useState<TriggeredAlert[]>(loadTriggered);
   useEffect(
@@ -683,10 +733,16 @@ export default function AlertsSidebar({
 
       {tab === "live" ? (
         <div className="ap-list">
-          {accountCount > 0 && (
+          {accountAlerts.length > 0 && (
             <div>
               <div className="ap-group-header">Account</div>
               {accountAlerts.map((a) => <AccountAlertRow key={a.id} a={a} />)}
+            </div>
+          )}
+          {positionAlerts.length > 0 && (
+            <div>
+              <div className="ap-group-header">Positions</div>
+              {positionAlerts.map((a) => <PositionAlertRow key={a.id} a={a} />)}
             </div>
           )}
           {showAll ? (
