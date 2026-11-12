@@ -94,3 +94,16 @@ describe("triggeredLabel for position firings", () => {
     expect(api.triggeredLabel(t, 1)).toBe("US100 long · near SL · 12.4 pts (0.38 ATR) away · SL 18210.0");
   });
 });
+
+describe("position firings after a reload", () => {
+  it("hydrates the stored headline from alert_json", async () => {
+    const text = "US100 long · near SL · 12.4 pts (0.38 ATR) away · SL 18210.0";
+    const entries = [{ time: 1, alert_id: "al-p1", broker: "capital-live:live", epic: "US100", kind: "position",
+      price: 18222, level: 18210, condition: "near", message: "", precision: 1, alert: { headline: text } }];
+    fetchMock.mockImplementation(async (u: string) =>
+      u.includes("/triggered") ? res(200, { entries, seen: 0 }) : res(200, { alerts: [] }));
+    await api.hydrateAlerts();
+    const [t] = api.loadTriggered();
+    expect(api.triggeredLabel(t, 1)).toBe(text);
+  });
+});

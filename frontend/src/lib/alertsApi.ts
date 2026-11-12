@@ -465,7 +465,8 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
       : undefined),
     target: (row.alert?.params?.target as AlertTarget | undefined) ?? undefined,
     kind: row.kind,
-    headline: row.kind === "account" ? accountTriggeredHeadline(row) : undefined,
+    headline: row.kind === "account" ? accountTriggeredHeadline(row)
+      : row.kind === "position" ? (row.alert?.headline as string | undefined) : undefined,
   };
 }
 
