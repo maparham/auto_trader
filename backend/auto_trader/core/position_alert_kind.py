@@ -8,6 +8,7 @@ import json
 import math
 
 from auto_trader.core.models import Candle
+from auto_trader.indicators.core import atr_series
 
 SIDES = ("sl", "tp")
 ATR_MIN = 0.05
@@ -61,6 +62,8 @@ def step(level: float, price: float, threshold: float, fired: bool) -> tuple[boo
     """Advance one alert's state. Returns (fired_after, fire_now). Fires once
     when the price first comes within `threshold` of the level, and re-arms
     only once it is beyond REARM_FACTOR times the threshold."""
+    if threshold <= 0:
+        return fired, False
     dist = abs(price - level)
     if not fired and dist <= threshold:
         return True, True
@@ -70,26 +73,20 @@ def step(level: float, price: float, threshold: float, fired: bool) -> tuple[boo
 
 
 def atr(candles: list[Candle], length: int = 14) -> float | None:
-    """Wilder ATR over the candles. The first `length` true ranges (from the
-    2nd candle on) seed the average; each later bar smooths it. None when there
-    are fewer than `length + 1` candles."""
-    if length < 1 or len(candles) < length + 1:
+    """Latest ATR from the shared indicator (`indicators.core.atr_series`):
+    the first ATR is the mean of the first `length` true ranges, then Wilder.
+    None when there are fewer than `length + 1` candles."""
+    if len(candles) < length + 1:
         return None
-    trs: list[float] = []
-    for prev, cur in zip(candles, candles[1:]):
-        trs.append(max(cur.high - cur.low,
-                       abs(cur.high - prev.close),
-                       abs(cur.low - prev.close)))
-    value = sum(trs[:length]) / length
-    for tr in trs[length:]:
-        value = (value * (length - 1) + tr) / length
-    return value
+    return atr_series(candles, length)[-1]
 
 
 def headline(
     epic: str, pos_side: str, alert_side: str, level: float, price: float,
     atr_value: float, upnl: float | None, currency: str | None, precision: int,
 ) -> str:
+    if atr_value <= 0:
+        raise ValueError(f"atr_value must be positive, got {atr_value}")
     dist = abs(price - level)
     direction = "long" if pos_side == "BUY" else "short"
     side = alert_side.upper()

@@ -126,6 +126,11 @@ def test_step_outside_unfired_stays_unfired():
     assert step(100, 120, 5, False) == (False, False)
 
 
+def test_step_non_positive_threshold_never_fires():
+    assert step(100, 100, 0, False) == (False, False)
+    assert step(100, 100, -1, True) == (True, False)
+
+
 def test_step_works_for_both_directions():
     assert step(100, 96, 5, False) == (True, True)
 
@@ -137,11 +142,6 @@ def test_atr_wilder_constant_range():
     assert atr(candles) == pytest.approx(2.0)
 
 
-def test_atr_first_candle_range_is_not_a_true_range():
-    candles = [bar(0, 200, 0, 100)] + [bar(i, 101, 99, 100) for i in range(1, 15)]
-    assert atr(candles) == pytest.approx(2.0)
-
-
 def test_atr_wilder_smoothing_step():
     # 14 TRs of 2 seed the ATR at 2.0; the 16th bar has TR 16:
     # (2 * 13 + 16) / 14 = 3.0
@@ -150,10 +150,11 @@ def test_atr_wilder_smoothing_step():
 
 
 def test_atr_uses_prev_close_for_gaps():
-    # bar 1 gaps up: prev close 100, high 111, low 109 -> TR = 11 (not 2)
+    # bar 1 gaps up: prev close 100, high 111, low 109 -> TR = 11 (not 2).
+    # TR[0] = 2, TR[1] = 11, TR[2..14] = 2. Seed at index 13 = (2 + 11 + 12*2) / 14 = 37/14;
+    # the last value (index 14) is one Wilder step: (37/14 * 13 + 2) / 14 = 509/196.
     candles = [bar(0, 101, 99, 100), bar(1, 111, 109, 110)] + [bar(i, 111, 109, 110) for i in range(2, 15)]
-    # seed mean of 14 TRs: one TR of 11 (bar 1) and thirteen of 2 -> (11 + 26) / 14 = 37/14
-    assert atr(candles) == pytest.approx(37 / 14)
+    assert atr(candles) == pytest.approx(509 / 196)
 
 
 def test_atr_none_when_short():
@@ -161,9 +162,21 @@ def test_atr_none_when_short():
     assert atr(candles) is None
 
 
-def test_atr_custom_length():
-    candles = [bar(i, 101, 99, 100) for i in range(4)]
-    assert atr(candles, length=3) == pytest.approx(2.0)
+def test_atr_custom_length_seeds_then_wilder():
+    # TR = [4, 1, 1, 1]; length 3 seeds at index 2 with (4 + 1 + 1) / 3 = 2,
+    # then Wilder at index 3: (2 * 2 + 1) / 3 = 5/3.
+    candles = [
+        bar(0, 104, 100, 102),
+        bar(1, 102, 101, 101.5),
+        bar(2, 102.5, 101.5, 102),
+        bar(3, 103, 102, 102.5),
+    ]
+    assert atr(candles, length=3) == pytest.approx(5 / 3)
+
+
+def test_atr_none_when_length_exceeds_candles():
+    candles = [bar(i, 101, 99, 100) for i in range(3)]
+    assert atr(candles, length=3) is None
 
 
 # headline ---------------------------------------------------------------
@@ -184,6 +197,11 @@ def test_headline_without_upnl_drops_pnl_part():
     assert headline("US100", "BUY", "sl", 18210.0, 18222.4, 32.63, None, "USD", 1) == (
         "US100 long · near SL · 12.4 pts (0.38 ATR) away · SL 18210.0"
     )
+
+
+def test_headline_rejects_non_positive_atr():
+    with pytest.raises(ValueError, match="atr_value must be positive"):
+        headline("US100", "BUY", "sl", 18210.0, 18222.4, 0.0, None, None, 1)
 
 
 def test_headline_short_tp():
