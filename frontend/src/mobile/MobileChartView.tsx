@@ -225,6 +225,7 @@ export default function MobileChartView({ active = true }: { active?: boolean })
             clock={s.clock}
             dateFormat={s.dateFormat}
             showWeekday={s.showWeekday}
+            equalWidthDays={s.equalWidthDays}
             priceSide={s.priceSide}
             bidAsk={s.bidAsk}
             bidAskStyle={s.bidAskStyle}

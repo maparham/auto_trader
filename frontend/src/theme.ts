@@ -99,6 +99,10 @@ export interface Settings {
   // orthogonal to dateFormat. Off by default so the default preset stays
   // byte-for-byte identical to klinecharts' built-in formatter.
   showWeekday: boolean;
+  // Equal-width days: every day on an intraday chart drawn the same width,
+  // candles in their time slots, missing periods as gaps. Display only.
+  // Default off. See lib/equalWidthDays.ts.
+  equalWidthDays: boolean;
   // Which side of the spread candles render from (bid/mid/ask). Global.
   priceSide: PriceSide;
   // Live bid & ask display: off / axis labels / labels + lines. Global.
@@ -216,6 +220,7 @@ export const DEFAULT_SETTINGS: Settings = {
   clock: "24h",
   dateFormat: "ymd",
   showWeekday: true,
+  equalWidthDays: false,
   priceSide: "mid",
   bidAsk: "off",
   bidAskStyle: DEFAULT_BID_ASK_STYLE,

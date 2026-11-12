@@ -49,6 +49,8 @@ interface Props {
   dateFormat: DateFormat;
   // Prefix day-granularity timestamps with the weekday. Global.
   showWeekday: boolean;
+  // Equal-width days (lib/equalWidthDays.ts). Global.
+  equalWidthDays: boolean;
   // Which side of the spread candles render from (bid/mid/ask). Global.
   priceSide: PriceSide;
   // Live bid & ask display: off / labels / lines. Global.
@@ -98,6 +100,7 @@ export default function ChartGrid({
   clock,
   dateFormat,
   showWeekday,
+  equalWidthDays,
   priceSide,
   bidAsk,
   bidAskStyle,
@@ -299,6 +302,7 @@ export default function ChartGrid({
             clock={clock}
             dateFormat={dateFormat}
             showWeekday={showWeekday}
+            equalWidthDays={equalWidthDays}
             priceSide={priceSide}
             bidAsk={bidAsk}
             bidAskStyle={bidAskStyle}

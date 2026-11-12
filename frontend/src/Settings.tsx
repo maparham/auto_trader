@@ -542,6 +542,34 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
 
             <div className="setting-row">
               <label className="label-info">
+                Equal-width days
+                <InfoTip
+                  text={[
+                    "Draws every day on an intraday chart the same width.",
+                    "Missing hours show as gaps.",
+                    "Lines pinned to 1D come out straight.",
+                    "Display only: indicators and alerts are unchanged.",
+                  ]}
+                />
+              </label>
+              <div className="seg">
+                {[
+                  [false, "Off"],
+                  [true, "On"],
+                ].map(([value, label]) => (
+                  <button
+                    key={String(value)}
+                    className={settings.equalWidthDays === value ? "seg-on" : ""}
+                    onClick={() => onChange({ ...settings, equalWidthDays: value as boolean })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="setting-row">
+              <label className="label-info">
                 Auto-save templates
                 <InfoTip text="Save indicators and drawings per symbol. Fresh charts open with their saved template." />
               </label>

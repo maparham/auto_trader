@@ -30,6 +30,7 @@ import ChartRangeBar from "./ChartRangeBar";
 import { type RangeKey } from "./lib/rangeWindow";
 import { pageHistoryBack, coverHistoryRangeParallel, scrollbackLoadOlder, PAGE_BARS, type PageResult } from "./lib/historyPaging";
 import { klineStyles } from "./lib/chartTheme";
+import { setEqualWidthDays } from "./lib/equalWidthDays";
 import ChartLegend, {
   type ChartLegendHandle,
   type LegendRow,
@@ -308,6 +309,9 @@ interface Props {
   dateFormat: DateFormat;
   // Prefix day-granularity timestamps with the weekday. Global.
   showWeekday: boolean;
+  // Equal-width days (lib/equalWidthDays.ts): draw intraday days the same
+  // width, candles in their time slots. Global, display only.
+  equalWidthDays: boolean;
   // Which side of the spread candles render from (bid/mid/ask). Global setting;
   // a change refetches history and reconnects the live stream for this cell.
   priceSide: PriceSide;
@@ -379,6 +383,7 @@ export default function ChartCore({
   clock,
   dateFormat,
   showWeekday,
+  equalWidthDays,
   priceSide,
   bidAsk,
   bidAskStyle,
@@ -4372,6 +4377,16 @@ export default function ChartCore({
       controller.replaying.set(false);
     };
   }, [cellId, controller, replay.state.mode]);
+
+  // Equal-width days: install or remove the slot provider the patched
+  // klinecharts store reads, then relay out so candles move to (or out of)
+  // their slots at once. The provider is global, so every chart agrees.
+  useEffect(() => {
+    setEqualWidthDays(equalWidthDays);
+    const c = chartRef.current;
+    if (!c) return;
+    c.setOffsetRightDistance(c.getOffsetRightDistance());
+  }, [equalWidthDays, chartReady]);
 
   // Time-axis format changes -> re-register the formatter. setFormatter doesn't
   // force a repaint on its own, so nudge one via setStyles (same trick the

@@ -1036,6 +1036,7 @@ export default function App() {
               clock={settings.clock}
               dateFormat={settings.dateFormat}
               showWeekday={settings.showWeekday}
+              equalWidthDays={settings.equalWidthDays}
               priceSide={settings.priceSide}
               bidAsk={settings.bidAsk}
               bidAskStyle={settings.bidAskStyle}
