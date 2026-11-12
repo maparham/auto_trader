@@ -144,6 +144,8 @@ export default function AppearanceMenu({ settings, onChange, onBarChangeAll }: P
                 text={[
                   "Every trading day gets the same width.",
                   "Missing hours show as empty space.",
+                  "Keeps lines straight on finer timeframes, true to the chart.",
+                  "Keeps lines from a higher timeframe straight on finer charts.",
                   "Display only: indicators and alerts are unchanged.",
                 ]}
               />

@@ -408,6 +408,8 @@ export function ScaleControls({
           content={[
             "Every trading day gets the same width.",
             "Missing hours show as empty space.",
+            "Keeps lines straight on finer timeframes, true to the chart.",
+            "Keeps lines from a higher timeframe straight on finer charts.",
           ]}
         >
           <button
