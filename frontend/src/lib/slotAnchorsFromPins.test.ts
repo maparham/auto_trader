@@ -31,6 +31,24 @@ describe("anchors per chart", () => {
     expect(slotAnchorsOf(chart)?.dayStarts).toEqual([10]);
   });
 
+  it("removing the 1D pin keeps the 1W pin's weeks", () => {
+    const chart = {};
+    setSlotAnchors(chart, "TL1", { dayStarts: [10] });
+    setSlotAnchors(chart, "TL2", { weekStarts: [5] });
+    setSlotAnchors(chart, "TL1", null);
+    expect(slotAnchorsOf(chart)).toEqual({ weekStarts: [5] });
+    setSlotAnchors(chart, "TL1", { dayStarts: [10] });
+    setSlotAnchors(chart, "TL2", null);
+    expect(slotAnchorsOf(chart)).toEqual({ dayStarts: [10] });
+  });
+
+  it("anchors of one chart never reach another", () => {
+    const a = {};
+    const b = {};
+    setSlotAnchors(a, "TL1", { dayStarts: [10] });
+    expect(slotAnchorsOf(b)).toBeUndefined();
+  });
+
   it("removing the last 1D pin drops back to inferred days", () => {
     const chart = {};
     setSlotAnchors(chart, "TL1", { dayStarts: [10] });

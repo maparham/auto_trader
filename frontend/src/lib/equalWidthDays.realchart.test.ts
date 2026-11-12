@@ -102,6 +102,10 @@ describe("equal-width days on a real klinecharts store", () => {
     setSlotAnchors(chart, "p", { dayStarts });
     expect(slotGridFor(store.getDataList())!.perDay).not.toBe(before);
     expect(xOfTs(ts)).toBe(x);
+    // Unpinning goes back to inferred days, again without sliding the view.
+    setSlotAnchors(chart, "p", null);
+    expect(slotGridFor(store.getDataList())!.perDay).toBe(before);
+    expect(xOfTs(ts)).toBe(x);
   });
 
   it("turning Time gaps on keeps the centre candle in place", () => {
