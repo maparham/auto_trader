@@ -385,6 +385,8 @@ class Position:
     # P&L% / market value without a chart streaming that epic. None when the
     # broker doesn't embed a quote.
     mark: float | None = None
+    # True when the broker's stop is a trailing stop (the level moves on its own).
+    trailing_stop: bool = False
 
     @property
     def signed_size(self) -> float:

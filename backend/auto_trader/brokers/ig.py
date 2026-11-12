@@ -606,6 +606,7 @@ class IGExecutionBroker(AsyncConfirmExecutionBroker):
                     upnl=upnl,
                     created_at=_parse_ig_created(pos),
                     mark=mark,
+                    trailing_stop=pos.get("trailingStopDistance") is not None,
                 )
             )
         return out

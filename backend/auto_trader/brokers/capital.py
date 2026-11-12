@@ -753,6 +753,7 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
                     leverage=leverage,
                     margin=margin,
                     mark=mark,
+                    trailing_stop=bool(pos.get("trailingStop")),
                 )
             )
         return out

@@ -131,6 +131,11 @@ class AlertEngine:
         self._snoozed: dict[tuple[str, str], int] = {}
 
         self._reconcile_event = asyncio.Event()
+        # owner -> (broker, epic) pairs other evaluators (position alerts) want
+        # fed. Deliberately NOT cleared by start(): an owner that started before
+        # the engine must keep its pairs.
+        self._extra_feeds: dict[str, set[tuple[str, str]]] = {}
+        self._tick_listeners: list[Callable[[str, str, float, float | None, float | None], Awaitable[None]]] = []
         self._expiry_task: asyncio.Task | None = None
         self._reconciler_task: asyncio.Task | None = None
         # (broker, epic) -> running feed task. One task per pair, so on_tick is
@@ -201,7 +206,8 @@ class AlertEngine:
             # Account alerts have no price feed; AccountMonitor owns them. Letting
             # one in here would spawn a feed loop for ("capital-live:live", "")
             # that 404s on get_data forever.
-            if row.get("kind") == "account":
+            # Position alerts likewise belong to POSITION_WATCH.
+            if row.get("kind") in ("account", "position"):
                 continue
             key = (row["broker"], row["epic"])
             self._registry.setdefault(key, []).append((user_id, row))
@@ -529,11 +535,28 @@ class AlertEngine:
         return True
 
     def feeds_needed(self) -> set[tuple[str, str]]:
-        return {
+        need = {
             key
             for key, entries in self._registry.items()
             if any(row.get("active", 1) for _, row in entries)
         }
+        for pairs in self._extra_feeds.values():
+            need |= pairs
+        return need
+
+    def set_extra_feeds(self, owner: str, pairs: set[tuple[str, str]]) -> None:
+        """Feeds another evaluator wants kept alive, per owner (replaces the
+        owner's previous set). The reconciler picks the change up."""
+        if pairs:
+            self._extra_feeds[owner] = set(pairs)
+        else:
+            self._extra_feeds.pop(owner, None)
+        self._reconcile_event.set()
+
+    def add_tick_listener(
+        self, fn: Callable[[str, str, float, float | None, float | None], Awaitable[None]]
+    ) -> None:
+        self._tick_listeners.append(fn)
 
     def feeds_status(self) -> list[dict]:
         """Admin-console view of the live feeds: one row per registered
@@ -789,6 +812,12 @@ class AlertEngine:
                 # One bad alert must not stop every other alert on this feed
                 # (an escaping error backs the whole feed task off).
                 log.warning("alert evaluation failed for user=%s alert=%s", user_id, row["id"], exc_info=True)
+
+        for fn in list(self._tick_listeners):
+            try:
+                await fn(broker, epic, mid, bid, ask)
+            except Exception:
+                log.warning("alert tick listener failed for %s/%s", broker, epic, exc_info=True)
 
     async def _evaluate_one(
         self, user_id: str, row: dict, mid: float, bid: float | None, ask: float | None,

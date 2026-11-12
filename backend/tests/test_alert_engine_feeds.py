@@ -590,3 +590,45 @@ def test_start_stop_wires_reconciler_and_feed_lifecycle(tmp_path):
         assert eng._reconciler_task is None or eng._reconciler_task.done()
 
     asyncio.run(main())
+
+
+def test_extra_feeds_spawn_and_drop(tmp_path):
+    eng, _, _ = make_engine(tmp_path)
+    eng.set_extra_feeds("pos", {("capital", "US100")})
+    assert ("capital", "US100") in eng.feeds_needed()
+    eng.set_extra_feeds("pos", set())
+    assert ("capital", "US100") not in eng.feeds_needed()
+
+
+def test_tick_listener_called_and_isolated(tmp_path):
+    eng, _, _ = make_engine(tmp_path)
+    seen: list[tuple] = []
+
+    async def bad(*a):
+        raise RuntimeError("boom")
+
+    async def good(*a):
+        seen.append(a)
+
+    eng.add_tick_listener(bad)
+    eng.add_tick_listener(good)
+    asyncio.run(eng.on_tick("capital", "US100", 10.0, 9.0, 11.0))
+    assert seen == [("capital", "US100", 10.0, 9.0, 11.0)]
+
+
+def test_start_skips_position_rows_and_keeps_extra_feeds(tmp_path):
+    async def go():
+        eng, store, _ = make_engine(tmp_path)
+        eng.set_extra_feeds("pos", {("capital", "US100")})
+        async def rows():
+            return [("u1", {"id": "p1", "broker": "capital:demo", "epic": "US100",
+                            "kind": "position", "params": {}, "active": 1})]
+        store.list_all = rows
+        await eng.start()
+        try:
+            assert eng._registry == {}
+            assert ("capital", "US100") in eng.feeds_needed()
+        finally:
+            await eng.stop()
+
+    asyncio.run(go())

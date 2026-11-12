@@ -64,6 +64,7 @@ def _position_dto(p) -> PositionDTO:
         leverage=p.leverage,
         margin=p.margin,
         mark=p.mark,
+        trailing_stop=getattr(p, "trailing_stop", False),
     )
 
 

@@ -674,6 +674,7 @@ class PositionDTO(BaseModel):
     leverage: float | None = None
     margin: float | None = None
     mark: float | None = None
+    trailing_stop: bool = False
 
 
 class QuoteDTO(BaseModel):
