@@ -5,7 +5,7 @@
 // they are reading, even when it widens the slot grid.
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { dispose, init, type Chart, type KLineData } from "klinecharts";
-import { setEqualWidthDays } from "./equalWidthDays";
+import { relayoutSlots, setEqualWidthDays, setSlotAnchors, slotGridFor } from "./equalWidthDays";
 
 function stubCanvas(): void {
   const ctx = new Proxy({ measureText: () => ({ width: 10 }) } as Record<string, unknown>, {
@@ -81,6 +81,38 @@ describe("equal-width days on a real klinecharts store", () => {
     const x = xOfTs(ts);
     // Older days open at 13:00, one slot earlier than any loaded day.
     store._addData(days(5, 10, 13), "forward", true);
+    expect(xOfTs(ts)).toBe(x);
+  });
+
+  it("registering day starts keeps the centre candle in place", () => {
+    // FX-like: hourly round the clock except the 22:00 pause, two weeks.
+    const fx: KLineData[] = [];
+    for (let t = D0 - DAY + 23 * H; t <= D0 + 11 * DAY + 21 * H; t += H) {
+      const start = Math.floor((t - 22 * H) / DAY) * DAY + 22 * H; // broker day start
+      const wd = new Date(start + 12 * H).getUTCDay();
+      if (new Date(t).getUTCHours() !== 22 && wd !== 0 && wd !== 6) fx.push(bar(t));
+    }
+    store._addData(fx, "init", true);
+    store.setLastBarRightSideDiffBarCount(-30);
+    const before = slotGridFor(store.getDataList())!.perDay;
+    const ts = centreTs();
+    const x = xOfTs(ts);
+    // The broker's days start at 21:00, an hour before the inferred pause.
+    const dayStarts = Array.from({ length: 12 }, (_, d) => D0 - DAY + d * DAY + 21 * H);
+    setSlotAnchors(chart, "p", { dayStarts });
+    expect(slotGridFor(store.getDataList())!.perDay).not.toBe(before);
+    expect(xOfTs(ts)).toBe(x);
+  });
+
+  it("turning Time gaps on keeps the centre candle in place", () => {
+    setEqualWidthDays(false);
+    // Day 18 opens late, after the centre: turning on adds an empty slot there.
+    store._addData([...days(10, 18), ...days(18, 19, 15), ...days(19, 20)], "init", true);
+    store.setLastBarRightSideDiffBarCount(-30);
+    const ts = centreTs();
+    const x = xOfTs(ts);
+    relayoutSlots(chart, () => setEqualWidthDays(true));
+    expect(slotGridFor(store.getDataList())).not.toBeNull();
     expect(xOfTs(ts)).toBe(x);
   });
 

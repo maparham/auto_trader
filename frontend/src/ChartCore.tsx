@@ -30,7 +30,7 @@ import ChartRangeBar from "./ChartRangeBar";
 import { type RangeKey } from "./lib/rangeWindow";
 import { pageHistoryBack, coverHistoryRangeParallel, scrollbackLoadOlder, PAGE_BARS, type PageResult } from "./lib/historyPaging";
 import { klineStyles } from "./lib/chartTheme";
-import { setEqualWidthDays } from "./lib/equalWidthDays";
+import { equalWidthDaysOn, relayoutSlots, setEqualWidthDays } from "./lib/equalWidthDays";
 import ChartLegend, {
   type ChartLegendHandle,
   type LegendRow,
@@ -4380,12 +4380,18 @@ export default function ChartCore({
 
   // Equal-width days: install or remove the slot provider the patched
   // klinecharts store reads, then relay out so candles move to (or out of)
-  // their slots at once. The provider is global, so every chart agrees.
+  // their slots at once, keeping the candle at the middle of the view in
+  // place. The provider is global, so every chart agrees; the first chart to
+  // run this flips it, the others only relay out.
   useEffect(() => {
-    setEqualWidthDays(equalWidthDays);
     const c = chartRef.current;
-    if (!c) return;
-    c.setOffsetRightDistance(c.getOffsetRightDistance());
+    if (!c) {
+      setEqualWidthDays(equalWidthDays);
+      return;
+    }
+    relayoutSlots(c, () => {
+      if (equalWidthDaysOn() !== equalWidthDays) setEqualWidthDays(equalWidthDays);
+    });
   }, [equalWidthDays, chartReady]);
 
   // Time-axis format changes -> re-register the formatter. setFormatter doesn't

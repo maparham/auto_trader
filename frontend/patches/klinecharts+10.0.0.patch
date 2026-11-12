@@ -1,5 +1,5 @@
 diff --git a/node_modules/klinecharts/dist/index.esm.js b/node_modules/klinecharts/dist/index.esm.js
-index 7b7d9f2..d048b90 100644
+index 7b7d9f2..90af75a 100644
 --- a/node_modules/klinecharts/dist/index.esm.js
 +++ b/node_modules/klinecharts/dist/index.esm.js
 @@ -5475,17 +5475,25 @@ var StoreImp = /** @class */ (function () {
@@ -123,7 +123,7 @@ index 7b7d9f2..d048b90 100644
          return Math.round(index * 1000000) / 1000000;
      };
      StoreImp.prototype.dataIndexToTimestamp = function (dataIndex) {
-@@ -5902,10 +5931,64 @@ var StoreImp = /** @class */ (function () {
+@@ -5902,10 +5931,90 @@ var StoreImp = /** @class */ (function () {
          }
          return binarySearchNearest(this._dataList, 'timestamp', timestamp);
      };
@@ -138,11 +138,11 @@ index 7b7d9f2..d048b90 100644
 +        var n = list.length;
 +        if (typeof b !== 'function' || n < 2) return null;
 +        var c = this._slotCache;
-+        if (c && c.b === b && c.list === list && c.n === n && c.first === list[0].timestamp && c.last === list[n - 1].timestamp) return c.s;
++        if (c && c.b === b && c.v === b.version && c.list === list && c.n === n && c.first === list[0].timestamp && c.last === list[n - 1].timestamp) return c.s;
 +        var s = null;
-+        try { s = b(list); } catch (e) { s = null; }
++        try { s = b(list, this._chart); } catch (e) { s = null; }
 +        if (!s || typeof s.posOf !== 'function' || typeof s.idxOf !== 'function' || typeof s.count !== 'function') s = null;
-+        this._slotCache = { b: b, list: list, n: n, first: list[0].timestamp, last: list[n - 1].timestamp, s: s };
++        this._slotCache = { b: b, v: b.version, list: list, n: n, first: list[0].timestamp, last: list[n - 1].timestamp, s: s };
 +        return s;
 +    };
 +    StoreImp.prototype._posOf = function (i) {
@@ -172,6 +172,32 @@ index 7b7d9f2..d048b90 100644
 +        if (!a) return prepended ? 0 : n;
 +        return (this._posCount() - this._posOf(a.i + prepended)) - a.dist;
 +    };
++    // chartkar patch: run a change that moves the slot grid (Time gaps on or
++    // off, new day or week starts) and keep the candle at the middle of the
++    // view where it was. At the live edge (offset >= 0) the newest candle
++    // keeps its place instead, as for a live candle.
++    StoreImp.prototype.chartkarRelayoutSlots = function (change) {
++        var a = null;
++        try { a = this._viewAnchor(); } catch (e) { a = null; }
++        try { change(); } finally {
++            this._slotCache = null;
++            if (a && this._lastBarRightSideDiffBarCount < 0) {
++                var shift = this._viewAnchorShift(a, 0);
++                if (isFinite(shift)) {
++                    this._lastBarRightSideDiffBarCount -= shift;
++                    this._startLastBarRightSideDiffBarCount -= shift;
++                }
++            }
++            this._adjustVisibleRange();
++            this.setCrosshair(this._crosshair, { notInvalidate: true });
++            this._chart.layout({
++                measureWidth: true,
++                update: true,
++                buildYAxisTick: true,
++                cacheYAxisWidth: true
++            });
++        }
++    };
 +    StoreImp.prototype._posCount = function () {
 +        var s = this._slots();
 +        if (!s) return this._dataList.length;
@@ -191,7 +217,7 @@ index 7b7d9f2..d048b90 100644
      };
      StoreImp.prototype.coordinateToDataIndex = function (x) {
          return Math.ceil(this.coordinateToFloatIndex(x)) - 1;
-@@ -6042,11 +6125,11 @@ var StoreImp = /** @class */ (function () {
+@@ -6042,11 +6151,11 @@ var StoreImp = /** @class */ (function () {
              }
          }
          var x = zoomCoordinate.x;
@@ -205,7 +231,7 @@ index 7b7d9f2..d048b90 100644
          });
          var realScale = this._barSpace / prevBarSpace;
          if (realScale !== 1) {
-@@ -7896,7 +7979,7 @@ var CandleBarView = /** @class */ (function (_super) {
+@@ -7896,7 +8005,7 @@ var CandleBarView = /** @class */ (function (_super) {
                          yAxis_1.convertToPixel(low)
                      ];
                      priceY.sort(function (a, b) { return a - b; });

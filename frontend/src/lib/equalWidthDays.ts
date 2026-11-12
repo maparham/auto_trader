@@ -185,10 +185,36 @@ export function buildSlotGrid(times: readonly number[], anchors?: SlotAnchors): 
 }
 
 type Stamped = { timestamp: number };
-type CacheEntry = { n: number; first: number; last: number; grid: SlotGrid | null };
+type CacheEntry = { n: number; first: number; last: number; v: number; grid: SlotGrid | null };
 
 const cache = new WeakMap<readonly Stamped[], CacheEntry>();
 let on = false;
+// Bumped whenever anchors or the setting change, so cached grids (here and
+// in the klinecharts store) are rebuilt.
+let version = 0;
+
+// Anchors per chart, per pinned pane key, in registration order. The store
+// passes its chart with the data list; slotGridFor(list) callers without a
+// chart find it through the list.
+const anchorsByChart = new WeakMap<object, Map<string, SlotAnchors>>();
+const chartOfList = new WeakMap<object, object>();
+
+function mergedAnchors(chart: object | undefined): SlotAnchors | undefined {
+  const m = chart ? anchorsByChart.get(chart) : undefined;
+  if (!m || m.size === 0) return undefined;
+  const out: SlotAnchors = {};
+  // First registered wins per field.
+  for (const a of m.values()) {
+    if (!out.dayStarts && a.dayStarts?.length) out.dayStarts = a.dayStarts;
+    if (!out.weekStarts && a.weekStarts?.length) out.weekStarts = a.weekStarts;
+  }
+  return out;
+}
+
+/** The anchors a chart's grid uses now (merged over its pinned panes). */
+export function slotAnchorsOf(chart: object): SlotAnchors | undefined {
+  return mergedAnchors(chart);
+}
 
 /** The cached grid for a candle list while the setting is on, else null. */
 export function slotGridFor(list: readonly Stamped[]): SlotGrid | null {
@@ -197,11 +223,11 @@ export function slotGridFor(list: readonly Stamped[]): SlotGrid | null {
   const first = list[0]?.timestamp;
   const last = list[n - 1]?.timestamp;
   const hit = cache.get(list);
-  if (hit && hit.n === n && hit.first === first && hit.last === last) return hit.grid;
+  if (hit && hit.n === n && hit.first === first && hit.last === last && hit.v === version) return hit.grid;
   const times = new Array<number>(n);
   for (let i = 0; i < n; i++) times[i] = list[i]?.timestamp;
-  const grid = buildSlotGrid(times);
-  cache.set(list, { n, first, last, grid });
+  const grid = buildSlotGrid(times, mergedAnchors(chartOfList.get(list)));
+  cache.set(list, { n, first, last, v: version, grid });
   return grid;
 }
 
@@ -209,20 +235,72 @@ export function equalWidthDaysOn(): boolean {
   return on;
 }
 
-type SlotsGlobal = { __chartkarSlots?: (list: unknown) => SlotGrid | null };
+type Provider = ((list: unknown, chart?: unknown) => SlotGrid | null) & { version?: number };
+type SlotsGlobal = { __chartkarSlots?: Provider };
+
+function bump(): void {
+  version++;
+  const p = (globalThis as SlotsGlobal).__chartkarSlots;
+  if (p) p.version = version;
+}
 
 export function setEqualWidthDays(next: boolean): void {
   on = next;
   const g = globalThis as SlotsGlobal;
   // klinecharts calls this from its layout path, where a throw would silently
   // stop every later layout: any failure means "no grid" (identity).
-  if (next)
-    g.__chartkarSlots = (list) => {
+  if (next) {
+    const p: Provider = (list, chart) => {
       try {
+        if (chart && typeof chart === "object" && list && typeof list === "object") chartOfList.set(list, chart);
         return slotGridFor(list as readonly Stamped[]);
       } catch {
         return null;
       }
     };
-  else delete g.__chartkarSlots;
+    g.__chartkarSlots = p;
+  } else delete g.__chartkarSlots;
+  bump();
+}
+
+type RelayoutStore = { chartkarRelayoutSlots?: (change: () => void) => void };
+
+/**
+ * Run a change that moves the slot grid (the setting, anchors) and keep the
+ * candle at the middle of the view where it was. Falls back to just running
+ * the change on an unpatched chart.
+ */
+export function relayoutSlots(chart: object | null | undefined, change: () => void): void {
+  const store = (chart as { _chartStore?: RelayoutStore } | null | undefined)?._chartStore;
+  if (store && typeof store.chartkarRelayoutSlots === "function") store.chartkarRelayoutSlots(change);
+  else change();
+}
+
+/**
+ * Give (or with null, take back) a pinned pane's day or week starts for one
+ * chart. Several panes merge, the first registered winning per field.
+ */
+export function setSlotAnchors(chart: object | null | undefined, key: string, anchors: SlotAnchors | null): void {
+  if (!chart) return;
+  const m = anchorsByChart.get(chart) ?? new Map<string, SlotAnchors>();
+  const prev = m.get(key);
+  if (!anchors && !prev) return;
+  if (anchors && prev && sameAnchors(prev, anchors)) return;
+  relayoutSlots(chart, () => {
+    if (anchors) m.set(key, anchors);
+    else m.delete(key);
+    anchorsByChart.set(chart, m);
+    bump();
+  });
+}
+
+function sameList(a: readonly number[] | undefined, b: readonly number[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function sameAnchors(a: SlotAnchors, b: SlotAnchors): boolean {
+  return sameList(a.dayStarts, b.dayStarts) && sameList(a.weekStarts, b.weekStarts);
 }
