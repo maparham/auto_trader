@@ -406,7 +406,7 @@ export function ScaleControls({
         <Tooltip
           content={[
             "Equal-width days: every day on an intraday chart the same width.",
-            "Missing hours show as gaps; lines pinned to 1D come out straight.",
+            "Missing hours show as gaps.",
           ]}
         >
           <button

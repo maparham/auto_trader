@@ -144,7 +144,6 @@ export default function AppearanceMenu({ settings, onChange, onBarChangeAll }: P
                 text={[
                   "Draws every day on an intraday chart the same width.",
                   "Missing hours show as gaps.",
-                  "Lines pinned to 1D come out straight.",
                   "Display only: indicators and alerts are unchanged.",
                 ]}
               />
