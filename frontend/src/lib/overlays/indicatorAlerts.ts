@@ -118,7 +118,8 @@ export function alertStepPoints(
   for (let j = Math.max(j1 >= 0 ? j1 : -Infinity, map.barOf(0)); j <= jNow; j++) {
     const s = map.span(j);
     if (!s) continue;
-    const c = Math.max(0, Math.ceil(s.from));
+    // The bar's first candle: positions are slots under equal-width days.
+    const c = Math.max(0, Math.ceil(map.toIndex(s.from + 0.5) - 1e-9));
     if (c > n - 1) break;
     steps.push({ timestamp: dataList[c].timestamp, value: valueAt(j) });
   }

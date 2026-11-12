@@ -13,6 +13,7 @@ import {
   type HtfStepMap,
   type StepPiece,
 } from "./trendlineSteps";
+import { buildSlotGrid } from "../equalWidthDays";
 
 const H = 3_600_000;
 const DAY = 24 * H;
@@ -260,5 +261,54 @@ describe("distToSteps", () => {
 
   it("is Infinity past the last piece", () => {
     expect(distToSteps(31, 30, pieces)).toBe(Infinity);
+  });
+});
+
+describe("equal-width days (slots)", () => {
+  const days = tradingDays(10);
+  // Days 2 and 5 lose their first 3 candles (a late open).
+  const hourlyWithHoles = () =>
+    hourly(days).filter((t) => {
+      const k = days.indexOf(Math.floor((t - MON) / DAY));
+      const h = Math.round((t - MON - days[k] * DAY - 13.5 * H) / H);
+      return !((k === 2 || k === 5) && h < 3);
+    });
+  const value = (j: number) => 100 + 2 * j;
+  const all = { xOf: (pos: number) => pos * 10, yOf: (p: number) => 1000 - p, posMin: -1e9, posMax: 1e9 };
+
+  it("with slots every day spans perDay and the ramp is one straight line", () => {
+    const times = hourlyWithHoles();
+    const grid = buildSlotGrid(times)!;
+    const map = buildHtfStepMap((i) => times[i], times.length, startsOf(days), DAY, "DAY", grid);
+    for (let j = 0; j < map.forming; j++) expect(map.span(j)!.to - map.span(j)!.from).toBe(grid.perDay);
+    const pieces = buildSteps(map, value, 0, 8, all);
+    const slope = (p: StepPiece) => (p.y1 - p.y0) / (p.x1 - p.x0);
+    for (const p of pieces) expect(slope(p)).toBeCloseTo(slope(pieces[0]), 9);
+    expect(map.candlePos(times.length - 1)).toBe(grid.pos[times.length - 1]);
+    expect(map.toIndex(map.candlePos(4))).toBeCloseTo(4, 9);
+  });
+
+  it("jAt inside a day's leading gap reads that day", () => {
+    const times = hourlyWithHoles();
+    const grid = buildSlotGrid(times)!;
+    const map = buildHtfStepMap((i) => times[i], times.length, startsOf(days), DAY, "DAY", grid);
+    // Day 2 starts at slot 14 but its first candle sits at slot 17.
+    expect(map.jAt(14)).toBeCloseTo(2 + 0.5 / 7, 9);
+    expect(map.jAt(15.5)).toBeCloseTo(2 + 2 / 7, 9);
+  });
+
+  it("the newest day's span runs a full day past its first candle", () => {
+    const times = hourlyWithHoles().slice(0, -4); // the last day holds 3 candles
+    const grid = buildSlotGrid(times)!;
+    const map = buildHtfStepMap((i) => times[i], times.length, startsOf(days.slice(0, -1)), DAY, "DAY", grid);
+    const s = map.span(map.nowBar)!;
+    expect(s.to - s.from).toBe(grid.perDay);
+    expect(stepRange(map.forming - 1, map.forming - 1, map).endPos).toBe(grid.pos[times.length - 1] + 0.5);
+  });
+
+  it("without slots the map is unchanged", () => {
+    const map = mapOf(hourly(days), startsOf(days));
+    expect(map.candlePos(5)).toBe(5);
+    expect(map.toIndex(5.5)).toBe(5.5);
   });
 });

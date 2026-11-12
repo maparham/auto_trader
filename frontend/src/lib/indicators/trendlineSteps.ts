@@ -15,10 +15,15 @@
 // Positions here are CHART positions in candle-edge units: candle c spans
 // [c - 0.5, c + 0.5], so a step's ends sit on candle edges and the caller
 // turns a position into a pixel with the x axis (linear in the index).
+// Under equal-width days (lib/equalWidthDays.ts) positions are display SLOTS
+// instead: candle c sits at slots.pos[c], a pin of a day or longer spans whole
+// days of slots (so every daily bar is perDay wide and a Smooth line is
+// straight), and the caller converts with candlePos / toIndex.
 //
 // Chart-free and pure, apart from the per-frame memo in stepMapFor.
 
 import type { KLineData } from "klinecharts";
+import { slotGridFor, type SlotGrid } from "../equalWidthDays";
 import { htfBarEndMs } from "../mtfForming";
 import type { StepPiece } from "./trendlineMarks";
 import type { TrendlinesMtf } from "./trendlines";
@@ -42,6 +47,10 @@ export interface HtfStepMap {
   posOf(j: number): number;
   /** Fractional HTF index at chart position pos (inverse of posOf). */
   jAt(pos: number): number;
+  /** Chart position of (fractional) candle index c: c itself, or its slot. */
+  candlePos(c: number): number;
+  /** Candle index at chart position p: inverse of candlePos. */
+  toIndex(p: number): number;
 }
 
 /** How many of the newest fully loaded HTF bars the perBar estimate reads. */
@@ -65,7 +74,20 @@ export function buildHtfStepMap(
   starts: readonly number[],
   htfMs: number,
   timeframe?: string,
+  slotsIn?: SlotGrid | null,
 ): HtfStepMap {
+  const slots = slotsIn && slotsIn.n === nChart ? slotsIn : null;
+  // Candle c's position, and the edges a span of candles a..b-1 takes: the
+  // candles themselves, or (slots, a pin of a day or longer) whole days.
+  const P = (c: number): number => (slots ? slots.pos[c] : c);
+  const wholeDays = !!slots && htfMs >= DAY_MS;
+  const perDay = slots ? slots.perDay : 1;
+  const dayStart = (p: number): number => Math.floor(p / perDay) * perDay;
+  const leftEdge = (a: number): number => (wholeDays ? dayStart(P(a)) : P(a)) - 0.5;
+  // The right edge of a run ending before candle b: where candle b's run
+  // starts, or past the last candle (its whole day under wholeDays).
+  const rightEdge = (b: number): number =>
+    b < nChart ? leftEdge(b) : (wholeDays ? dayStart(P(nChart - 1)) + perDay : P(nChart - 1) + 1) - 0.5;
   const nS = starts.length;
   const lastEnd = nS ? htfBarEndMs(starts[nS - 1], htfMs, timeframe) : -Infinity;
   const bar = new Array<number>(nChart);
@@ -102,7 +124,7 @@ export function buildHtfStepMap(
     const f = first.get(k);
     // A bar whose first candle is the first loaded one may be cut short.
     if (f === undefined || f === 0) continue;
-    sample.push(count.get(k)!);
+    sample.push(slots ? rightEdge(f + count.get(k)!) - leftEdge(f) : count.get(k)!);
   }
   let perBar: number;
   if (sample.length) {
@@ -111,7 +133,9 @@ export function buildHtfStepMap(
   } else {
     perBar = Math.max(1, Math.round(htfMs / medianGap(timeAt, nChart, htfMs)));
   }
-  for (let c = 0; c < before; c++) bar[c] = -1 - Math.floor((before - 1 - c) / perBar);
+  // Candles before the first start, counted back perBar CANDLES per bar.
+  const perBarCandles = slots ? Math.max(1, Math.round(perBar / (wholeDays ? perDay : 1))) : perBar;
+  for (let c = 0; c < before; c++) bar[c] = -1 - Math.floor((before - 1 - c) / perBarCandles);
   let g = nS - 1;
   let gEnd = -Infinity;
   for (let c = firstAfter; c < nChart; c++) {
@@ -144,18 +168,21 @@ export function buildHtfStepMap(
     const a = lowerBound(jj);
     if (a >= nChart || bar[a] !== jj) return null;
     const b = lowerBound(jj + 1);
-    const to = jj === lastBar && jj >= nS ? Math.max(b, a + perBar) : b;
-    return { from: a - 0.5, to: to - 0.5 };
+    const from = leftEdge(a);
+    const end = rightEdge(b);
+    const to = jj === lastBar && jj >= nS ? Math.max(end, from + perBar) : end;
+    return { from, to };
   };
   // Where the projected future starts: the end of the newest candle's bar.
   const lastTo = nChart ? loaded(lastBar)!.to : -0.5;
+  const firstFrom = nChart ? leftEdge(0) : -0.5;
   const span = (jj: number): { from: number; to: number } | null => {
     if (jj > lastBar) {
       const from = lastTo + (jj - lastBar - 1) * perBar;
       return { from, to: from + perBar };
     }
     if (jj < firstBar) {
-      const to = -0.5 - (firstBar - 1 - jj) * perBar;
+      const to = firstFrom - (firstBar - 1 - jj) * perBar;
       return { from: to - perBar, to };
     }
     return loaded(jj);
@@ -182,14 +209,28 @@ export function buildHtfStepMap(
     },
     jAt: (pos) => {
       if (pos >= lastTo) return lastBar + 1 + (pos - lastTo) / perBar;
-      if (pos < -0.5 || !nChart) return firstBar - (-0.5 - pos) / perBar;
-      const c = Math.min(nChart - 1, Math.max(0, Math.round(pos)));
-      const k = bar[c];
-      const s = span(k)!;
+      if (pos < firstFrom || !nChart) return firstBar - (firstFrom - pos) / perBar;
+      const c = Math.min(nChart - 1, Math.max(0, Math.round(slots ? slots.idxOf(pos) : pos)));
+      let k = bar[c];
+      let s = span(k)!;
+      // Under slots a gap at a day's start rounds to the previous day's last
+      // candle: step to the bar whose span holds pos.
+      while (slots && pos >= s.to && k < lastBar) {
+        const nx = span(++k);
+        if (nx) s = nx;
+      }
+      while (slots && pos < s.from && k > firstBar) {
+        const pv = span(--k);
+        if (pv) s = pv;
+      }
       return k + (pos - s.from) / (s.to - s.from);
     },
+    candlePos: (c) => (slots ? slots.posOf(c) : c),
+    toIndex: (p) => (slots ? slots.idxOf(p) : p),
   };
 }
+
+const DAY_MS = 86_400_000;
 
 function medianGap(timeAt: (i: number) => number, n: number, fallback: number): number {
   const gaps: number[] = [];
@@ -201,7 +242,10 @@ function medianGap(timeAt: (i: number) => number, n: number, fallback: number): 
 
 // Per frame: every line of an instance, its alert lines and its hit targets
 // read one map, so it is built once per data list and pin.
-const MAPS = new WeakMap<object, { n: number; newest: number; starts: readonly number[]; map: HtfStepMap }>();
+const MAPS = new WeakMap<
+  object,
+  { n: number; newest: number; starts: readonly number[]; slots: SlotGrid | null; map: HtfStepMap }
+>();
 
 /** The step map for a coarser pin, memoised on the data list (same length,
  * newest timestamp and starts array). Null without a usable pin. */
@@ -211,10 +255,11 @@ export function stepMapFor(dataList: readonly KLineData[], mtf: TrendlinesMtf): 
   if (!starts?.length || !(htfMs > 0) || !dataList.length) return null;
   const n = dataList.length;
   const newest = dataList[n - 1].timestamp;
+  const slots = slotGridFor(dataList);
   const hit = MAPS.get(dataList);
-  if (hit && hit.n === n && hit.newest === newest && hit.starts === starts) return hit.map;
-  const map = buildHtfStepMap((i) => dataList[i].timestamp, n, starts, htfMs, mtf.timeframe ?? undefined);
-  MAPS.set(dataList, { n, newest, starts, map });
+  if (hit && hit.n === n && hit.newest === newest && hit.starts === starts && hit.slots === slots) return hit.map;
+  const map = buildHtfStepMap((i) => dataList[i].timestamp, n, starts, htfMs, mtf.timeframe ?? undefined, slots);
+  MAPS.set(dataList, { n, newest, starts, slots, map });
   return map;
 }
 
@@ -314,7 +359,7 @@ export function stepRange(
   if (Number.isInteger(jRight) && jRight === lastIdx)
     // Through the newest candle's bar: the forming one, or a later one when
     // a stale stash left the newest candles past it.
-    return { jTo: Math.max(map.forming, map.nowBar), endPos: map.nChart - 1 + 0.5 };
+    return { jTo: Math.max(map.forming, map.nowBar), endPos: map.candlePos(map.nChart - 1) + 0.5 };
   return { jTo: jRight };
 }
 

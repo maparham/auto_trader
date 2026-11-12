@@ -21,6 +21,7 @@ import {
 } from "./trendlines";
 import { findTrendlineSegment } from "./trendlineMarks";
 import { parseTrendlinesConfig } from "./trendlinesOutputs";
+import { buildSlotGrid, setEqualWidthDays } from "../equalWidthDays";
 
 const T0 = 1_700_000_000_000;
 const CHART_MS = 900_000; // 15m chart bars
@@ -271,7 +272,10 @@ function draw(
     chart,
     indicator: { result, calcParams: PARAMS, extendData: ext, paneId: "candle_pane", name: "TRENDLINES" },
     bounding: { width: 400, height: 400 },
-    xAxis: { convertToPixel: (i: number) => i - shift, convertFromPixel: (x: number) => x + shift },
+    xAxis: (over.xAxisOverride as object | undefined) ?? {
+      convertToPixel: (i: number) => i - shift,
+      convertFromPixel: (x: number) => x + shift,
+    },
     yAxis: { convertToPixel: (p: number) => 400 - p, convertFromPixel: (y: number) => 400 - y },
   } as never);
   return { segments, rings, dots, chart };
@@ -926,3 +930,49 @@ describe("clone of a stepped line", () => {
   });
 });
 
+
+describe("TRENDLINES_TEMPLATE.draw under a 1D pin with equal-width days", () => {
+  const DAY = 86_400_000;
+  const H = 3_600_000;
+  const D0 = Date.UTC(2026, 10, 2);
+  // Ten days of hourly candles 13:00..19:00 UTC; days 2 and 5 open 3 hours late.
+  const bars: KLineData[] = [];
+  for (let d = 0; d < 10; d++)
+    for (let h = 13; h <= 19; h++) if (!((d === 2 || d === 5) && h < 16)) bars.push(bar(D0 + d * DAY + h * H));
+  const dayStarts = Array.from({ length: 10 }, (_, d) => D0 + d * DAY);
+  const mtf = stash({
+    timeframe: "DAY",
+    htfStarts: dayStarts,
+    htfMs: DAY,
+    htfPoints: dayStarts.map((_, i) => ({ tl_1: 110 - 2 * (i - 1) })),
+  });
+  /** The line's own pieces: they start on a day's left edge in slots. */
+  const pieces = (segs: Seg[], perDay: number, toPx: (p: number) => number) =>
+    segs.filter((s) => s.x1 > s.x0 && Array.from({ length: 10 }, (_, d) => toPx(d * perDay - 0.5)).includes(s.x0));
+
+  function drawSlotted(on: boolean) {
+    setEqualWidthDays(on);
+    try {
+      const grid = buildSlotGrid(bars.map((b) => b.timestamp))!;
+      const xAxis = on
+        ? { convertToPixel: (i: number) => grid.posOf(i), convertFromPixel: (x: number) => Math.round(grid.idxOf(x)) }
+        : undefined;
+      return { grid, ...draw(bars, mtf, { pinnedStyle: "ramp", ...(xAxis ? { xAxisOverride: xAxis } : {}) }) };
+    } finally {
+      setEqualWidthDays(false);
+    }
+  }
+
+  it("draws one straight line before the newest day, flat in it", () => {
+    const { segments, grid } = drawSlotted(true);
+    const ps = pieces(segments, grid.perDay, (p) => p);
+    expect(ps.length).toBe(9); // HTF bars 1..9
+    const slope = (s: Seg) => (s.y1 - s.y0) / (s.x1 - s.x0);
+    for (const s of ps.slice(0, -1)) {
+      expect(s.x1 - s.x0).toBe(grid.perDay);
+      expect(slope(s)).toBeCloseTo(slope(ps[0]), 9);
+    }
+    const last = ps[ps.length - 1];
+    expect(last.y1).toBe(last.y0);
+  });
+});

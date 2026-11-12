@@ -42,6 +42,7 @@ import { atrSeries, rmaNext, trueRangeAt } from "../atr";
 import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 import { minPositiveGap } from "../barInterval";
 import { htfBarEndMs } from "../mtfForming";
+import { slotGridFor } from "../equalWidthDays";
 import { clipSegmentToRect, DRAW_CLIP_PAD } from "./shared";
 import {
   buildSteps, clipPiece, rampValueAt, stepMapFor, stepRange, strokeSteps, type StepPiece,
@@ -3614,21 +3615,25 @@ function drawTrendlines(
   // line's extension reaches it
   // at any zoom. The index-to-pixel map is linear (klinecharts multiplies by a
   // constant bar space), so one bar's width inverts it exactly.
-  const barPx = xAxis.convertToPixel(1) - xAxis.convertToPixel(0);
+  // Under equal-width days the x axis is linear in display SLOTS, not in the
+  // index (lib/equalWidthDays.ts): cPos / cIdx convert, identity otherwise.
+  const slotGrid = slotGridFor(dataList);
+  const cPos = (c: number): number => (slotGrid ? slotGrid.posOf(c) : c);
+  const cIdx = (p: number): number => (slotGrid ? slotGrid.idxOf(p) : p);
   const lastChartIdx = dataList.length - 1;
-  const edgeChartIdx =
-    barPx > 0
-      ? lastChartIdx + (tagRight - xAxis.convertToPixel(lastChartIdx)) / barPx
-      : lastChartIdx;
+  const lastPos = cPos(lastChartIdx);
+  const barPx = xAxis.convertToPixel(lastChartIdx) - xAxis.convertToPixel(cIdx(lastPos - 1));
+  const edgePos = barPx > 0 ? lastPos + (tagRight - xAxis.convertToPixel(lastChartIdx)) / barPx : lastPos;
+  const edgeChartIdx = cIdx(edgePos);
   // Back into the lines' own space: lineExtent runs the line out to a BAR, and
   // under a timeframe pin that bar is an HTF one.
-  const edgeIdx = stepMap ? stepMap.jAt(edgeChartIdx) : toLine(edgeChartIdx);
+  const edgeIdx = stepMap ? stepMap.jAt(edgePos) : toLine(edgeChartIdx);
   // Steps measure their ends in HTF bars against the last CLOSED bar; the
   // forming bar is added by stepRange, not by a fractional draw edge.
   const extentEdge = stepMap ? lastIdx : drawEdge;
   // The chart positions at the pane's edges, one bar padded, for culling steps.
   const posAtX = (x: number) =>
-    barPx > 0 ? lastChartIdx + (x - xAxis.convertToPixel(lastChartIdx)) / barPx : lastChartIdx;
+    barPx > 0 ? lastPos + (x - xAxis.convertToPixel(lastChartIdx)) / barPx : lastPos;
   const posMin = posAtX(0) - 1;
   const posMax = posAtX(bounding.width) + 1;
 
@@ -3714,14 +3719,15 @@ function drawTrendlines(
       const valueAt = (j: number) => projectAt(line, j);
       const { jTo, endPos } = stepRange(jRight, lastIdx, stepMap);
       const opts = {
-        xOf: (pos: number) => xAxis.convertToPixel(pos), yOf: yPx, posMin, posMax, endPos, flat: flatSteps,
+        xOf: (pos: number) => xAxis.convertToPixel(stepMap.toIndex(pos)), yOf: yPx, posMin, posMax, endPos,
+        flat: flatSteps,
       };
       pieces = buildSteps(stepMap, valueAt, jLeft, jTo, opts);
       stepEndPos = Math.min(
         endPos ?? Infinity,
         Number.isInteger(jTo) ? (stepMap.span(jTo)?.to ?? stepMap.posOf(jTo + 1)) : stepMap.posOf(jTo),
       );
-      x1 = xAxis.convertToPixel(stepEndPos);
+      x1 = xAxis.convertToPixel(stepMap.toIndex(stepEndPos));
       // Just inside the end: exactly on a bar edge reads the next bar.
       y1 = yPx(rampValueAt(stepMap, valueAt, stepEndPos - 1e-6, flatSteps));
       x0 = pieces.length ? pieces[0].x0 : x1;
@@ -3749,7 +3755,8 @@ function drawTrendlines(
       ({ y0, y1 } = endY(jRight, x1));
     }
     // A ramped line's y at chart position c, as its pieces draw it.
-    const stepY = (c: number): number => yPx(rampValueAt(stepMap!, (j) => projectAt(line, j), c, flatSteps));
+    const stepY = (c: number): number =>
+      yPx(rampValueAt(stepMap!, (j) => projectAt(line, j), stepMap!.candlePos(c), flatSteps));
     // Marks (the touch rings) ride the SEGMENT AS DRAWN rather
     // than projecting themselves: under a timeframe pin the index map is only
     // piecewise linear (a weekend compresses on the chart but not in time), so
@@ -3844,7 +3851,7 @@ function drawTrendlines(
         const timestamp = tsAtIndex(timestamps, cc);
         return timestamp === null || !stepMap
           ? null
-          : { timestamp, value: rampValueAt(stepMap, (j) => projectAt(line, j), cc, flatSteps) };
+          : { timestamp, value: rampValueAt(stepMap, (j) => projectAt(line, j), stepMap.candlePos(cc), flatSteps) };
       };
       const toPoint = (x: number): { timestamp: number; value: number } | null => {
         timestamps ??= dataList.map((d) => d.timestamp);
@@ -3864,11 +3871,13 @@ function drawTrendlines(
         clone: (): TrendlineClone | null => {
           if (pieces && stepMap) {
             const jA = Math.floor(jLeft);
-            const a = stepPoint(Math.round(stepMap.posOf(jA) + 0.5));
-            const reachesNow = stepEndPos >= lastChartIdx;
+            // The bar's first candle, and the candle the stroke ends on
+            // (positions back to indices; a slot gap rounds to a real candle).
+            const a = stepPoint(Math.ceil(stepMap.toIndex(stepMap.posOf(jA) + 0.5) - 1e-9));
+            const reachesNow = stepEndPos >= lastPos;
             const b =
               tool === "segment" || !reachesNow
-                ? stepPoint(Math.round(stepEndPos - 0.5))
+                ? stepPoint(Math.floor(stepMap.toIndex(stepEndPos - 0.5) + 1e-9))
                 : stepPoint(lastChartIdx);
             if (!a || !b || a.timestamp === b.timestamp) return null;
             return { tool, points: [a, b] };
