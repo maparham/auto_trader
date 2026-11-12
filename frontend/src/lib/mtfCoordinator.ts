@@ -7,6 +7,8 @@
 // Backend note: /api/candles serves any resolution, so this needs no new
 // endpoint (see [[capital-com-api]] / charting-stack memory).
 
+import { setSlotAnchors } from "./equalWidthDays";
+import { slotAnchorsFor } from "./slotAnchorsFromPins";
 import type { Chart, KLineData } from "klinecharts";
 // RESOLUTION_SECONDS deliberately NOT imported: the HTF width comes from
 // nominalBarHours so a pin ALIAS ("1H") resolves the same as its canonical
@@ -744,6 +746,7 @@ async function applyHtfPin<E extends { mtf?: unknown }>(
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
     write();
+    setSlotAnchors(chart, name, null);
     return;
   }
 
@@ -802,6 +805,8 @@ async function applyHtfPin<E extends { mtf?: unknown }>(
     ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
   };
   write();
+  // Time gaps: a 1D or 1W pin gives the chart its broker's day or week starts.
+  setSlotAnchors(chart, name, slotAnchorsFor(timeframe, (ext.mtf as MtfSeriesBase).htfStarts));
 }
 
 /**

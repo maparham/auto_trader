@@ -29,7 +29,7 @@ vi.mock("../theme", async (importOriginal) => {
 
 // Controlled HTF fetch: each test swaps the implementation.
 const fetchRangeStrict = vi.fn<(...args: unknown[]) => Promise<KLineData[]>>();
-const RES_SECONDS: Record<string, number> = { MINUTE_5: 300, MINUTE_15: 900, HOUR: 3600, HOUR_5: 18_000, MONTH: 2_592_000 };
+const RES_SECONDS: Record<string, number> = { MINUTE_5: 300, MINUTE_15: 900, HOUR: 3600, HOUR_5: 18_000, DAY: 86_400, MONTH: 2_592_000 };
 vi.mock("./feed", () => ({
   fetchRangeStrict: (...args: unknown[]) => fetchRangeStrict(...args),
   RESOLUTION_SECONDS: RES_SECONDS,
@@ -41,6 +41,7 @@ vi.mock("./feed", () => ({
 
 const { applyMaTimeframe, applySlopeTimeframe, applyTrendlinesTimeframe, applyAutoFibTimeframe, refreshMtfIndicators, refreshMtfOnVisibilityChange, setChartIntervalMs } =
   await import("./mtfCoordinator");
+const { slotAnchorsOf } = await import("./equalWidthDays");
 const { TRENDLINES_DEFAULTS, MAX_PAIR_PIVOTS } = await import("./indicators/trendlinesOutputs");
 const { slopeLineSeries } = await import("./indicators/slope");
 
@@ -128,6 +129,21 @@ describe("declared chart interval stamp", () => {
     setChartIntervalMs(b.chart, null);
     await applyEma(b.chart, "MINUTE_15");
     expect((b.overrides.at(-1)!.patch.extendData?.mtf as { chartMs?: number }).chartMs).toBeUndefined();
+  });
+});
+
+describe("time gaps anchors from pins", () => {
+  it("a 1D pin gives the chart its day starts; unpinning takes them back", async () => {
+    fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
+      Promise.resolve(htfPage(fromSec as number, toSec as number)),
+    );
+    const a = fakeChart();
+    await applyEma(a.chart, "DAY");
+    const starts = (a.overrides.at(-1)!.patch.extendData?.mtf as { htfStarts?: number[] }).htfStarts;
+    expect(starts?.length).toBeGreaterThan(0);
+    expect(slotAnchorsOf(a.chart)?.dayStarts).toEqual(starts);
+    await applyEma(a.chart, null);
+    expect(slotAnchorsOf(a.chart)?.dayStarts).toBeUndefined();
   });
 });
 
