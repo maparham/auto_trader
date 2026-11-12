@@ -20,7 +20,8 @@ Owner's ask: no per-broker code; it must work for any broker added later.
   broker whose daily bars the pin loads.
 - A line pinned to 1W is straight too (owner's ask): every week the same
   width.
-- Capital charts look exactly as they do today.
+- Capital charts look as they do today, except that a holiday now shows as
+  an empty day.
 - Setting off: unchanged, pixel for pixel.
 
 ## Non-goals
@@ -49,24 +50,25 @@ Two sources for the day boundaries, in this order:
    daily bars start anyway. For Capital stocks this yields the same days as
    UTC midnight, so nothing moves.
 
-**Weekly pins.** When a Trendlines pane on the chart is pinned to 1W, its
-stash holds the weekly bar starts, and the grid lays the chart out by weeks:
+**Weeks (owner's call: the consistent option).** Under Time gaps the chart is
+always laid out by weeks, pin or no pin:
 
-- The day columns of a week are the day offsets from the week's start that
-  hold candles anywhere in the loaded data (stocks: Mon to Fri; FX: Sun stub
-  to Fri; crypto: all seven), so every week has the same number of columns.
+- The day columns of a week are the weekdays that hold candles anywhere in
+  the loaded data (stocks and FX: Mon to Fri, the FX Sunday-evening open
+  belonging to Monday's broker day; crypto: all seven). Every week has the
+  same number of columns, so a line pinned to 1W is straight.
+- A holiday is an empty column: it shows as a one-day gap. A weekday no week
+  ever trades (the weekend) takes no room. A week with no candles at all (a
+  market closure) takes no room.
+- Week boundaries: the 1W pin's own weekly starts when one is loaded;
+  otherwise a week starts on the first day column (Monday for stocks, FX and
+  crypto alike).
 - Position = weekNum * columns * perDay + column * perDay + slot.
-- A holiday is an empty column: it takes room only inside a weekly layout
-  (my call; that is what makes every week equal). Without a 1W pin, days
-  without candles still take no room.
-- A 1D pin on the same chart stays straight in this layout too (each day is
-  still perDay wide), apart from a kink across an empty holiday column, which
-  the 1D bars skip. Accepted.
-- Weeks with no candles at all (a market closure) take no room.
+- Accepted cost: a 1D pin now kinks across a holiday column, because the
+  daily bars skip holidays. Everywhere else it stays straight.
 
 Everything else is unchanged: slots per day still run from the earliest to the
-latest offset seen (now measured from the day start), days without candles
-take no room, positions are `dayNum * perDay + slot`.
+latest offset seen (now measured from the day start).
 
 ## Left to the builder
 
@@ -80,7 +82,7 @@ take no room, positions are `dayNum * perDay + slot`.
   view should hold its centre candle (the store's `_viewAnchor` already does
   this for data changes; a relayout path may need it too).
 - Which weekly pin wins when two disagree: first, as for days.
-- Tests: weekly layout with a Monday holiday (an empty first column) and the
-  1W line straight; inference on FX-like (24h with a 22:00 to 23:00 pause), stock-like
+- Tests: a Monday holiday as an empty first column; a 1W line straight; the
+  1D line straight on a week without holidays; inference on FX-like (24h with a 22:00 to 23:00 pause), stock-like
   and 24/7 data; the pin path on an FX day; Capital-like data giving today's
   positions exactly; setting off unchanged.
