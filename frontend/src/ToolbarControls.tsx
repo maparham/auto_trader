@@ -302,7 +302,16 @@ export function IntervalControls({
 // FOCUSED cell's axis and survive toolbar remounts (the Toolbar/SnapshotToolbar
 // swap) — toolbar-local state here would go stale and autoFit would write the
 // stale scale type back onto the chart.
-export function ScaleControls({ controller }: { controller: ChartController | null }) {
+export function ScaleControls({
+  controller,
+  equalWidthDays = false,
+  onToggleEqualWidthDays,
+}: {
+  controller: ChartController | null;
+  // "G" equal-width days (gaps), a GLOBAL setting (theme.ts), not per cell.
+  equalWidthDays?: boolean;
+  onToggleEqualWidthDays?: () => void;
+}) {
   const chart = controller?.chart ?? null;
 
   // "A" auto-scale mode (on = highlighted).
@@ -393,6 +402,22 @@ export function ScaleControls({ controller }: { controller: ChartController | nu
           I
         </button>
       </Tooltip>
+      {onToggleEqualWidthDays && (
+        <Tooltip
+          content={[
+            "Equal-width days: every day on an intraday chart the same width.",
+            "Missing hours show as gaps; lines pinned to 1D come out straight.",
+          ]}
+        >
+          <button
+            className={equalWidthDays ? "on" : ""}
+            aria-label="Equal-width days"
+            onClick={onToggleEqualWidthDays}
+          >
+            G
+          </button>
+        </Tooltip>
+      )}
       <Tooltip
         content="Stretch price scale (candles fill the pane)"
         note="Double-click the price axis to cycle"

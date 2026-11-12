@@ -37,6 +37,9 @@ interface Props {
   onSelectBroker: (broker: string) => void;
   maximized: boolean;
   onToggleMaximize: () => void;
+  // Equal-width days (global setting), shown as "G" beside A / L / I.
+  equalWidthDays?: boolean;
+  onToggleEqualWidthDays?: () => void;
 }
 
 export default function SnapshotToolbar({
@@ -49,6 +52,8 @@ export default function SnapshotToolbar({
   onSelectBroker,
   maximized,
   onToggleMaximize,
+  equalWidthDays,
+  onToggleEqualWidthDays,
 }: Props) {
   // Same blank-workspace guard as the full Toolbar (shouldn't happen — a
   // snapshot view always has a symbol/period — but keeps the types honest).
@@ -71,7 +76,11 @@ export default function SnapshotToolbar({
 
       <span className="tb-div" aria-hidden="true" />
 
-      <ScaleControls controller={controller} />
+      <ScaleControls
+        controller={controller}
+        equalWidthDays={equalWidthDays}
+        onToggleEqualWidthDays={onToggleEqualWidthDays}
+      />
 
       {/* Broker selector — ONLY when maximized (the tab bar's copy is hidden
           then), mirroring the full Toolbar. */}

@@ -90,3 +90,26 @@ describe("ScaleControls stretch toggle", () => {
     expect(mount().controller.priceFitMode.value).toBe("default");
   });
 });
+
+describe("ScaleControls equal-width days toggle", () => {
+  it("shows the global setting and flips it", async () => {
+    const user = userEvent.setup();
+    const controller = new ChartController("cell-1", SCOPE);
+    let on = false;
+    const toggle = () => { on = !on; };
+    const { rerender } = render(
+      <ScaleControls controller={controller} equalWidthDays={on} onToggleEqualWidthDays={toggle} />,
+    );
+    const btn = () => screen.getByRole("button", { name: "Equal-width days" }) as HTMLButtonElement;
+    expect(btn().className).not.toContain("on");
+    await user.click(btn());
+    expect(on).toBe(true);
+    rerender(<ScaleControls controller={controller} equalWidthDays={on} onToggleEqualWidthDays={toggle} />);
+    expect(btn().className).toContain("on");
+  });
+
+  it("is absent without a handler", () => {
+    render(<ScaleControls controller={new ChartController("cell-1", SCOPE)} />);
+    expect(screen.queryByRole("button", { name: "Equal-width days" })).toBeNull();
+  });
+});

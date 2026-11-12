@@ -139,6 +139,9 @@ interface Props {
   // flips it back. Backtest also lives here now so it stays reachable when maxed.
   maximized: boolean;
   onToggleMaximize: () => void;
+  // Equal-width days (global setting), shown as "G" beside A / L / I.
+  equalWidthDays?: boolean;
+  onToggleEqualWidthDays?: () => void;
 }
 
 /** 16px sliders glyph for the Admin item in the Clerk account menu. Sized and
@@ -165,6 +168,8 @@ export default function Toolbar({
   onSelectBroker,
   maximized,
   onToggleMaximize,
+  equalWidthDays,
+  onToggleEqualWidthDays,
 }: Props) {
   // The toolbar drives the focused cell's chart + overlays. (A cell restored
   // FROM a snapshot never reaches this component — App renders SnapshotToolbar
@@ -603,7 +608,11 @@ export default function Toolbar({
       )}
 
       {/* Price-scale A / L / I (auto-fit, logarithmic, invert) */}
-      <ScaleControls controller={controller} />
+      <ScaleControls
+        controller={controller}
+        equalWidthDays={equalWidthDays}
+        onToggleEqualWidthDays={onToggleEqualWidthDays}
+      />
 
       {/* Snapshots: ONE split control. The camera face saves instantly; the
           slim caret on its right edge opens the gallery. Sits just before the

@@ -985,6 +985,8 @@ export default function App() {
           onSelectBroker={selectBroker}
           maximized={maximized}
           onToggleMaximize={() => setMaximized((m) => !m)}
+          equalWidthDays={settings.equalWidthDays}
+          onToggleEqualWidthDays={() => setSettings((s) => ({ ...s, equalWidthDays: !s.equalWidthDays }))}
         />
       ) : (
         <Toolbar
@@ -999,6 +1001,8 @@ export default function App() {
           onSelectBroker={selectBroker}
           maximized={maximized}
           onToggleMaximize={() => setMaximized((m) => !m)}
+          equalWidthDays={settings.equalWidthDays}
+          onToggleEqualWidthDays={() => setSettings((s) => ({ ...s, equalWidthDays: !s.equalWidthDays }))}
         />
       )}
       <div className={`workspace${dockMaximized ? " dock-hidden" : ""}`}>
