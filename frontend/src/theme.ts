@@ -103,6 +103,8 @@ export interface Settings {
   // candles in their time slots, missing periods as gaps. Display only.
   // Default off. See lib/equalWidthDays.ts.
   equalWidthDays: boolean;
+  // Default distance for new SL/TP proximity warnings, in ATR(14) of 15m candles.
+  proximityAtrMult: number;
   // Which side of the spread candles render from (bid/mid/ask). Global.
   priceSide: PriceSide;
   // Live bid & ask display: off / axis labels / labels + lines. Global.
@@ -221,6 +223,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dateFormat: "ymd",
   showWeekday: true,
   equalWidthDays: false,
+  proximityAtrMult: 0.5,
   priceSide: "mid",
   bidAsk: "off",
   bidAskStyle: DEFAULT_BID_ASK_STYLE,

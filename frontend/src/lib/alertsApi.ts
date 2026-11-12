@@ -267,6 +267,24 @@ export function normalizeAlert(
 }
 
 // One record per alert firing, across all symbols (History tab, newest first).
+/** A server-evaluated SL/TP proximity alert; `account` is the exec key. */
+export interface PositionAlert {
+  kind: "position";
+  id: string;
+  account: string;
+  epic: string;
+  dealId: string;
+  side: "sl" | "tp";
+  atrMult: number;
+  notify: AlertNotifyChannels;
+  createdAt?: number;
+  precision?: number;
+  level?: number | null;
+  distanceAtr?: number | null;
+  fired?: boolean;
+  trailing?: boolean;
+}
+
 export interface TriggeredAlert {
   time: number;
   epic: string;
@@ -305,6 +323,8 @@ export interface FiredPayload {
   kind?: string;
   headline?: string;
   account?: string;
+  /** Present on a position-alert firing (`kind: "position"`). */
+  side?: "sl" | "tp";
   metric?: AccountMetric;
   tierLabel?: TierLabel;
   critical?: boolean;
@@ -330,6 +350,10 @@ interface AlertRow {
   status?: "ok" | "waiting_for_data";
   label?: string;
   current?: number | null;
+  level?: number | null;
+  distanceAtr?: number | null;
+  fired?: boolean;
+  trailing?: boolean;
   firedTiers?: number[];
   monitored?: boolean;
   unmonitoredReason?: string | null;
@@ -472,6 +496,9 @@ let indicatorCache = new Map<string, ServerAlert>();
 // Map<id, AccountAlert>: account alerts live apart from the price/indicator/line
 // caches since they key off `account` (an exec key), not an epic.
 let accountCache = new Map<string, AccountAlert>();
+// Map<id, PositionAlert>: SL/TP proximity alerts, keyed off an exec account
+// and a dealId, so they never touch the price/indicator caches.
+let positionCache = new Map<string, PositionAlert>();
 let triggeredCache: TriggeredAlert[] = [];
 let triggeredSeenCache = 0;
 
@@ -494,6 +521,26 @@ function rowToAccountAlert(row: AlertRow): AccountAlert {
     monitored: row.monitored,
     unmonitoredReason: row.unmonitoredReason,
     currency: row.currency,
+  };
+}
+
+function rowToPositionAlert(row: AlertRow): PositionAlert {
+  const p = row.params as { dealId: string; side: "sl" | "tp"; atrMult: number };
+  return {
+    kind: "position",
+    id: row.id,
+    account: row.broker,
+    epic: row.epic,
+    dealId: p.dealId,
+    side: p.side,
+    atrMult: p.atrMult,
+    notify: { ...ALL_CHANNELS, ...(row.notify ?? {}) },
+    createdAt: row.created_at,
+    precision: row.precision,
+    level: row.level,
+    distanceAtr: row.distanceAtr,
+    fired: row.fired,
+    trailing: row.trailing,
   };
 }
 
@@ -577,9 +624,12 @@ export function hydrateAlerts(): Promise<void> {
         const next = new Map<string, Map<string, SavedAlert[]>>();
         const nextInd = new Map<string, ServerAlert>();
         const nextAcct = new Map<string, AccountAlert>();
+        const nextPos = new Map<string, PositionAlert>();
         for (const row of body.alerts) {
           if (row.kind === "account") {
             nextAcct.set(row.id, rowToAccountAlert(row));
+          } else if (row.kind === "position") {
+            nextPos.set(row.id, rowToPositionAlert(row));
           } else if (row.kind === "indicator") {
             nextInd.set(row.id, rowToIndicatorAlert(row));
           } else if (row.kind === "line") {
@@ -598,6 +648,7 @@ export function hydrateAlerts(): Promise<void> {
         else {
           indicatorCache = nextInd;
           accountCache = nextAcct;
+          positionCache = nextPos;
         }
       }
       if (triggeredRes.ok) {
@@ -707,6 +758,16 @@ export function loadAccountAlerts(account?: string): AccountAlert[] {
 
 export function findAccountAlert(id: string): AccountAlert | undefined {
   return accountCache.get(id);
+}
+
+export function loadPositionAlerts(account?: string): PositionAlert[] {
+  const all = [...positionCache.values()];
+  return account ? all.filter((a) => a.account === account) : all;
+}
+
+export function findPositionAlert(dealId: string, side: "sl" | "tp"): PositionAlert | undefined {
+  for (const a of positionCache.values()) if (a.dealId === dealId && a.side === side) return a;
+  return undefined;
 }
 
 // --- optimistic writes -------------------------------------------------------
@@ -1119,6 +1180,63 @@ export async function patchAccountAlert(
 
 export function deleteAccountAlert(id: string): void {
   if (!accountCache.delete(id)) return;
+  bumpAlerts();
+  indWriteStart();
+  void sendJson(`/api/alerts/${encodeURIComponent(id)}`, "DELETE", undefined).then((res) => {
+    indWriteSettled();
+    if (res && !res.ok && res.status !== 404) void resyncAlerts();
+  });
+}
+
+async function failureDetail(res: Response | null): Promise<string> {
+  let detail = "";
+  try {
+    detail = res ? ((await res.json()) as { detail?: string }).detail ?? "" : "";
+  } catch { /* non-JSON error body */ }
+  return detail || "Alert save failed";
+}
+
+/** Create an SL/TP alert. null = saved, else the server's detail (no toast). */
+export async function addPositionAlert(a: {
+  id?: string; account: string; epic: string; dealId: string; side: "sl" | "tp"; atrMult: number; precision: number;
+}): Promise<string | null> {
+  const id = a.id ?? `al-${Math.random().toString(36).slice(2, 10)}`;
+  indWriteStart();
+  const res = await sendJson("/api/alerts", "POST", {
+    id, broker: a.account, epic: a.epic, kind: "position",
+    params: { dealId: a.dealId, side: a.side, atrMult: a.atrMult }, precision: a.precision,
+  });
+  indWriteSettled();
+  if (res?.ok) {
+    try {
+      positionCache.set(id, rowToPositionAlert((await res.json()) as AlertRow));
+    } catch { void resyncAlerts(); }
+    bumpAlerts();
+    return null;
+  }
+  return failureDetail(res);
+}
+
+export async function patchPositionAlert(id: string, atrMult: number): Promise<string | null> {
+  const prev = positionCache.get(id);
+  if (!prev) return "Alert not found";
+  indWriteStart();
+  const res = await sendJson(`/api/alerts/${encodeURIComponent(id)}`, "PATCH", {
+    params: { dealId: prev.dealId, side: prev.side, atrMult },
+  });
+  indWriteSettled();
+  if (res?.ok) {
+    try {
+      positionCache.set(id, rowToPositionAlert((await res.json()) as AlertRow));
+    } catch { void resyncAlerts(); }
+    bumpAlerts();
+    return null;
+  }
+  return failureDetail(res);
+}
+
+export function deletePositionAlert(id: string): void {
+  if (!positionCache.delete(id)) return;
   bumpAlerts();
   indWriteStart();
   void sendJson(`/api/alerts/${encodeURIComponent(id)}`, "DELETE", undefined).then((res) => {

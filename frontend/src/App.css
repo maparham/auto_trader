@@ -5627,6 +5627,7 @@
 .trade-line-grab canvas { cursor: ns-resize !important; }
 
 .setting-hint { font-size: 11px; color: var(--text-faint); line-height: 1.45; margin-top: 2px; }
+.setting-unit { font-size: 11px; color: var(--text-faint); margin-left: 6px; }
 
 .num-input {
   background: var(--input-bg); color: var(--text); border: 1px solid var(--border);

@@ -710,6 +710,27 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
               the new price immediately instead of showing Apply / Discard.
             </div>
 
+            <div className="setting-sub">Position warnings</div>
+            <div className="setting-row">
+              <label className="label-info">
+                Warn near SL/TP
+                <InfoTip text={["Default distance for new SL/TP warnings.", "Measured in ATR(14) of 15m candles."]} />
+              </label>
+              <input
+                className="num-input"
+                type="number"
+                min="0.05"
+                max="5"
+                step="0.05"
+                value={settings.proximityAtrMult}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v) && v >= 0.05 && v <= 5) onChange({ ...settings, proximityAtrMult: v });
+                }}
+              />
+              <span className="setting-unit">× ATR</span>
+            </div>
+
             <div className="setting-sub">Paper account</div>
             <div className="setting-hint">
               Used only to estimate the order ticket's margin / trade value /
