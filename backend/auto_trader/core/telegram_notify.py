@@ -27,7 +27,7 @@ import json
 import logging
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Awaitable, Callable
@@ -167,6 +167,13 @@ class AlertHooks:
     - `snooze(user_id, alert_id, seconds)` — mute an `every` alert's firings.
     - `delete(user_id, alert_id)` -> bool — remove an alert (the hook resolves
       the row's broker/epic itself for the tab broadcast).
+    - `describe_removal(user_id, token)` -> str | None — the confirm question
+      for a position alert's Remove button (`Remove SL on US100 long (SL
+      18210.0)?`); None when the token is unknown, expired or not this
+      user's. Never consumes the token.
+    - `remove_level(user_id, token)` -> str — the Yes tap: removes the SL/TP
+      on the broker after every safety check and answers with the outcome.
+    Both default to None (not wired): the Remove button is then not offered.
     """
 
     get_candles: Callable[[str, str, str, int], Awaitable[list[Any]]]
@@ -174,6 +181,8 @@ class AlertHooks:
     rearm: Callable[[str, dict], Awaitable[dict | None]]
     snooze: Callable[[str, str, float], None]
     delete: Callable[[str, str], Awaitable[bool]]
+    describe_removal: Callable[[str, str], Awaitable[str | None]] | None = field(default=None)
+    remove_level: Callable[[str, str], Awaitable[str]] | None = field(default=None)
 
 
 class TelegramNotify:
@@ -294,8 +303,18 @@ class TelegramNotify:
             # Account alerts have no chart and no epic: text only, no buttons.
             await self.send(chat_id, _account_text(payload))
             return
-        caption = await self._build_caption(payload)
-        markup = self._buttons_for(payload)
+        if payload.get("kind") == "position":
+            # SL/TP proximity warning: the watch's headline, a 15m chart of
+            # the data broker (payload `broker`), and a Remove button.
+            payload = {**payload, "timeframe": _DEFAULT_TIMEFRAME}
+            lines = [f"🔔 {payload.get('headline') or ''}"]
+            if payload.get("message"):
+                lines.append(str(payload["message"]))
+            caption = "\n".join(lines)
+            markup = self._remove_button(payload)
+        else:
+            caption = await self._build_caption(payload)
+            markup = self._buttons_for(payload)
 
         # Best effort, richest first: photo with the chart snapshot, then plain
         # text with buttons, then bare text. The alert message must go out even
@@ -416,6 +435,22 @@ class TelegramNotify:
                 payload.get("broker"), payload.get("epic"), self._scrub(str(exc)),
             )
             return None
+
+    def _remove_button(self, payload: dict) -> dict | None:
+        """`Remove SL` / `Remove TP` for a position warning, carrying only the
+        watch's 8-char token. None when the removal hooks aren't wired or the
+        fire has no token."""
+        if self._hooks is None or self._hooks.describe_removal is None:
+            return None
+        token = payload.get("removeToken")
+        side = payload.get("side")
+        if not token or side not in ("sl", "tp"):
+            return None
+        data = f"pr:{token}"
+        if len(data.encode()) > _CALLBACK_DATA_MAX:
+            return None
+        text = "Remove SL" if side == "sl" else "Remove TP"
+        return {"inline_keyboard": [[{"text": text, "callback_data": data}]]}
 
     def _buttons_for(self, payload: dict) -> dict | None:
         """Inline keyboard for a firing: Re-arm for `once` alerts (which just
@@ -538,7 +573,41 @@ class TelegramNotify:
         if action == "del" and arg:
             deleted = await self._hooks.delete(user_id, arg)
             return ("🗑 Alert deleted." if deleted else "Alert is already gone."), deleted
+        if action in ("pr", "pry", "prn") and arg:
+            return await self._position_remove(chat_id, user_id, action, arg)
         return "Unknown action.", False
+
+    async def _position_remove(
+        self, chat_id: str, user_id: str, action: str, token: str
+    ) -> tuple[str, bool]:
+        """Remove SL/TP flow. `pr:` sends a NEW confirm message (the token is
+        only peeked, so Cancel then Remove again works); `pry:` is the Yes,
+        whose hook does every safety check and consumes the token; `prn:`
+        clears the confirm's buttons. The confirm's buttons are cleared after
+        any Yes outcome: the token is spent either way (a wrong-chat tap
+        leaves the token, and only clears that chat's own copy)."""
+        hooks = self._hooks
+        assert hooks is not None
+        if hooks.describe_removal is None or hooks.remove_level is None:
+            return "Alert actions aren't available right now.", False
+        if action == "prn":
+            return "Cancelled", True
+        if action == "pr":
+            question = await hooks.describe_removal(user_id, token)
+            if question is None:
+                return "This warning was already used or has expired", False
+            what = "TP" if question.startswith("Remove TP") else "SL"
+            markup = {"inline_keyboard": [[
+                {"text": f"Yes, remove {what}", "callback_data": f"pry:{token}"},
+                {"text": "Cancel", "callback_data": f"prn:{token}"},
+            ]]}
+            if any(len(b["callback_data"].encode()) > _CALLBACK_DATA_MAX
+                   for b in markup["inline_keyboard"][0]):
+                return "This warning was already used or has expired", False
+            await self.send(chat_id, question, markup)
+            return "Confirm below", False
+        answer = await hooks.remove_level(user_id, token)
+        return answer, True
 
     async def _rearm_from_triggered(self, user_id: str, rowid: int) -> tuple[str, bool]:
         row = await self._store.get_triggered_row(rowid)

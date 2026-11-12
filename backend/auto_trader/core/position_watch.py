@@ -22,7 +22,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 from auto_trader.core.alert_store import AlertStore
 from auto_trader.core.position_alert_kind import (
@@ -54,6 +54,23 @@ class Snap:
     trailing: bool
     upnl: float | None
     currency: str | None
+
+
+class RemoveToken(NamedTuple):
+    """What a Remove button's 8-char token stands for. The first seven fields
+    keep their old tuple positions; `precision`, `epic` and `direction`
+    ("BUY"/"SELL") were added for the Telegram confirm text and the
+    level-unchanged check."""
+    user_id: str
+    alert_id: str
+    account: str
+    deal_id: str
+    side: str
+    level: float
+    minted_at: float
+    precision: int = 2
+    epic: str = ""
+    direction: str = ""
 
 
 def _snap_of(p: Any) -> Snap:
@@ -108,7 +125,7 @@ class PositionWatch:
         self._by_feed: dict[Pair, list[tuple[str, str, str]]] = {}
         self._atr: dict[Pair, float] = {}
         self._atr_bucket: dict[Pair, int] = {}
-        self._tokens: dict[str, tuple[str, str, str, str, str, float, float]] = {}
+        self._tokens: dict[str, RemoveToken] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._started = False
         self._listening: set[int] = set()
@@ -402,7 +419,8 @@ class PositionWatch:
         data_broker = data_broker_of(account)
         # Minted before any await, from what this fire already holds: the
         # row may be deleted while add_triggered runs.
-        token = self._mint(user_id, row["id"], account, row["params"]["dealId"], side, level)
+        token = self._mint(user_id, row["id"], account, row["params"]["dealId"], side, level,
+                           precision=precision, epic=snap.epic, direction=snap.side)
         triggered_id: int | None
         try:
             triggered_id = await self._store.add_triggered(user_id, {
@@ -472,25 +490,46 @@ class PositionWatch:
     def mint_remove_token(self, user_id: str, alert_id: str, level: float) -> str:
         found = self._find(user_id, alert_id)
         account, deal, side = "", "", ""
+        precision, epic, direction = _precision({}, level), "", ""
         if found is not None:
             account, row = found
             deal, side = row["params"]["dealId"], row["params"]["side"]
-        return self._mint(user_id, alert_id, account, deal, side, level)
+            precision = _precision(row, level)
+            snap = self._snap.get((account, deal))
+            if snap is not None:
+                epic, direction = snap.epic, snap.side
+        return self._mint(user_id, alert_id, account, deal, side, level,
+                          precision=precision, epic=epic, direction=direction)
 
-    def _mint(self, user_id: str, alert_id: str, account: str, deal: str, side: str, level: float) -> str:
+    def _mint(self, user_id: str, alert_id: str, account: str, deal: str, side: str, level: float,
+              *, precision: int = 2, epic: str = "", direction: str = "") -> str:
         now = self._clock()
-        for tok in [t for t, v in self._tokens.items() if now - v[6] > TOKEN_TTL_S]:
+        for tok in [t for t, v in self._tokens.items() if now - v.minted_at > TOKEN_TTL_S]:
             del self._tokens[tok]
         tok = secrets.token_urlsafe(6)  # 6 bytes -> 8 url-safe chars
         while tok in self._tokens:
             tok = secrets.token_urlsafe(6)
-        self._tokens[tok] = (user_id, alert_id, account, deal, side, level, now)
+        self._tokens[tok] = RemoveToken(user_id, alert_id, account, deal, side, level, now,
+                                        precision, epic, direction)
         return tok
 
-    def take_remove_token(self, token: str) -> tuple[str, str, str, str, str, float, float] | None:
+    def peek_remove_token(self, token: str) -> RemoveToken | None:
+        """The token's entry WITHOUT consuming it: the Remove tap only asks
+        for confirmation, and the user may cancel and tap Remove again."""
+        return self._tokens.get(token)
+
+    def take_remove_token(self, token: str) -> RemoveToken | None:
         """Single use: the entry is gone after the first take. Age checks
         (600 s) are the caller's, from the returned minted_at."""
         return self._tokens.pop(token, None)
+
+    def now(self) -> float:
+        """The watch's clock (injected in tests), the one token ages are
+        measured on."""
+        return self._clock()
+
+    def has_alert(self, user_id: str, alert_id: str) -> bool:
+        return self._find(user_id, alert_id) is not None
 
 
 POSITION_WATCH = PositionWatch()

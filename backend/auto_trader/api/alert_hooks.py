@@ -12,14 +12,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from auto_trader.api import deps
-from auto_trader.api.auth import auth_enabled
+from auto_trader.api.auth import auth_enabled, can_deal_from_telegram
 from auto_trader.core.account_monitor import ACCOUNT_MONITOR
 from auto_trader.core.alert_engine import ALERT_ENGINE
 from auto_trader.core.alert_kinds import upgrade_params
 from auto_trader.core.alert_store import ALERT_STORE
-from auto_trader.core.models import Candle
+from auto_trader.core.models import Candle, OrderStatus
+from auto_trader.core.position_watch import POSITION_WATCH, TOKEN_TTL_S, PositionWatch
 from auto_trader.core.telegram_notify import AlertHooks
 
 log = logging.getLogger(__name__)
@@ -101,10 +105,15 @@ async def _rearm(user_id: str, row: dict) -> dict | None:
 
 
 def _registry_for(kind: str | None):
-    """Account alerts belong to the monitor; the price engine must never see
-    them (it would open a feed for ("capital-live:live", "")). Mirrors the
-    router's `_notify` dispatch."""
-    return ACCOUNT_MONITOR if kind == "account" else ALERT_ENGINE
+    """Account alerts belong to the monitor and position alerts to the
+    position watch; the price engine must never see either (it would open a
+    feed for ("capital-live:live", "")). Mirrors the router's `_notify`
+    dispatch."""
+    if kind == "account":
+        return ACCOUNT_MONITOR
+    if kind == "position":
+        return POSITION_WATCH
+    return ALERT_ENGINE
 
 
 def _snooze(user_id: str, alert_id: str, seconds: float) -> None:
@@ -124,11 +133,119 @@ async def _delete(user_id: str, alert_id: str) -> bool:
     return deleted
 
 
+# ---- Telegram "Remove SL/TP" (a real dealing action) ----
+
+UNKNOWN_TOKEN = "This warning was already used or has expired"
+GATE_REFUSED = "Removing a stop from Telegram needs your user id in ADMIN_USER_IDS"
+TOO_OLD = "This warning is too old (over 10 minutes)"
+CLOSED = "Position is already closed"
+TRAILING = "Trailing stop: remove it in the broker"
+ALERT_GONE = "This alert was deleted"
+_MODIFY_TIMEOUT_S = 20.0
+_REASON_MAX = 150
+
+
+def _label(side: str) -> str:
+    return "SL" if side == "sl" else "TP"
+
+
+class PositionRemoval:
+    """The two hooks behind a position alert's Remove button: `describe`
+    (the confirm question, on the Remove tap) and `remove` (the Yes tap).
+
+    Token rules: `describe` only peeks. `remove` refuses a token that is not
+    this chat user's WITHOUT consuming it (a stranger's tap must not burn the
+    owner's warning), and consumes it on every other attempt, refused or not,
+    so a stale or changed warning can never be retried into a removal.
+
+    Dependencies are injected so tests run it over a fake broker and clock;
+    `build_alert_hooks` wires the app singletons."""
+
+    def __init__(
+        self, *, watch: PositionWatch, get_exec: Callable[[str], Any],
+        delete: Callable[[str, str], Awaitable[bool]], can_deal: Callable[[str], bool],
+    ) -> None:
+        self._watch = watch
+        self._get_exec = get_exec
+        self._delete = delete
+        self._can_deal = can_deal
+
+    def _fresh(self, tok) -> bool:
+        return self._watch.now() - tok.minted_at <= TOKEN_TTL_S
+
+    async def describe(self, user_id: str, token: str) -> str | None:
+        tok = self._watch.peek_remove_token(token)
+        if tok is None or tok.user_id != user_id or not self._fresh(tok):
+            return None
+        what = _label(tok.side)
+        direction = {"BUY": "long", "SELL": "short"}.get(tok.direction, "")
+        target = " ".join(p for p in (tok.epic, direction) if p) or "this position"
+        return f"Remove {what} on {target} ({what} {tok.level:.{tok.precision}f})?"
+
+    async def remove(self, user_id: str, token: str) -> str:
+        peeked = self._watch.peek_remove_token(token)
+        if peeked is None or peeked.user_id != user_id:
+            return UNKNOWN_TOKEN
+        tok = self._watch.take_remove_token(token)
+        if tok is None:  # taken between the peek and here
+            return UNKNOWN_TOKEN
+        what = _label(tok.side)
+        if not self._can_deal(user_id):
+            return GATE_REFUSED
+        if not self._fresh(tok):
+            return TOO_OLD
+        try:
+            snap = await self._watch.snapshot(tok.account, tok.deal_id)
+        except Exception:
+            log.warning("telegram remove: snapshot failed for %s", tok.account, exc_info=True)
+            return f"Couldn't remove {what}: broker unreachable"
+        if snap is None:
+            return CLOSED
+        current = snap.sl if tok.side == "sl" else snap.tp
+        tol = 0.5 * 10 ** -tok.precision
+        if current is None or not math.isclose(current, tok.level, rel_tol=0, abs_tol=tol):
+            return f"{what} has changed since this warning"
+        if not self._watch.has_alert(user_id, tok.alert_id):
+            return ALERT_GONE
+        if snap.trailing:
+            return TRAILING
+        kwargs = {"clear_stop": True} if tok.side == "sl" else {"clear_take_profit": True}
+        try:
+            result = await asyncio.wait_for(
+                self._get_exec(tok.account).modify_position(tok.deal_id, **kwargs),
+                timeout=_MODIFY_TIMEOUT_S,
+            )
+        except Exception as exc:
+            log.warning("telegram remove: modify failed for %s", tok.account, exc_info=True)
+            reason = str(exc) or type(exc).__name__
+            return f"Couldn't remove {what}: {reason[:_REASON_MAX]}"
+        if result.status in (OrderStatus.REJECTED, OrderStatus.UNKNOWN):
+            reason = result.reason or (
+                "rejected" if result.status is OrderStatus.REJECTED else "result unknown, check the broker"
+            )
+            return f"Couldn't remove {what}: {reason[:_REASON_MAX]}"
+        log.info("telegram remove: %s cleared on %s deal %s by %s", what, tok.account, tok.deal_id, user_id)
+        try:
+            await self._delete(user_id, tok.alert_id)
+        except Exception:
+            # The level is gone on the broker; the watch's next poll deletes
+            # the row anyway, so this must not turn a success into an error.
+            log.warning("telegram remove: alert delete failed user=%s alert=%s",
+                        user_id, tok.alert_id, exc_info=True)
+        return f"{what} removed ✓"
+
+
 def build_alert_hooks() -> AlertHooks:
+    removal = PositionRemoval(
+        watch=POSITION_WATCH, get_exec=deps.get_exec, delete=_delete,
+        can_deal=can_deal_from_telegram,
+    )
     return AlertHooks(
         get_candles=_get_candles,
         get_positions=_get_positions,
         rearm=_rearm,
         snooze=_snooze,
         delete=_delete,
+        describe_removal=removal.describe,
+        remove_level=removal.remove,
     )

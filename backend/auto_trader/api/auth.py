@@ -84,6 +84,17 @@ def is_admin_claims(claims: dict) -> bool:
     return isinstance(sub, str) and sub in _csv_env(ADMIN_USER_IDS_ENV)
 
 
+def can_deal_from_telegram(user_id: str) -> bool:
+    """Whether a Telegram-linked user may deal (remove an SL/TP) from a bot
+    button. A callback carries no Clerk JWT, so the in-app gate (which can
+    match on the email claim) cannot run: local dev (auth off) may always
+    deal, hosted mode only a user id listed in ADMIN_USER_IDS. Admins listed
+    only by email are refused on purpose; no Clerk lookup on this path."""
+    if not auth_enabled():
+        return True
+    return bool(user_id) and user_id in _csv_env(ADMIN_USER_IDS_ENV)
+
+
 IMPERSONATE_HEADER = "X-Impersonate-User"
 IMPERSONATE_PARAM = "impersonate"
 
