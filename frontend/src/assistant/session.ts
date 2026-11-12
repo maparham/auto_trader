@@ -1,6 +1,6 @@
 // The assistant's conversation loop. One session per chart cell (sessionFor),
 // mirrored to sessionStorage under that cell's key; it acts only while its
-// own cell is focused, and moves with the assistant when its own
+// own cell is focused (waiting, untouched, while another one is), and moves with the assistant when its own
 // market_select lands on another cell. Invariant: no new user content is ever appended while the
 // last assistant message holds a tool_use without a result (closePending is
 // the one place that invariant gets restored, from send/retry/undoLast alike).
@@ -23,7 +23,8 @@ const ASK_NOT_RUN = "not run: the assistant stopped to ask the user";
 export type TurnError = {
   kind: "upstream" | "network" | "refusal" | "max_tokens" | "rounds" | "stopped";
   status?: number; body?: string;
-  /** For "stopped": "switch" when the user focused another chart mid-reply. */
+  /** For "stopped": "switch" on turns saved before a switch made the chat
+   * wait for its chart instead of stopping; still rendered and closed. */
   cause?: "switch";
 };
 export type Turn =
@@ -109,6 +110,9 @@ function stopReason(err: TurnError | undefined): string {
   return err.cause === "switch" ? "stopped: the user switched to another chart" : "stopped by the user";
 }
 
+/** How often a chat waiting for its chart checks whether it is focused again. */
+const FOCUS_POLL_MS = 200;
+
 export const sessionKey = (cellId: string) => `${KEY}.${cellId}`;
 
 export function createSession(deps: SessionDeps) {
@@ -126,13 +130,35 @@ export function createSession(deps: SessionDeps) {
       return fresh();
     }
   }
+  // Set once the session is dropped (its cell closed, or another chat
+  // rebound onto that cell): a loop still unwinding must not write the key.
+  let disposed = false;
   function save(s: SessionState) {
     state.set(s);
+    if (disposed) return;
     try {
       deps.storage.setItem(sessionKey(cell), JSON.stringify({ ...s, busy: false, working: null }));
     } catch { /* storage full or blocked: the session still works in memory */ }
   }
   const patch = (p: Partial<SessionState>) => save({ ...state.value, ...p });
+
+  /** Resolves once this chat's own cell is focused; rejects on abort. */
+  const waitForFocus = (signal: AbortSignal) => new Promise<void>((resolve, reject) => {
+    const aborted = () => { clearTimeout(timer); reject(new DOMException("aborted", "AbortError")); };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
+      if (signal.aborted) return;
+      if (deps.focusedCell() === cell) {
+        signal.removeEventListener("abort", aborted);
+        resolve();
+        return;
+      }
+      timer = setTimeout(tick, FOCUS_POLL_MS);
+    };
+    if (signal.aborted) return aborted();
+    signal.addEventListener("abort", aborted, { once: true });
+    tick();
+  });
 
   /** The assistant's own market_select focused another cell: the conversation
    * goes with it, so the next tool's focus check passes and the panel keeps
@@ -261,10 +287,11 @@ export function createSession(deps: SessionDeps) {
           }
           if (deps.focusedCell() !== cell) {
             // The user focused another chart: every tool acts on the focused
-            // one, so stop here; the rest closes as not run on the next send.
-            patch({ pending: { toolUseIds: uses.slice(i).map((x) => x.id), heldResults: [...results], askId: null } });
-            updateLastTurn((t) => ({ ...t, error: { kind: "stopped", cause: "switch" } }));
-            return;
+            // one, so this chat waits, untouched, until its own chart is
+            // focused again (Stop still ends it). The panel meanwhile shows
+            // the other chart's chat.
+            patch({ working: null, pending: { toolUseIds: uses.slice(i).map((x) => x.id), heldResults: [...results], askId: null } });
+            await waitForFocus(signal);
           }
           patch({ working: u.name, pending: { toolUseIds: uses.slice(i).map((x) => x.id), heldResults: [...results], askId: null } });
           const r = await deps.exec(u.name, u.input, { progress: () => {}, signal });
@@ -484,6 +511,12 @@ export function createSession(deps: SessionDeps) {
     return "sent";
   }
 
+  /** Stop for good and never touch storage again. */
+  function dispose() {
+    disposed = true;
+    abort?.abort();
+  }
+
   function reset() {
     abort?.abort();
     deps.storage.removeItem(sessionKey(cell));
@@ -491,7 +524,7 @@ export function createSession(deps: SessionDeps) {
   }
 
   return {
-    state, send, retry, stop, undoLast, redoLast, editFrom, reset,
+    state, send, retry, stop, undoLast, redoLast, editFrom, reset, dispose,
     get cellId() { return cell; },
   };
 }
@@ -529,6 +562,10 @@ export function sessionFor(cellId: string): Session {
       onRebind: (from, to) => {
         const moved = sessions.get(from);
         sessions.delete(from);
+        // A chat already on `to` (possibly waiting for it to be focused)
+        // would otherwise resume there alongside the one moving in.
+        const displaced = sessions.get(to);
+        if (displaced && displaced !== moved) displaced.dispose();
         if (moved) sessions.set(to, moved);
       },
     });
@@ -550,8 +587,14 @@ export function sessionToShow(cellId: string): Session {
 /** Drop saved conversations of cells that no longer exist, and the one
  * global conversation from before chats were per chart. */
 export function pruneSessions(liveCellIds: Iterable<string>, storage: Storage | undefined = globalThis.sessionStorage): void {
+  const ids = [...liveCellIds];
+  // A chat waiting for a cell that is gone would wait forever: end it.
+  const live = new Set(ids);
+  for (const [id, s] of sessions) {
+    if (!live.has(id)) { s.dispose(); sessions.delete(id); }
+  }
   if (!storage) return;
-  const keep = new Set([...liveCellIds].map(sessionKey));
+  const keep = new Set(ids.map(sessionKey));
   const drop: string[] = [];
   for (let i = 0; i < storage.length; i++) {
     const k = storage.key(i);

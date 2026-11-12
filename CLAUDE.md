@@ -393,13 +393,15 @@ local `describe_indicator`/`describe_rules`/`validate_rule` tools.
 
 Chats are locked to their chart: every tool acts on the focused chart, so
 the loop checks before each tool that its own cell is still focused and
-otherwise stops with `{kind: "stopped", cause: "switch"}`. The one exception
+otherwise waits (polling, Stop still ends it) until it is again, so a switch
+leaves that chat untouched while the panel shows the newly focused cell's
+chat. (`cause: "switch"` survives only on turns saved before this.) The one exception
 is the assistant's own `market_select`, which focuses or opens another cell:
 the session rebinds to that cell and keeps going, and the panel's
 `sessionToShow` follows it meanwhile. Changes are stamped with the cell a
 call STARTED on (market_select alone stamps the cell it landed on), and
 `redoTurn` re-checks focus before every step. The panel drops saved chats of
-cells that no longer exist (`pruneSessions`).
+cells that no longer exist (`pruneSessions`), stopping any still waiting.
 
 Tool allowlist: the assistant can only call what `tools.ts`'s `TOOL_TO_ACTION`
 maps to an agent-registry action (the same handlers the MCP bridge drives).

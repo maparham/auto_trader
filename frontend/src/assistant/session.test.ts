@@ -99,19 +99,47 @@ describe("session loop", () => {
     expect(s.state.value.turns.at(-2)).not.toHaveProperty("pickedFrom");
   });
 
-  it("stops before the next tool when the user focuses another chart, and tells the model why", async () => {
-    const { s, exec, bodies } = setup([
+  it("waits, untouched, while another chart is focused and carries on when its own is again", async () => {
+    const { s, exec } = setup([
       msg([tu("a", "indicator_list"), tu("b", "indicator_add")], "tool_use"),
       msg([text("ok")]),
     ]);
     exec.mockImplementationOnce(async () => { focus.cell = "c2"; return { content: "ok", isError: false, change: undefined }; });
-    await s.send("add rsi");
+    const done = s.send("add rsi");
+    await new Promise((r) => setTimeout(r, 450));
     expect(exec).toHaveBeenCalledTimes(1);
-    expect(s.state.value.turns.at(-1)).toMatchObject({ role: "assistant", error: { kind: "stopped", cause: "switch" } });
+    expect(s.state.value.busy).toBe(true);
+    expect(s.state.value.turns.at(-1)).not.toHaveProperty("error");
     focus.cell = "c1";
-    await s.send("go on");
-    const content = lastUser(bodies).content;
-    expect(content[1]).toMatchObject({ tool_use_id: "b", is_error: true, content: "stopped: the user switched to another chart" });
+    await done;
+    expect(exec).toHaveBeenCalledTimes(2);
+    expect(s.state.value.busy).toBe(false);
+    expect(s.state.value.turns.at(-1)).toMatchObject({ role: "assistant", text: "ok" });
+    expect(s.state.value.turns.at(-1)).not.toHaveProperty("error");
+  });
+
+  it("Stop ends a chat waiting for its chart", async () => {
+    const { s, exec } = setup([msg([tu("a", "indicator_list"), tu("b", "indicator_add")], "tool_use")]);
+    exec.mockImplementationOnce(async () => { focus.cell = "c2"; return { content: "ok", isError: false, change: undefined }; });
+    const done = s.send("add rsi");
+    await new Promise((r) => setTimeout(r, 50));
+    s.stop();
+    await done;
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(s.state.value.turns.at(-1)).toMatchObject({ role: "assistant", error: { kind: "stopped" } });
+  });
+
+  it("a disposed chat stops waiting and never writes its storage key again", async () => {
+    const storage = mem();
+    const { s, exec } = setup([msg([tu("a", "indicator_list"), tu("b", "indicator_add")], "tool_use")], storage);
+    exec.mockImplementationOnce(async () => { focus.cell = "c2"; return { content: "ok", isError: false, change: undefined }; });
+    const done = s.send("add rsi");
+    await new Promise((r) => setTimeout(r, 50));
+    s.dispose();
+    storage.removeItem("auto-trader.assistant.session.c1");
+    await done;
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(storage.getItem("auto-trader.assistant.session.c1")).toBeNull();
   });
 
   it("moves with its own market_select to the chart it opened", async () => {
