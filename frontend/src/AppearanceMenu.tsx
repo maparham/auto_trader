@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Settings, TabStrip, Theme } from "./theme";
 import ColorLineStylePicker from "./ColorLineStylePicker";
 import Tooltip from "./components/Tooltip";
+import InfoTip from "./components/InfoTip";
 import {
   BG_MOOD_DEFS,
   moodColor,
@@ -135,6 +136,30 @@ export default function AppearanceMenu({ settings, onChange, onBarChangeAll }: P
               </button>
             </div>
           )}
+
+          <div className="appr-label appr-switch-row">
+            <span className="label-info">
+              <span id="appr-equal-days">Equal-width days</span>
+              <InfoTip
+                text={[
+                  "Draws every day on an intraday chart the same width.",
+                  "Missing hours show as gaps.",
+                  "Lines pinned to 1D come out straight.",
+                  "Display only: indicators and alerts are unchanged.",
+                ]}
+              />
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.equalWidthDays}
+              aria-labelledby="appr-equal-days"
+              className={`bt-switch${settings.equalWidthDays ? " on" : ""}`}
+              onClick={() => onChange({ ...settings, equalWidthDays: !settings.equalWidthDays })}
+            >
+              <span className="bt-switch-knob" />
+            </button>
+          </div>
 
           <div className="appr-label appr-bg-label">
             <span>Background</span>

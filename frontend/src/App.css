@@ -725,6 +725,7 @@
 }
 .appr-reset:hover { color: var(--text); }
 .appr-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.appr-switch-row .label-info { display: inline-flex; align-items: center; gap: 4px; }
 .appr-theme { display: flex; width: 100%; margin: 2px 0; }
 .appr-theme button { flex: 1; padding: 5px 8px; font-size: 12px; }
 .appr-mood-label {
