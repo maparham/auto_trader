@@ -170,6 +170,27 @@ End-to-end probe: `cd backend && python3 -m agent_ui_bridge.probe
    (`indicator.set`, `indicator.remove`), re-screenshot, until the view
    answers the question.
 
+## Equal-width days
+
+Settings > Chart > "Equal-width days" (`Settings.equalWidthDays`, off by
+default, global) draws every UTC day of an intraday chart the same width: one
+slot per chart period from the earliest to the latest time of day in the
+loaded candles, each candle in its own slot, missing periods as gaps; days
+without candles take no room. It is display-only: the candle list is never
+changed, so indicators, rules, backtests and alerts compute as before.
+`lib/equalWidthDays.ts` builds the grid (`buildSlotGrid`, cached per data
+list by `slotGridFor`) and `setEqualWidthDays` installs the provider
+`globalThis.__chartkarSlots`, which the klinecharts patch
+(`patches/klinecharts+10.0.0.patch`, `StoreImp._slots`/`_posOf`/`_idxOf`)
+reads for every index/x conversion, the visible range, zoom and appended
+history; without it every position equals the index. A Trendlines line
+pinned to 1D or coarser gets whole-day spans from the step map
+(`buildHtfStepMap(..., slots)`, `candlePos`/`toIndex`), so the Smooth look of
+a 1D pin is straight. Out of scope for now: drawings, indicator lines,
+chart-timeframe trendlines and alert lines follow the slots but stay straight
+in time across a gap; weekly/monthly pins and non-UTC brokers keep kinks.
+Spec: docs/superpowers/specs/2026-11-12-equal-width-days-design.md.
+
 ## Symbol search categories
 
 The category chips in the symbol-search modal are declared by the broker, not by
