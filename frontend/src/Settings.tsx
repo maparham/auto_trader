@@ -716,18 +716,7 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
                 Warn near SL/TP
                 <InfoTip text={["Default distance for new SL/TP warnings.", "Measured in ATR(14) of 15m candles."]} />
               </label>
-              <input
-                className="num-input"
-                type="number"
-                min="0.05"
-                max="5"
-                step="0.05"
-                value={settings.proximityAtrMult}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  if (Number.isFinite(v) && v >= 0.05 && v <= 5) onChange({ ...settings, proximityAtrMult: v });
-                }}
-              />
+              <ProximityMultInput value={settings.proximityAtrMult} onCommit={(v) => onChange({ ...settings, proximityAtrMult: v })} />
               <span className="setting-unit">× ATR</span>
             </div>
 
@@ -934,6 +923,36 @@ export default function SettingsModal({ settings, onChange, onClose, initialTab 
         )}
       </div>
     </div>
+  );
+}
+
+// Local string draft so the field can be cleared and retyped ("0." passes
+// through); commits only valid values and reverts to the saved one on blur.
+function ProximityMultInput({ value, onCommit }: { value: number; onCommit: (n: number) => void }) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => setText(String(value)), [value]);
+  const valid = (t: string) => {
+    const n = Number(t);
+    return t.trim() !== "" && Number.isFinite(n) && n >= 0.05 && n <= 5;
+  };
+  return (
+    <input
+      className="num-input"
+      aria-label="Warn near SL/TP ATR multiple"
+      inputMode="decimal"
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        if (valid(e.target.value)) onCommit(Number(e.target.value));
+      }}
+      onBlur={() => {
+        if (valid(text)) onCommit(Number(text));
+        else setText(String(value));
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLElement).blur();
+      }}
+    />
   );
 }
 
