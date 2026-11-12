@@ -19,6 +19,15 @@ self.addEventListener("push", (event) => {
       });
       return;
     }
+    if (p.kind === "position") {
+      // Position alerts title by epic, body is the headline.
+      await self.registration.showNotification(`\u{1F514} ${p.epic}`, {
+        body: p.message ? `${p.headline} · ${p.message}` : p.headline,
+        tag: `position|${p.id}`,
+        data: { id: p.id },
+      });
+      return;
+    }
     const prec = p.precision ?? 2;
     const conds = {
       crossing: "crossed",

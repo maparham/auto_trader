@@ -279,3 +279,27 @@ def test_subscribe_then_unsubscribe(clerk, routed_store):
 
     subs = _sync(routed_store.list_push_subs("alice"))
     assert subs == []
+
+
+@pytest.mark.anyio
+async def test_position_payload_carries_headline(store, monkeypatch):
+    PUSH.configure(store)
+    await store.add_push_sub("alice", "https://push.example/a", {"p256dh": "x", "auth": "y"})
+    recorder = _Recorder()
+    monkeypatch.setattr(push_notify_mod, "webpush", recorder)
+
+    payload = {
+        "id": "al-1", "kind": "position", "broker": "capital-live",
+        "account": "capital-live:live", "epic": "US100", "side": "sl",
+        "level": 18210.0, "price": 18222.4, "precision": 1,
+        "headline": "US100 long · near SL · 12.4 pts (0.38 ATR) away · SL 18210.0",
+        "notify": {},
+    }
+    await PUSH.notifier("alice", payload)
+
+    assert len(recorder.calls) == 1
+    body = json.loads(recorder.calls[0]["data"])
+    assert body["headline"] == payload["headline"]
+    assert body["account"] == "capital-live:live"
+    assert body["side"] == "sl"
+    assert body["kind"] == "position"

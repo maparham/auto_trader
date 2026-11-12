@@ -123,6 +123,7 @@ class PushNotify:
                 ),
                 "critical": bool(payload.get("critical")),
                 "status": payload.get("status"),
+                "side": payload.get("side"),
             }
         )
         for sub in subs:
