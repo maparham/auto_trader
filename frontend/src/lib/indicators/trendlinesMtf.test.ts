@@ -21,7 +21,16 @@ import {
 } from "./trendlines";
 import { findTrendlineSegment } from "./trendlineMarks";
 import { parseTrendlinesConfig } from "./trendlinesOutputs";
-import { buildSlotGrid, setEqualWidthDays } from "../equalWidthDays";
+import { buildSlotGrid, setEqualWidthDays, setSlotAnchors } from "../equalWidthDays";
+import { utcAnchors } from "../equalWidthDays.testUtil";
+
+/** Give the draw's candle list a UTC broker's day and week starts, as the
+ * store's provider call does for a real chart. */
+function linkUtcAnchors(bars: KLineData[]): void {
+  const chart = {};
+  setSlotAnchors(chart, "broker", utcAnchors(bars.map((b) => b.timestamp)));
+  (globalThis as { __chartkarSlots?: (l: unknown, c: unknown) => unknown }).__chartkarSlots?.(bars, chart);
+}
 
 const T0 = 1_700_000_000_000;
 const CHART_MS = 900_000; // 15m chart bars
@@ -952,8 +961,9 @@ describe("TRENDLINES_TEMPLATE.draw under a 1D pin with equal-width days", () => 
 
   function drawSlotted(on: boolean) {
     setEqualWidthDays(on);
+    if (on) linkUtcAnchors(bars);
     try {
-      const grid = buildSlotGrid(bars.map((b) => b.timestamp))!;
+      const grid = buildSlotGrid(bars.map((b) => b.timestamp), utcAnchors(bars.map((b) => b.timestamp)))!;
       const xAxis = on
         ? { convertToPixel: (i: number) => grid.posOf(i), convertFromPixel: (x: number) => Math.round(grid.idxOf(x)) }
         : undefined;
@@ -997,8 +1007,9 @@ describe("TRENDLINES_TEMPLATE.draw under a 1W pin with equal-width days", () => 
 
   it("a 1W pin is straight with time gaps", () => {
     setEqualWidthDays(true);
+    linkUtcAnchors(bars);
     let out: { segments: Seg[] };
-    const grid = buildSlotGrid(bars.map((b) => b.timestamp))!;
+    const grid = buildSlotGrid(bars.map((b) => b.timestamp), utcAnchors(bars.map((b) => b.timestamp)))!;
     try {
       const xAxis = { convertToPixel: (i: number) => grid.posOf(i), convertFromPixel: (x: number) => Math.round(grid.idxOf(x)) };
       out = draw(bars, mtf, { pinnedStyle: "ramp", xAxisOverride: xAxis });

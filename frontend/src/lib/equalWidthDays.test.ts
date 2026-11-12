@@ -1,33 +1,45 @@
-import { describe, expect, it } from "vitest";
-import { buildSlotGrid, inferDayStartOffset, setEqualWidthDays, slotGridFor } from "./equalWidthDays";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  buildSlotGrid,
+  setEqualWidthDays,
+  setSlotAnchors,
+  setSlotSource,
+  slotAnchorsOf,
+  slotGridFor,
+  type SlotAnchors,
+} from "./equalWidthDays";
+import { utcAnchors } from "./equalWidthDays.testUtil";
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const day = (d: number, hours: number[]) => hours.map((h) => d * DAY + h * HOUR);
+/** A grid with UTC days and Monday weeks, as a UTC broker's bars give. */
+const grid = (t: number[]) => buildSlotGrid(t, utcAnchors(t));
 
 describe("buildSlotGrid", () => {
   it("one slot per hour from the earliest to the latest hour seen", () => {
     // Day 0 13:00..19:00, day 1 14:00..17:00 (late open, early close).
-    const g = buildSlotGrid([...day(0, [13, 14, 15, 16, 17, 18, 19]), ...day(1, [14, 15, 16, 17])])!;
+    const g = grid([...day(0, [13, 14, 15, 16, 17, 18, 19]), ...day(1, [14, 15, 16, 17])])!;
     expect(g.perDay).toBe(7);
     expect(g.pos).toEqual([0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11]);
   });
 
   it("days without candles take no room (weekend)", () => {
-    const g = buildSlotGrid([...day(4, [13, 14]), ...day(7, [13, 14])])!;
+    const g = grid([...day(4, [13, 14]), ...day(7, [13, 14])])!;
     expect(g.pos).toEqual([0, 1, 2, 3]);
   });
 
   it("posOf and idxOf invert, across gaps and past both ends", () => {
-    const g = buildSlotGrid([...day(0, [13, 14, 15, 16, 17, 18, 19]), ...day(1, [14, 15, 16, 17])])!;
+    const g = grid([...day(0, [13, 14, 15, 16, 17, 18, 19]), ...day(1, [14, 15, 16, 17])])!;
     for (const i of [-2, 0, 3.5, 6.5, 7, 9.25, 10, 13]) expect(g.idxOf(g.posOf(i))).toBeCloseTo(i, 9);
     expect(g.count()).toBe(12);
   });
 
   it("prepending days with the same slots shifts every position by a constant", () => {
     const later = [...day(1, [13, 14, 15]), ...day(2, [13, 15])];
-    const a = buildSlotGrid(later)!;
-    const b = buildSlotGrid([...day(0, [13, 14, 15]), ...later])!;
+    const all = [...day(0, [13, 14, 15]), ...later];
+    const a = buildSlotGrid(later, utcAnchors(all))!;
+    const b = buildSlotGrid(all, utcAnchors(all))!;
     const shift = b.pos[3] - a.pos[0];
     a.pos.forEach((p, k) => expect(b.pos[k + 3] - p).toBe(shift));
   });
@@ -35,14 +47,14 @@ describe("buildSlotGrid", () => {
   it("two candles in one slot still get increasing positions", () => {
     // Mostly hourly, with one extra stamp inside the 13:00 slot.
     const t = day(0, [13, 14, 15, 16, 17]);
-    const g = buildSlotGrid([t[0], t[0] + 1_800_000, ...t.slice(1)])!;
+    const g = grid([t[0], t[0] + 1_800_000, ...t.slice(1)])!;
     for (let k = 1; k < g.n; k++) expect(g.pos[k]).toBeGreaterThan(g.pos[k - 1]);
   });
 
   it("a stray stamp on a 24h market does not shift later candles", () => {
     // 4H bars round the clock for three days, plus one extra 21:00 stamp on day 0.
     const four = (d: number) => day(d, [0, 4, 8, 12, 16, 20]);
-    const g = buildSlotGrid([...four(0), 0 * DAY + 21 * HOUR, ...four(1), ...four(2)])!;
+    const g = grid([...four(0), 0 * DAY + 21 * HOUR, ...four(1), ...four(2)])!;
     expect(g.perDay).toBe(6);
     expect(g.pos[7]).toBe(6); // day 1's 00:00 candle starts day 1
     expect(g.pos[g.n - 1]).toBe(17);
@@ -51,8 +63,15 @@ describe("buildSlotGrid", () => {
   });
 
   it("no grid for one candle or a daily chart", () => {
-    expect(buildSlotGrid(day(0, [13]))).toBeNull();
-    expect(buildSlotGrid([0, DAY, 2 * DAY])).toBeNull();
+    expect(grid(day(0, [13]))).toBeNull();
+    expect(grid([0, DAY, 2 * DAY])).toBeNull();
+  });
+
+  it("no grid without the broker's day and week starts", () => {
+    const t = day(0, [13, 14, 15]);
+    expect(buildSlotGrid(t)).toBeNull();
+    expect(buildSlotGrid(t, { dayStarts: [0] })).toBeNull();
+    expect(buildSlotGrid(t, { weekStarts: [0] })).toBeNull();
   });
 });
 
@@ -62,30 +81,33 @@ describe("broker days and equal weeks", () => {
   const hrs = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, k) => from + k);
   const stock = (days: number[]) => days.flatMap((d) => hrs(14, 20).map((h) => at(d, h)));
   const weekdays = [0, 1, 2, 3, 4, 7, 8, 9, 10, 11];
-  // Hourly round the clock except 22:00, Sun 23:00 to Fri `endH`.
+  const mondays = [at(0, 0), at(7, 0)];
+  // Hourly round the clock except 22:00, Sun 23:00 to Fri `endH`; the
+  // broker's days start at 22:00 the evening before.
   const fx = (endH = 21) => {
     const out: number[] = [];
     for (let t = at(-1, 23); t <= at(4, endH); t += HOUR) if (new Date(t).getUTCHours() !== 22) out.push(t);
     return out;
   };
+  const fxDays = [-1, 0, 1, 2, 3].map((d) => at(d, 22));
 
   it("stock days with no holidays keep today's positions", () => {
-    const g = buildSlotGrid(stock(weekdays))!;
+    const g = buildSlotGrid(stock(weekdays), { dayStarts: weekdays.map((d) => at(d, 0)), weekStarts: mondays })!;
     expect(g.perDay).toBe(7);
     expect(g.perWeek).toBe(35);
     expect(g.pos).toEqual(Array.from({ length: 70 }, (_, k) => k));
   });
 
   it("a holiday is an empty column", () => {
-    const t = stock(weekdays.filter((d) => d !== 7));
-    const g = buildSlotGrid(t)!;
+    const days = weekdays.filter((d) => d !== 7);
+    const t = stock(days);
+    const g = buildSlotGrid(t, { dayStarts: days.map((d) => at(d, 0)), weekStarts: mondays })!;
     expect(g.pos[t.indexOf(at(8, 14))]).toBe(5 * 7 + 7);
   });
 
-  it("FX days start at the daily pause", () => {
+  it("FX days follow the broker's 22:00 starts", () => {
     const t = fx();
-    expect(inferDayStartOffset(t, HOUR)).toBe(22 * HOUR);
-    const g = buildSlotGrid(t)!;
+    const g = buildSlotGrid(t, { dayStarts: fxDays, weekStarts: [at(-1, 22)] })!;
     expect(g.perDay).toBe(23);
     expect(g.perWeek).toBe(5 * 23);
     // Sunday 23:00 opens Monday's column, Monday 00:00 is the next slot.
@@ -94,75 +116,131 @@ describe("broker days and equal weeks", () => {
     expect(g.pos[t.indexOf(at(0, 23))]).toBe(23); // Tuesday's first slot
   });
 
-  it("24/7 data falls back to 00:00 and seven columns", () => {
-    const t: number[] = [];
-    for (let x = at(0, 0); x < at(14, 0); x += HOUR) t.push(x);
-    expect(inferDayStartOffset(t, HOUR)).toBe(0);
-    expect(buildSlotGrid(t)!.perWeek).toBe(7 * 24);
+  it("a weekly bar stamped Monday 00:00 still holds Monday's day that began Sunday 22:00", () => {
+    const t = fx();
+    const a = buildSlotGrid(t, { dayStarts: fxDays, weekStarts: [at(-1, 22)] })!;
+    const b = buildSlotGrid(t, { dayStarts: fxDays, weekStarts: [at(0, 0)] })!;
+    expect(b.pos).toEqual(a.pos);
   });
 
-  it("fewer candles late in the day is not a pause", () => {
-    // Capital TSLA-like: round the clock on weekdays, but 21:00..23:00 only
-    // trade three days in four. Its daily bars start at 00:00.
-    const t: number[] = [];
-    for (const d of weekdays.concat([14, 15, 16, 17, 18]))
-      for (let h = 0; h < 24; h++) if (h < 21 || d % 4 !== 0) t.push(at(d, h));
-    expect(inferDayStartOffset(t, HOUR)).toBe(0);
-  });
-
-  it("a session crossing midnight UTC stays one day", () => {
-    // 23:00 to 05:00 sessions opening Sun..Thu. The emptiest bin closest to
-    // 00:00 is 22:00, so each session is one day (Mon..Fri).
-    const t = [-1, 0, 1, 2, 3].flatMap((d) => [23, 24, 25, 26, 27, 28, 29].map((h) => at(d, h)));
-    expect(inferDayStartOffset(t, HOUR)).toBe(22 * HOUR);
-    const g = buildSlotGrid(t)!;
-    expect(g.perDay).toBe(7);
-    expect(g.pos).toEqual(Array.from({ length: 35 }, (_, k) => k));
-  });
-
-  it("given day starts win, older candles fall back to inference", () => {
-    const t = fx(20);
-    // The broker's last three days start at 21:00, an hour before the pause.
-    const g = buildSlotGrid(t, { dayStarts: [at(1, 21), at(2, 21), at(3, 21)] })!;
-    expect(g.perDay).toBe(24);
-    expect(g.pos[t.indexOf(at(1, 21))]).toBe(2 * 24); // opens Wednesday
-    expect(g.pos[t.indexOf(at(1, 20))]).toBe(24 + 22); // still Tuesday (inferred)
-    for (let k = 1; k < g.n; k++) expect(g.pos[k]).toBeGreaterThan(g.pos[k - 1]);
+  it("candles past the last day start step on in whole days, older ones step back", () => {
+    const t = stock(weekdays);
+    // The broker's bars cover only Tuesday to Thursday of week 1.
+    const g = buildSlotGrid(t, { dayStarts: [at(1, 0), at(2, 0), at(3, 0)], weekStarts: [at(0, 0)] })!;
+    const full = buildSlotGrid(t, { dayStarts: weekdays.map((d) => at(d, 0)), weekStarts: mondays })!;
+    expect(g.pos).toEqual(full.pos);
   });
 
   it("a first week opening mid-week keeps weeks on multiples of perWeek", () => {
-    const g = buildSlotGrid(stock([2, 3, 4, 7, 8]))!;
+    const days = [2, 3, 4, 7, 8];
+    const g = buildSlotGrid(stock(days), { dayStarts: weekdays.map((d) => at(d, 0)), weekStarts: mondays })!;
     expect(g.pos[0]).toBe(2 * 7);
     expect(g.pos[3 * 7]).toBe(g.perWeek); // Monday of week 2
   });
-
-  it("given week starts set the weeks", () => {
-    const t = stock(weekdays);
-    const g = buildSlotGrid(t, { weekStarts: [at(0, 0), at(7, 0)] })!;
-    expect(g.pos).toEqual(buildSlotGrid(t)!.pos);
-  });
 });
 
-describe("slotGridFor", () => {
-  it("follows the switch and a live candle", () => {
-    const list = [...day(0, [13, 14, 15]), ...day(1, [13])].map((timestamp) => ({ timestamp }));
+describe("slotGridFor and the chart's source", () => {
+  afterEach(() => {
     setEqualWidthDays(false);
-    expect(slotGridFor(list)).toBeNull();
+    vi.useRealTimers();
+  });
+  const provider = () =>
+    (globalThis as { __chartkarSlots?: (l: unknown, c?: unknown) => unknown }).__chartkarSlots!;
+  const listOf = (t: number[]) => t.map((timestamp) => ({ timestamp }));
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it("no grid until the chart's starts arrive, then the grid", async () => {
     setEqualWidthDays(true);
+    const chart = {};
+    const t = [...day(0, [13, 14, 15]), ...day(1, [13])];
+    const list = listOf(t);
+    const source = vi.fn(async () => utcAnchors(t));
+    setSlotSource(chart, source);
+    expect(provider()(list, chart)).toBeNull();
+    expect(provider()(list, chart)).toBeNull(); // still in flight: asked once
+    expect(source).toHaveBeenCalledTimes(1);
+    const [fromMs, toMs] = source.mock.calls[0] as unknown as [number, number];
+    expect(fromMs).toBeLessThanOrEqual(t[0]);
+    expect(toMs).toBeGreaterThanOrEqual(t[t.length - 1]);
+    await flush();
     expect(slotGridFor(list)!.pos).toEqual([0, 1, 2, 3]);
-    list.push({ timestamp: day(1, [15])[0] }); // same array, new last candle
-    expect(slotGridFor(list)!.pos).toEqual([0, 1, 2, 3, 5]);
-    setEqualWidthDays(false);
+  });
+
+  it("an answer reaching before the first candle does not ask again", async () => {
+    setEqualWidthDays(true);
+    const chart = {};
+    const t = day(14, [13, 14, 15]);
+    const list = listOf(t);
+    // The broker answers with every day in the asked range (some before the
+    // first candle), but none for the candles' own newest day.
+    const source = vi.fn(async (f: number) => {
+      const days: number[] = [];
+      for (let d = Math.ceil(f / DAY); d <= 13; d++) days.push(d * DAY);
+      return { dayStarts: days, weekStarts: days.filter((d) => (d / DAY + 3) % 7 === 0) };
+    });
+    setSlotSource(chart, source);
+    for (let k = 0; k < 5; k++) {
+      provider()(list, chart);
+      await flush();
+    }
+    expect(source).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed load is not asked again within a minute", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    setEqualWidthDays(true);
+    const chart = {};
+    const list = listOf(day(0, [13, 14, 15]));
+    const source = vi.fn(async (): Promise<SlotAnchors | null> => null);
+    setSlotSource(chart, source);
+    provider()(list, chart);
+    await flush();
+    expect(provider()(list, chart)).toBeNull();
+    expect(source).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 61_000);
+    provider()(list, chart);
+    expect(source).toHaveBeenCalledTimes(2);
+  });
+
+  it("older candles than the known starts ask for more, and the starts merge", async () => {
+    setEqualWidthDays(true);
+    const chart = {};
+    const newer = day(7, [13, 14]);
+    const older = day(-14, [13, 14]);
+    const source = vi.fn(async (f: number, to: number) => utcAnchors([...older, ...newer].filter((x) => x >= f && x <= to)));
+    setSlotSource(chart, source);
+    provider()(listOf(newer), chart);
+    await flush();
+    const both = listOf([...older, ...newer]);
+    provider()(both, chart);
+    expect(source).toHaveBeenCalledTimes(2);
+    expect((source.mock.calls[1] as unknown as [number])[0]).toBeLessThanOrEqual(older[0]);
+    await flush();
+    expect(slotAnchorsOf(chart)?.dayStarts).toEqual([-14 * DAY, 7 * DAY]);
+  });
+
+  it("a new source (symbol change) drops the old starts", () => {
+    const chart = {};
+    setSlotAnchors(chart, "x", { dayStarts: [1], weekStarts: [1] });
+    setSlotSource(chart, async () => null);
+    expect(slotAnchorsOf(chart)).toBeUndefined();
+  });
+
+  it("anchors of one chart never reach another", () => {
+    const a = {};
+    setSlotAnchors(a, "x", { dayStarts: [10], weekStarts: [10] });
+    expect(slotAnchorsOf({})).toBeUndefined();
   });
 
   it("the installed provider never throws and falls back to null", () => {
     setEqualWidthDays(true);
-    const provider = (globalThis as { __chartkarSlots?: (l: unknown) => unknown }).__chartkarSlots!;
-    expect(provider(null)).toBeNull();
-    expect(provider([{ timestamp: NaN }, { timestamp: NaN }])).toBeNull();
-    expect(provider([null, null, null])).toBeNull();
+    const p = provider();
+    expect(p(null)).toBeNull();
+    expect(p([{ timestamp: NaN }, { timestamp: NaN }])).toBeNull();
+    expect(p([null, null, null])).toBeNull();
     const bad = { get timestamp(): number { throw new Error("boom"); } };
-    expect(provider([bad, bad])).toBeNull();
+    expect(p([bad, bad])).toBeNull();
+    expect(p([bad, bad], {})).toBeNull();
     setEqualWidthDays(false);
     expect((globalThis as { __chartkarSlots?: unknown }).__chartkarSlots).toBeUndefined();
   });

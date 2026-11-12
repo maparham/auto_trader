@@ -30,7 +30,7 @@ import ChartRangeBar from "./ChartRangeBar";
 import { type RangeKey } from "./lib/rangeWindow";
 import { pageHistoryBack, coverHistoryRangeParallel, scrollbackLoadOlder, PAGE_BARS, type PageResult } from "./lib/historyPaging";
 import { klineStyles } from "./lib/chartTheme";
-import { equalWidthDaysOn, relayoutSlots, setEqualWidthDays } from "./lib/equalWidthDays";
+import { equalWidthDaysOn, relayoutSlots, setEqualWidthDays, setSlotSource } from "./lib/equalWidthDays";
 import ChartLegend, {
   type ChartLegendHandle,
   type LegendRow,
@@ -188,7 +188,7 @@ import GoLivePill from "./chart/GoLivePill";
 import HistoryJumpPill from "./chart/HistoryJumpPill";
 import { beginHistoryJump } from "./lib/historyJump";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
-import { refreshMtfIndicators, refreshMtfOnVisibilityChange, setChartIntervalMs, setViewportReader, stampTrendlinesFloors } from "./lib/mtfCoordinator";
+import { fetchBrokerDayWeekStarts, refreshMtfIndicators, refreshMtfOnVisibilityChange, setChartIntervalMs, setViewportReader, stampTrendlinesFloors } from "./lib/mtfCoordinator";
 import { PositionLines, tradeLineSpecs, DRAFT_ID, tradeLineSpanX, tradeLineAnchorTs } from "./lib/positionLines";
 import {
   TradeMarkers,
@@ -4393,6 +4393,17 @@ export default function ChartCore({
       if (equalWidthDaysOn() !== equalWidthDays) setEqualWidthDays(equalWidthDays);
     });
   }, [equalWidthDays, chartReady]);
+
+  // Time gaps lays the chart out on the broker's own days and weeks: give the
+  // chart the loader for its symbol's daily and weekly bar starts. It is only
+  // asked while Time gaps is on; a new symbol or broker drops the old starts.
+  useEffect(() => {
+    const c = chartRef.current;
+    if (!c) return;
+    const epic = symbol.epic;
+    setSlotSource(c, (fromMs, toMs) => fetchBrokerDayWeekStarts(epic, brokerId, fromMs, toMs));
+    return () => setSlotSource(c, null);
+  }, [chartReady, symbol.epic, brokerId]);
 
   // Time-axis format changes -> re-register the formatter. setFormatter doesn't
   // force a repaint on its own, so nudge one via setStyles (same trick the

@@ -13,7 +13,6 @@
 // type) — they have no custom template to clone, and duplicating them isn't a
 // requested feature; their id === type.
 
-import { setSlotAnchors } from "./equalWidthDays";
 import type {
   Chart,
   Indicator,
@@ -1256,7 +1255,6 @@ export function captureIndicatorAppearance(
 // Remove an instance by its id across whichever pane holds it (the candle pane for
 // overlays, a dedicated pane for RSI/MACD/etc.). Also drops its saved config.
 export function removeIndicatorById(chart: Chart, scope: string, id: string): void {
-  setSlotAnchors(chart, id, null); // a pinned pane's day or week starts leave with it
   const panes = getIndicatorsByPane(chart);
   for (const [paneId, inds] of panes ?? []) {
     if (inds.has(id)) {

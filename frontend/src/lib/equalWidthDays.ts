@@ -2,13 +2,15 @@
 // charts. Every broker day gets the same number of slots (one chart period
 // each, from the earliest to the latest time into the day seen in the loaded
 // candles), and each candle sits in its own time slot, so a missing period
-// shows as an empty gap. Days come from pinned 1D bars when given, else from
-// the daily pause in the candles. The chart is laid out by weeks: every week
-// has a column for each weekday that ever trades, so a holiday is an empty
-// column and every week is the same width. The candle list is never changed; klinecharts'
-// patched store asks globalThis.__chartkarSlots(dataList) for each candle's
-// display position and does its index/x math in positions. Without the
-// provider every position equals the data index.
+// shows as an empty gap. The days and weeks are the broker's own: the open
+// times of the symbol's daily and weekly bars, loaded per chart through
+// setSlotSource. Without them there is no grid (the chart is drawn normally);
+// nothing is guessed. The chart is laid out by weeks: every week has a column
+// for each weekday the broker has daily bars on, so a holiday is an empty
+// column and every week is the same width. The candle list is never changed;
+// klinecharts' patched store asks globalThis.__chartkarSlots(dataList, chart)
+// for each candle's display position and does its index/x math in positions.
+// Without the provider every position equals the data index.
 
 const DAY = 86_400_000;
 
@@ -42,44 +44,13 @@ function periodOf(times: readonly number[]): number {
   return best;
 }
 
-/** Bar starts the grid should follow, from pinned panes' 1D and 1W bars. */
+/** The broker's own bar starts: its daily bars' and weekly bars' open times. */
 export interface SlotAnchors {
   dayStarts?: readonly number[];
   weekStarts?: readonly number[];
 }
 
 const mod = (a: number, m: number) => ((a % m) + m) % m;
-
-/**
- * Where the broker's day starts, in ms after 00:00 UTC: the start of the
- * time-of-day bin (one period wide, in step with the candles) holding the
- * fewest candles. Near-ties (within a tenth of the busiest bin, so a partial
- * first or last day does not decide) go to the bin closest to 00:00 round
- * the clock, the one before midnight on an exact tie. A bin holding more than
- * half the busiest bin's candles is no pause (a session that trades less
- * late in the day, say), so then the day starts at 00:00.
- */
-export function inferDayStartOffset(times: readonly number[], step: number): number {
-  if (!(step > 0) || step >= DAY || times.length === 0) return 0;
-  const bins = Math.max(1, Math.round(DAY / step));
-  const phase = mod(times[0], step);
-  const counts = new Array<number>(bins).fill(0);
-  for (const t of times) counts[Math.min(bins - 1, Math.floor(mod(t - phase, DAY) / step))]++;
-  const min = Math.min(...counts);
-  const max = Math.max(...counts);
-  if (min > max / 2) return 0;
-  const tol = Math.floor(max / 10);
-  let best = 0;
-  let bestDist = Infinity;
-  for (let b = 0; b < bins; b++) {
-    if (counts[b] > min + tol) continue;
-    const start = mod(phase + b * step, DAY);
-    const dist = Math.min(start, DAY - start);
-    // Strictly closer wins; an exact tie goes to the start before midnight.
-    if (dist < bestDist || (dist === bestDist && start > DAY / 2)) [best, bestDist] = [start, dist];
-  }
-  return best;
-}
 
 /** Index of the last value at or before x in a sorted list, or -1. */
 function lastAtOrBefore(sorted: readonly number[], x: number): number {
@@ -94,57 +65,71 @@ function lastAtOrBefore(sorted: readonly number[], x: number): number {
   return ans;
 }
 
-const calOf = (dayStart: number) => Math.floor((dayStart + DAY / 2) / DAY);
+/** The start of the period holding x: the last known start at or before it,
+ * stepping on (or back, before the first) in whole periods where the known
+ * starts run out. */
+function periodStart(starts: readonly number[], x: number, len: number): number {
+  const k = lastAtOrBefore(starts, x);
+  if (k >= 0) return starts[k] + Math.floor((x - starts[k]) / len) * len;
+  return starts[0] - Math.ceil((starts[0] - x) / len) * len;
+}
+
+// A day's calendar date: its start plus half a day, so a day the broker opens
+// the evening before (FX at 22:00 Sunday) is Monday's.
+const calOf = (start: number) => Math.floor((start + DAY / 2) / DAY);
 const weekdayOf = (cal: number) => mod(cal + 3, 7); // 0 = Monday
 
+const sortedFinite = (xs: readonly number[] | undefined) =>
+  [...new Set((xs ?? []).filter(Number.isFinite))].sort((a, b) => a - b);
+
+/**
+ * The slot grid for these candles, laid out on the broker's own days and
+ * weeks. Null without both day and week starts: Time gaps never guesses.
+ */
 export function buildSlotGrid(times: readonly number[], anchors?: SlotAnchors): SlotGrid | null {
   const n = times.length;
   if (n < 2) return null;
+  const dayStarts = sortedFinite(anchors?.dayStarts);
+  const weekStarts = sortedFinite(anchors?.weekStarts);
+  if (!dayStarts.length || !weekStarts.length) return null;
   for (let i = 0; i < n; i++) if (!Number.isFinite(times[i])) return null;
   const step = periodOf(times);
   if (!(step > 0) || step >= DAY) return null;
-  const inferred = inferDayStartOffset(times, step);
-  const dayStarts = anchors?.dayStarts?.filter(Number.isFinite) ?? [];
-  // Each candle's day: the last given start at or before it (stepping on by
-  // whole days when the starts run out), else the inferred daily offset.
+  // Week starts as calendar dates: a day belongs to the last week whose date
+  // is at or before its own (so a weekly bar stamped Monday 00:00 still holds
+  // the Monday the broker opened Sunday evening).
+  const weekCals = weekStarts.map(calOf);
   const slot = new Array<number>(n);
   const cal = new Array<number>(n);
   let minSlot = Infinity;
   let maxSlot = -Infinity;
-  const seen = new Set<number>();
+  // Columns: the weekdays the broker has daily bars on (and any a stepped
+  // day lands on).
+  const seen = new Set<number>(dayStarts.map((d) => weekdayOf(calOf(d))));
   for (let i = 0; i < n; i++) {
-    const t = times[i];
-    const k = lastAtOrBefore(dayStarts, t);
-    let start: number;
-    if (k >= 0) start = dayStarts[k] + Math.floor((t - dayStarts[k]) / DAY) * DAY;
-    else start = Math.floor((t - inferred) / DAY) * DAY + inferred;
-    slot[i] = Math.floor((t - start) / step);
+    const start = periodStart(dayStarts, times[i], DAY);
+    slot[i] = Math.floor((times[i] - start) / step);
     cal[i] = calOf(start);
     seen.add(weekdayOf(cal[i]));
     if (slot[i] < minSlot) minSlot = slot[i];
     if (slot[i] > maxSlot) maxSlot = slot[i];
   }
   const perDay = maxSlot - minSlot + 1;
-  // A week starts on the weekly bars' weekday when given, else on the first
-  // weekday that ever trades; its columns are the weekdays that ever trade.
-  const weekStarts = anchors?.weekStarts?.filter(Number.isFinite) ?? [];
-  const firstWd = weekStarts.length
-    ? weekdayOf(calOf(weekStarts[weekStarts.length - 1]))
-    : Math.min(...seen);
+  const firstWd = weekdayOf(weekCals[weekCals.length - 1]);
   const order = [...seen].sort((a, b) => mod(a - firstWd, 7) - mod(b - firstWd, 7));
   const colOf = new Map(order.map((wd, c) => [wd, c]));
   const perWeek = order.length * perDay;
   // Weeks start at multiples of perWeek and days at multiples of perDay (the
   // Trendlines step map relies on it), so a first week that opens mid-week
-  // keeps its empty leading columns.
+  // keeps its empty leading columns. Weeks with no candles take no room.
   const own = new Array<number>(n);
   let weekIdx = -1;
   let lastWeek = NaN;
   for (let i = 0; i < n; i++) {
-    const week = Math.floor((cal[i] + 3 - firstWd) / 7);
+    const week = periodStart(weekCals, cal[i], 7);
     if (week !== lastWeek) [weekIdx, lastWeek] = [weekIdx + 1, week];
     own[i] = weekIdx * perWeek + colOf.get(weekdayOf(cal[i]))! * perDay + (slot[i] - minSlot);
-    // Mixed sources (given starts after inferred days) must never go back.
+    // Never go back (a stray stamp across a boundary).
     if (i > 0 && own[i] < own[i - 1]) own[i] = own[i - 1];
   }
   // Candles sharing a slot (a DST fall-back, a stray stamp) split that slot
@@ -197,9 +182,9 @@ let on = false;
 // in the klinecharts store) are rebuilt.
 let version = 0;
 
-// Anchors per chart, per pinned pane key, in registration order. The store
-// passes its chart with the data list; slotGridFor(list) callers without a
-// chart find it through the list.
+// Anchors per chart, per key, in registration order (the chart's own source
+// writes one key). The store passes its chart with the data list;
+// slotGridFor(list) callers without a chart find it through the list.
 const anchorsByChart = new WeakMap<object, Map<string, SlotAnchors>>();
 const chartOfList = new WeakMap<object, object>();
 
@@ -215,7 +200,81 @@ function mergedAnchors(chart: object | undefined): SlotAnchors | undefined {
   return out;
 }
 
-/** The anchors a chart's grid uses now (merged over its pinned panes). */
+/** Loads the broker's own day and week starts covering [fromMs, toMs], or
+ * null when it cannot (then the chart is drawn without Time gaps). */
+export type SlotSource = (fromMs: number, toMs: number) => Promise<SlotAnchors | null>;
+
+type SourceState = { load: SlotSource; inFlight: boolean; asked?: { from: number; to: number; at: number } };
+const sources = new WeakMap<object, SourceState>();
+const SOURCE_KEY = "broker";
+/** A range already asked for is not asked again this soon (a failed or empty
+ * answer would otherwise repeat on every layout). */
+const ASK_AGAIN_MS = 60_000;
+
+/**
+ * Give a chart the loader for its symbol's daily and weekly bar starts (null
+ * removes it). A new source means a new symbol or broker: the old starts go.
+ */
+export function setSlotSource(chart: object | null | undefined, load: SlotSource | null): void {
+  if (!chart) return;
+  const m = anchorsByChart.get(chart);
+  if (m && m.size)
+    relayoutSlots(chart, () => {
+      m.clear();
+      bump();
+    });
+  if (load) sources.set(chart, { load, inFlight: false });
+  else sources.delete(chart);
+}
+
+/** Ask the chart's source for the starts its candles need, unless they are
+ * already known, already being loaded, or were just asked for. */
+function ensureStarts(chart: object, first: number, last: number): void {
+  const st = sources.get(chart);
+  if (!st || st.inFlight) return;
+  if (!Number.isFinite(first) || !Number.isFinite(last)) return;
+  const a = mergedAnchors(chart);
+  const ds = a?.dayStarts;
+  const ws = a?.weekStarts;
+  const covered =
+    !!ds?.length &&
+    !!ws?.length &&
+    ds[0] <= first &&
+    last < ds[ds.length - 1] + DAY &&
+    ws[0] <= first + DAY &&
+    last < ws[ws.length - 1] + 8 * DAY;
+  if (covered) return;
+  // From the candles only: the answer's own bars may reach further back, and
+  // asking from those would walk back through history without end.
+  const from = first - 8 * DAY;
+  const to = last + DAY;
+  const now = Date.now();
+  if (st.asked && from >= st.asked.from && to <= st.asked.to && now - st.asked.at < ASK_AGAIN_MS) return;
+  st.inFlight = true;
+  st.asked = { from, to, at: now };
+  let p: Promise<SlotAnchors | null>;
+  try {
+    p = st.load(from, to);
+  } catch {
+    st.inFlight = false;
+    return;
+  }
+  void Promise.resolve(p)
+    .then((res) => {
+      st.inFlight = false;
+      if (sources.get(chart) !== st || !res?.dayStarts?.length || !res.weekStarts?.length) return;
+      const prev = mergedAnchors(chart);
+      setSlotAnchors(chart, SOURCE_KEY, {
+        dayStarts: sortedFinite([...(prev?.dayStarts ?? []), ...res.dayStarts]),
+        weekStarts: sortedFinite([...(prev?.weekStarts ?? []), ...res.weekStarts]),
+      });
+    })
+    .catch(() => {
+      st.inFlight = false;
+    });
+}
+
+/** The anchors a chart's grid uses now. */
 export function slotAnchorsOf(chart: object): SlotAnchors | undefined {
   return mergedAnchors(chart);
 }
@@ -226,11 +285,13 @@ export function slotGridFor(list: readonly Stamped[]): SlotGrid | null {
   const n = list.length;
   const first = list[0]?.timestamp;
   const last = list[n - 1]?.timestamp;
+  const chart = chartOfList.get(list);
+  if (chart) ensureStarts(chart, first, last);
   const hit = cache.get(list);
   if (hit && hit.n === n && hit.first === first && hit.last === last && hit.v === version) return hit.grid;
   const times = new Array<number>(n);
   for (let i = 0; i < n; i++) times[i] = list[i]?.timestamp;
-  const grid = buildSlotGrid(times, mergedAnchors(chartOfList.get(list)));
+  const grid = buildSlotGrid(times, mergedAnchors(chart));
   cache.set(list, { n, first, last, v: version, grid });
   return grid;
 }

@@ -5,7 +5,8 @@
 // they are reading, even when it widens the slot grid.
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { dispose, init, type Chart, type KLineData } from "klinecharts";
-import { relayoutSlots, setEqualWidthDays, setSlotAnchors, slotGridFor } from "./equalWidthDays";
+import { relayoutSlots, setEqualWidthDays, setSlotAnchors, setSlotSource, slotGridFor } from "./equalWidthDays";
+import { utcAnchors } from "./equalWidthDays.testUtil";
 
 function stubCanvas(): void {
   const ctx = new Proxy({ measureText: () => ({ width: 10 }) } as Record<string, unknown>, {
@@ -51,6 +52,9 @@ describe("equal-width days on a real klinecharts store", () => {
     document.body.appendChild(container);
     chart = init(container)!;
     store = (chart as unknown as { _chartStore: Store })._chartStore;
+    // The broker's bars: UTC days (every day, so every weekday is a column)
+    // and Monday weeks, over all the days these tests load.
+    setSlotAnchors(chart, "broker", utcAnchors(Array.from({ length: 40 }, (_, d) => D0 - 7 * DAY + d * DAY)));
     store._addData(days(10, 20), "init", true);
     chart.setBarSpace(20); // about 40 slots wide, so the centre is mid-data
     store.setLastBarRightSideDiffBarCount(-30); // scrolled back
@@ -97,14 +101,31 @@ describe("equal-width days on a real klinecharts store", () => {
     const before = slotGridFor(store.getDataList())!.perDay;
     const ts = centreTs();
     const x = xOfTs(ts);
-    // The broker's days start at 21:00, an hour before the inferred pause.
-    const dayStarts = Array.from({ length: 12 }, (_, d) => D0 - DAY + d * DAY + 21 * H);
-    setSlotAnchors(chart, "p", { dayStarts });
+    // The broker's bars arrive saying its days start at 22:00.
+    const utc = utcAnchors(Array.from({ length: 40 }, (_, d) => D0 - 7 * DAY + d * DAY));
+    const dayStarts = Array.from({ length: 13 }, (_, d) => D0 - 2 * DAY + d * DAY + 22 * H);
+    setSlotAnchors(chart, "broker", { dayStarts, weekStarts: utc.weekStarts });
     expect(slotGridFor(store.getDataList())!.perDay).not.toBe(before);
     expect(xOfTs(ts)).toBe(x);
-    // Unpinning goes back to inferred days, again without sliding the view.
-    setSlotAnchors(chart, "p", null);
+    // And back, again without sliding the view.
+    setSlotAnchors(chart, "broker", utc);
     expect(slotGridFor(store.getDataList())!.perDay).toBe(before);
+    expect(xOfTs(ts)).toBe(x);
+  });
+
+  it("the broker's starts arriving from the source keep the centre candle in place", async () => {
+    // Day 18 opens late, after the centre: the grid adds an empty slot there.
+    store._addData([...days(10, 18), ...days(18, 19, 15), ...days(19, 20)], "init", true);
+    const utc = utcAnchors(Array.from({ length: 40 }, (_, d) => D0 - 7 * DAY + d * DAY));
+    let answer!: (a: typeof utc) => void;
+    setSlotSource(chart, () => new Promise((r) => (answer = r))); // drops the starts: no grid
+    store.setLastBarRightSideDiffBarCount(-30);
+    expect(slotGridFor(store.getDataList())).toBeNull();
+    const ts = centreTs();
+    const x = xOfTs(ts);
+    answer(utc);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(slotGridFor(store.getDataList())).not.toBeNull();
     expect(xOfTs(ts)).toBe(x);
   });
 

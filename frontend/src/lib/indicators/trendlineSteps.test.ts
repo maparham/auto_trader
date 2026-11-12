@@ -14,6 +14,7 @@ import {
   type StepPiece,
 } from "./trendlineSteps";
 import { buildSlotGrid } from "../equalWidthDays";
+import { utcAnchors } from "../equalWidthDays.testUtil";
 
 const H = 3_600_000;
 const DAY = 24 * H;
@@ -278,7 +279,7 @@ describe("equal-width days (slots)", () => {
 
   it("with slots every day spans perDay and the ramp is one straight line", () => {
     const times = hourlyWithHoles();
-    const grid = buildSlotGrid(times)!;
+    const grid = buildSlotGrid(times, utcAnchors(times))!;
     const map = buildHtfStepMap((i) => times[i], times.length, startsOf(days), DAY, "DAY", grid);
     for (let j = 0; j < map.forming; j++) expect(map.span(j)!.to - map.span(j)!.from).toBe(grid.perDay);
     const pieces = buildSteps(map, value, 0, 8, all);
@@ -290,7 +291,7 @@ describe("equal-width days (slots)", () => {
 
   it("jAt inside a day's leading gap reads that day", () => {
     const times = hourlyWithHoles();
-    const grid = buildSlotGrid(times)!;
+    const grid = buildSlotGrid(times, utcAnchors(times))!;
     const map = buildHtfStepMap((i) => times[i], times.length, startsOf(days), DAY, "DAY", grid);
     // Day 2 starts at slot 14 but its first candle sits at slot 17.
     expect(map.jAt(14)).toBeCloseTo(2 + 0.5 / 7, 9);
@@ -299,7 +300,7 @@ describe("equal-width days (slots)", () => {
 
   it("the newest day's span runs a full day past its first candle", () => {
     const times = hourlyWithHoles().slice(0, -4); // the last day holds 3 candles
-    const grid = buildSlotGrid(times)!;
+    const grid = buildSlotGrid(times, utcAnchors(times))!;
     const map = buildHtfStepMap((i) => times[i], times.length, startsOf(days.slice(0, -1)), DAY, "DAY", grid);
     const s = map.span(map.nowBar)!;
     expect(s.to - s.from).toBe(grid.perDay);
@@ -310,7 +311,7 @@ describe("equal-width days (slots)", () => {
     // Five weeks of trading days; Monday of week 3 is a holiday.
     const wdays = tradingDays(25).filter((d) => d !== 14);
     const times = hourly(wdays);
-    const grid = buildSlotGrid(times)!;
+    const grid = buildSlotGrid(times, utcAnchors(times))!;
     const weekStarts = [0, 1, 2, 3, 4].map((w) => MON + w * 7 * DAY);
     const map = buildHtfStepMap((i) => times[i], times.length, weekStarts, 7 * DAY, "WEEK", grid);
     for (let j = 0; j < map.forming; j++) expect(map.span(j)!.to - map.span(j)!.from).toBe(grid.perWeek);

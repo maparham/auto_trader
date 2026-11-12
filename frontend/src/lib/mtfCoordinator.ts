@@ -7,8 +7,6 @@
 // Backend note: /api/candles serves any resolution, so this needs no new
 // endpoint (see [[capital-com-api]] / charting-stack memory).
 
-import { setSlotAnchors } from "./equalWidthDays";
-import { slotAnchorsFor } from "./slotAnchorsFromPins";
 import type { Chart, KLineData } from "klinecharts";
 // RESOLUTION_SECONDS deliberately NOT imported: the HTF width comes from
 // nominalBarHours so a pin ALIAS ("1H") resolves the same as its canonical
@@ -746,7 +744,6 @@ async function applyHtfPin<E extends { mtf?: unknown }>(
     clearMtfRetry(chart, paneId, name);
     ext.mtf = { timeframe: null };
     write();
-    setSlotAnchors(chart, name, null);
     return;
   }
 
@@ -805,8 +802,44 @@ async function applyHtfPin<E extends { mtf?: unknown }>(
     ...(!failed ? { coveredFromMs: askFromMs, coveredToMs: askToMs } : {}),
   };
   write();
-  // Time gaps: a 1D or 1W pin gives the chart its broker's day or week starts.
-  setSlotAnchors(chart, name, slotAnchorsFor(timeframe, (ext.mtf as MtfSeriesBase).htfStarts));
+}
+
+/**
+ * Time gaps: the open times of a symbol's daily and weekly bars over
+ * [fromMs, toMs], from its own broker, through the same shared bar store the
+ * pinned panes use. Null when either cannot be loaded or comes back empty.
+ */
+export async function fetchBrokerDayWeekStarts(
+  epic: string,
+  brokerId: string | undefined,
+  fromMs: number,
+  toMs: number,
+): Promise<{ dayStarts: number[]; weekStarts: number[] } | null> {
+  const side = loadSettings().priceSide;
+  const load = async (timeframe: string, padMs: number): Promise<number[] | null> => {
+    const htfSec = (nominalBarHours(timeframe) ?? 0) * 3600;
+    if (!htfSec) return null;
+    const res = await fetchHtfInterval(
+      htfIntervalKey({ brokerId, epic, timeframe, priceSide: side }),
+      fromMs - padMs,
+      toMs,
+      htfSec * 1000,
+      (spanFromMs, spanToMs) =>
+        fetchSpanParallel<KLineData>({
+          fromMs: spanFromMs,
+          toMs: spanToMs,
+          resSec: htfSec,
+          pageBars: HTF_PAGE_BARS,
+          maxWindows: HTF_MAX_PAGES,
+          concurrency: HTF_FETCH_LANES,
+          fetchWindow: (fSec, tSec) => fetchRangeStrict(epic, timeframe, fSec, tSec, side, brokerId),
+        }),
+    );
+    if (res.failed || !res.bars.length) return null;
+    return res.bars.map((b) => b.timestamp);
+  };
+  const [dayStarts, weekStarts] = await Promise.all([load("DAY", 0), load("WEEK", 7 * 86_400_000)]);
+  return dayStarts && weekStarts ? { dayStarts, weekStarts } : null;
 }
 
 /**
