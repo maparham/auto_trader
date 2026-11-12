@@ -319,6 +319,44 @@ Probe: `python3 -m scripts.alert_probe --account capital:demo`. The timeout
 defaults to 90 s with `--account`, and the probe waits 35 s for the seed
 poll before raising the tier.
 
+### Position alerts
+
+`kind: "position"` rows (`broker` = exec key such as `capital:demo`, `epic` of
+the position, `params` `{dealId, side: "sl"|"tp", atrMult}`, `atrMult` 0.05 to
+5, default 0.5) warn when the price nears a position's stop loss or take
+profit. Like `account` they are NOT in `alert_kinds.KINDS`:
+`core/position_alert_kind.py` validates and signs them (the signature is
+dealId + side, so `atrMult` does not make a duplicate) and
+`core/position_watch.py` (`POSITION_WATCH`) runs them. It polls
+`get_positions` every 10 s per watched account, and subscribes the (data
+broker, epic) feeds through the engine seams `AlertEngine.set_extra_feeds`
+and `add_tick_listener`. The threshold is `atrMult` x ATR(14) of 15m mid
+candles (`atr_series`); a long watches the bid, a short the offer (a missing
+side falls back to the other). It fires on the first tick if already inside,
+re-arms once the distance passes 1.5x the threshold or the level moves, and
+deletes the row, with no notification, when the position closes or the level
+is removed. A failed poll deletes nothing; only a successful poll that lacks
+the deal does. Fired state is in memory. No ATR yet means no fire.
+MetaApi `mt5` is never watched (`account_not_watchable`); `mt5-self` and paper
+are. A trailing-stop position refuses the SL side (`trailing_stop`), TP is fine.
+
+The Telegram fire carries a `Remove SL`/`Remove TP` button (`pr:<token>`),
+which opens a separate confirm message (`pry:`/`prn:`). Tokens are 8 chars
+(callback data is capped at 64 bytes), single use and valid 600 s. The Yes tap
+refuses when the level changed since the fire, the position is closed or has a
+trailing stop (TP removal too), the chat is not the owner's, or the user may
+not deal from Telegram (`can_deal_from_telegram`: dev mode or the id in
+`ADMIN_USER_IDS`).
+
+Create and patch are admin-only; 422 codes are `position_not_found`,
+`no_level`, `trailing_stop` and `account_not_watchable`; a patch cannot change
+the deal or side. Frontend: the order ticket's proximity switches (market
+orders only), a bell on the position row, `PositionAlertModal.tsx`, the
+"Positions" group in `AlertsSidebar.tsx`, and `Settings.proximityAtrMult` (the
+default multiple). Probe: `python3 -m scripts.alert_probe --position
+capital:demo --deal DEAL --side sl` (60 s default timeout; it never taps
+Telegram). Spec: docs/superpowers/specs/2026-11-12-sl-tp-proximity-alerts-design.md.
+
 ## Screener
 
 The screener (`ScreenerPanel.tsx`, right-docked side panel) runs one

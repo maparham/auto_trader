@@ -8,6 +8,15 @@ own broker feed, independent of any open UI. Run:
     cd backend && python3 -m scripts.alert_probe --epic BTCUSD --broker capital-live
     cd backend && python3 -m scripts.alert_probe --indicator --epic BTCUSD --broker capital-live
     cd backend && python3 -m scripts.alert_probe --account capital:demo
+    cd backend && python3 -m scripts.alert_probe --position capital:demo --deal DEAL --side sl
+
+--position ACCOUNT --deal DEAL --side sl|tp probes a position alert on an open
+position (admin only; the deal must hold that level). It looks the epic up in
+GET /api/positions, creates a `position` alert with atrMult 5 so it fires on
+the first tick, waits for `__alerts__:fired` with its id on /ws/state (default
+--timeout 60 s), prints the headline and deletes the alert. It never taps
+anything in Telegram: a fire sends the Remove button to the owner's chat as
+usual, so leave it alone.
 
 --account KEY probes an account alert on a dealing account (admin only, a
 Capital or IG account the monitor can poll). It reads the account's equity
@@ -93,6 +102,81 @@ def _alert_status(client: httpx.Client, alert_id: str) -> str:
                 f"unmonitoredReason={row.get('unmonitoredReason')!r}")
     except Exception as e:
         return f"alert status unavailable: {e!r}"
+
+
+def main_position(url: str, account: str, deal: str, side: str, timeout: float) -> int:
+    """Create a position alert (atrMult 5), wait for its fire on /ws/state,
+    print the headline, delete the alert."""
+    import asyncio
+    import json
+
+    from websockets.asyncio.client import connect
+
+    alert_id = f"al-probe-{uuid.uuid4()}"
+    ws_url = url.replace("http", "ws", 1) + "/ws/state"
+
+    async def run() -> int:
+        with httpx.Client(base_url=url, timeout=10.0) as client:
+            try:
+                r = client.get("/api/positions", params={"account": account})
+                r.raise_for_status()
+            except httpx.HTTPError as e:
+                print(f"FAIL: could not list positions for {account}: {e}")
+                return 1
+            pos = next((p for p in r.json() if p.get("deal_id") == deal), None)
+            if pos is None:
+                print(f"FAIL: deal {deal} not found on {account}")
+                return 1
+            epic = pos["epic"]
+            print(f"{account}:{epic} deal {deal} side={side} -> atrMult 5")
+            body = {"id": alert_id, "broker": account, "epic": epic, "kind": "position",
+                    "params": {"dealId": deal, "side": side, "atrMult": 5},
+                    "message": "alert_probe e2e check", "precision": 2}
+            created = False
+            try:
+                async with connect(ws_url) as ws:
+                    cr = client.post("/api/alerts", json=body)
+                    try:
+                        cr.raise_for_status()
+                    except httpx.HTTPStatusError as e:
+                        print(f"FAIL: create alert failed: {e}\n{cr.text}")
+                        return 1
+                    created = True
+                    print(f"created alert {alert_id}")
+                    deadline = time.monotonic() + timeout
+                    while True:
+                        left = deadline - time.monotonic()
+                        if left <= 0:
+                            break
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), timeout=left)
+                        except asyncio.TimeoutError:
+                            break
+                        try:
+                            msg = json.loads(raw)
+                        except ValueError:
+                            continue
+                        val = msg.get("value")
+                        if msg.get("key") == "__alerts__:fired" and isinstance(val, dict) \
+                                and val.get("id") == alert_id:
+                            print(f"headline: {val.get('headline')}")
+                            print(f"PASS: alert {alert_id} fired within {timeout:.0f}s")
+                            return 0
+                print(f"TIMEOUT: alert {alert_id} did not fire within {timeout:.0f}s "
+                      "(ATR may still be loading, or the market is closed)")
+                return 1
+            except OSError as e:
+                print(f"FAIL: could not reach {ws_url}: {e}")
+                return 1
+            finally:
+                if created:
+                    d = client.delete(f"/api/alerts/{alert_id}")
+                    if d.status_code not in (204, 404):
+                        print(f"warning: cleanup delete returned {d.status_code}: {d.text}")
+                    else:
+                        print(f"cleaned up alert {alert_id}")
+
+    return asyncio.run(run())
 
 
 def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = False,
@@ -249,7 +333,18 @@ if __name__ == "__main__":
     ap.add_argument("--account", default=None, metavar="KEY",
                      help="probe an account alert on this dealing account key (e.g. capital:demo), "
                           "instead of a price-level alert; admin only")
+    ap.add_argument("--position", default=None, metavar="ACCOUNT",
+                     help="probe a position alert on this dealing account key (needs --deal and --side)")
+    ap.add_argument("--deal", default=None, help="deal id of the open position (with --position)")
+    ap.add_argument("--side", choices=("sl", "tp"), default=None, help="level to watch (with --position)")
     ns = ap.parse_args()
+    if ns.position:
+        if ns.account or ns.indicator:
+            ap.error("--position excludes --account and --indicator")
+        if not ns.deal or not ns.side:
+            ap.error("--position needs --deal and --side")
+        sys.exit(main_position(ns.url, ns.position, ns.deal, ns.side,
+                               ns.timeout if ns.timeout is not None else 60.0))
     if ns.account and ns.indicator:
         ap.error("--account and --indicator are mutually exclusive")
     timeout = ns.timeout if ns.timeout is not None else (90.0 if ns.account else 30.0)
