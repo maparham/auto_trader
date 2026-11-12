@@ -1,16 +1,16 @@
 diff --git a/node_modules/klinecharts/dist/index.esm.js b/node_modules/klinecharts/dist/index.esm.js
-index 7b7d9f2..7a14038 100644
+index 7b7d9f2..d048b90 100644
 --- a/node_modules/klinecharts/dist/index.esm.js
 +++ b/node_modules/klinecharts/dist/index.esm.js
-@@ -5475,11 +5475,13 @@ var StoreImp = /** @class */ (function () {
+@@ -5475,17 +5475,25 @@ var StoreImp = /** @class */ (function () {
                      break;
                  }
                  case 'backward': {
-+                    var __oldPos = this._posCount();
++                    var __bAnchor = this._viewAnchor();
                      this._dataList = this._dataList.concat(data);
                      this._dataLoadMore.backward = realMore.backward;
 -                    this._lastBarRightSideDiffBarCount -= data.length;
-+                    var __addPos = this._posCount() - __oldPos;
++                    var __addPos = this._viewAnchorShift(__bAnchor, 0);
 +                    this._lastBarRightSideDiffBarCount -= __addPos;
                      // scroll start LastBarRightSideDiffBarCount should sub data length
 -                    this._startLastBarRightSideDiffBarCount -= data.length;
@@ -18,7 +18,34 @@ index 7b7d9f2..7a14038 100644
                      adjustFlag = data.length > 0;
                      break;
                  }
-@@ -5538,15 +5540,28 @@ var StoreImp = /** @class */ (function () {
+                 case 'forward': {
++                    var __fAnchor = this._viewAnchor();
+                     this._dataList = data.concat(this._dataList);
+                     this._dataLoadMore.forward = realMore.forward;
++                    // chartkar patch: 0 without slots; under slots a widened day
++                    // must not slide the candles in view.
++                    var __fShift = this._viewAnchorShift(__fAnchor, data.length);
++                    this._lastBarRightSideDiffBarCount -= __fShift;
++                    this._startLastBarRightSideDiffBarCount -= __fShift;
+                     adjustFlag = data.length > 0;
+                     break;
+                 }
+@@ -5498,10 +5506,13 @@ var StoreImp = /** @class */ (function () {
+             var timestamp = data.timestamp;
+             var lastDataTimestamp = formatValue(this._dataList[dataCount - 1], 'timestamp', 0);
+             if (timestamp > lastDataTimestamp) {
++                var __lAnchor = this._viewAnchor();
+                 this._dataList.push(data);
+                 var lastBarRightSideDiffBarCount = this.getLastBarRightSideDiffBarCount();
+                 if (lastBarRightSideDiffBarCount < 0) {
+-                    this.setLastBarRightSideDiffBarCount(--lastBarRightSideDiffBarCount);
++                    // chartkar patch: was --count (one bar); a new candle can
++                    // add several slots, or widen every day.
++                    this.setLastBarRightSideDiffBarCount(lastBarRightSideDiffBarCount - this._viewAnchorShift(__lAnchor, 0));
+                 }
+                 success = true;
+                 adjustFlag = true;
+@@ -5538,15 +5549,28 @@ var StoreImp = /** @class */ (function () {
      StoreImp.prototype._calcOptimalBarSpace = function () {
          var specialBarSpace = 4;
          var ratio = 1 - BAR_GAP_RATIO * Math.atan(Math.max(specialBarSpace, this._barSpace) - specialBarSpace) / (Math.PI * 0.5);
@@ -53,7 +80,7 @@ index 7b7d9f2..7a14038 100644
          var visibleBarCount = this._totalBarSpace / this._barSpace;
          var leftMinVisibleBarCount = 0;
          var rightMinVisibleBarCount = 0;
-@@ -5578,6 +5593,13 @@ var StoreImp = /** @class */ (function () {
+@@ -5578,6 +5602,13 @@ var StoreImp = /** @class */ (function () {
              from = 0;
          }
          var realFrom = this._lastBarRightSideDiffBarCount > 0 ? Math.round(totalBarCount + this._lastBarRightSideDiffBarCount - visibleBarCount) - 1 : from;
@@ -67,7 +94,7 @@ index 7b7d9f2..7a14038 100644
          this._visibleRange = { from: from, to: to, realFrom: realFrom, realTo: realTo };
          this.executeAction('onVisibleRangeChange', this._visibleRange);
          this._visibleRangeDataList = [];
-@@ -5614,7 +5636,7 @@ var StoreImp = /** @class */ (function () {
+@@ -5614,7 +5645,7 @@ var StoreImp = /** @class */ (function () {
                  this._processDataLoad('forward');
              }
          }
@@ -76,7 +103,7 @@ index 7b7d9f2..7a14038 100644
              if (this._dataLoadMore.backward) {
                  this._processDataLoad('backward');
              }
-@@ -5678,7 +5700,7 @@ var StoreImp = /** @class */ (function () {
+@@ -5678,7 +5709,7 @@ var StoreImp = /** @class */ (function () {
              bar: this._barSpace,
              halfBar: this._barSpace / 2,
              gapBar: this._gapBarSpace,
@@ -85,7 +112,7 @@ index 7b7d9f2..7a14038 100644
          };
      };
      StoreImp.prototype.setBarSpace = function (barSpace, adjustBeforeFunc) {
-@@ -5783,9 +5805,7 @@ var StoreImp = /** @class */ (function () {
+@@ -5783,9 +5814,7 @@ var StoreImp = /** @class */ (function () {
          return (_a = this._dataList[dataIndex]) !== null && _a !== void 0 ? _a : null;
      };
      StoreImp.prototype.coordinateToFloatIndex = function (x) {
@@ -96,7 +123,7 @@ index 7b7d9f2..7a14038 100644
          return Math.round(index * 1000000) / 1000000;
      };
      StoreImp.prototype.dataIndexToTimestamp = function (dataIndex) {
-@@ -5902,10 +5922,47 @@ var StoreImp = /** @class */ (function () {
+@@ -5902,10 +5931,64 @@ var StoreImp = /** @class */ (function () {
          }
          return binarySearchNearest(this._dataList, 'timestamp', timestamp);
      };
@@ -128,6 +155,23 @@ index 7b7d9f2..7a14038 100644
 +        if (!s) return p;
 +        try { var i = s.idxOf(p); return isFinite(i) ? i : p; } catch (e) { return p; }
 +    };
++    // The candle at the middle of the view and its distance (in positions)
++    // from the end, so a data change can keep it where it was. Without slots
++    // the shift is exactly what klinecharts did before: the bars appended at
++    // the right, or 0 for a prepend.
++    StoreImp.prototype._viewAnchor = function () {
++        var n = this._dataList.length;
++        if (n === 0) return null;
++        var i = Math.round(this.coordinateToFloatIndex(this._totalBarSpace / 2));
++        if (!isFinite(i)) i = n - 1;
++        i = Math.min(n - 1, Math.max(0, i));
++        return { i: i, dist: this._posCount() - this._posOf(i), n: n };
++    };
++    StoreImp.prototype._viewAnchorShift = function (a, prepended) {
++        var n = this._dataList.length;
++        if (!a) return prepended ? 0 : n;
++        return (this._posCount() - this._posOf(a.i + prepended)) - a.dist;
++    };
 +    StoreImp.prototype._posCount = function () {
 +        var s = this._slots();
 +        if (!s) return this._dataList.length;
@@ -147,7 +191,7 @@ index 7b7d9f2..7a14038 100644
      };
      StoreImp.prototype.coordinateToDataIndex = function (x) {
          return Math.ceil(this.coordinateToFloatIndex(x)) - 1;
-@@ -6042,11 +6099,11 @@ var StoreImp = /** @class */ (function () {
+@@ -6042,11 +6125,11 @@ var StoreImp = /** @class */ (function () {
              }
          }
          var x = zoomCoordinate.x;
@@ -161,7 +205,7 @@ index 7b7d9f2..7a14038 100644
          });
          var realScale = this._barSpace / prevBarSpace;
          if (realScale !== 1) {
-@@ -7896,7 +7953,7 @@ var CandleBarView = /** @class */ (function (_super) {
+@@ -7896,7 +7979,7 @@ var CandleBarView = /** @class */ (function (_super) {
                          yAxis_1.convertToPixel(low)
                      ];
                      priceY.sort(function (a, b) { return a - b; });

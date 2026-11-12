@@ -39,6 +39,17 @@ describe("buildSlotGrid", () => {
     for (let k = 1; k < g.n; k++) expect(g.pos[k]).toBeGreaterThan(g.pos[k - 1]);
   });
 
+  it("a stray stamp on a 24h market does not shift later candles", () => {
+    // 4H bars round the clock for three days, plus one extra 21:00 stamp on day 0.
+    const four = (d: number) => day(d, [0, 4, 8, 12, 16, 20]);
+    const g = buildSlotGrid([...four(0), 0 * DAY + 21 * HOUR, ...four(1), ...four(2)])!;
+    expect(g.perDay).toBe(6);
+    expect(g.pos[7]).toBe(6); // day 1's 00:00 candle starts day 1
+    expect(g.pos[g.n - 1]).toBe(17);
+    expect(g.pos[6]).toBeGreaterThan(g.pos[5]);
+    expect(g.pos[6]).toBeLessThan(6);
+  });
+
   it("no grid for one candle or a daily chart", () => {
     expect(buildSlotGrid(day(0, [13]))).toBeNull();
     expect(buildSlotGrid([0, DAY, 2 * DAY])).toBeNull();

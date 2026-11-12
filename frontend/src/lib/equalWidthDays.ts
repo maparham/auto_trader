@@ -55,12 +55,21 @@ export function buildSlotGrid(times: readonly number[]): SlotGrid | null {
     if (off[i] > maxOff) maxOff = off[i];
   }
   const perDay = maxOff - minOff + 1;
-  const pos = new Array<number>(n);
+  const own = new Array<number>(n);
   let dayNum = 0;
   for (let i = 0; i < n; i++) {
     if (i > 0 && dayOf[i] !== dayOf[i - 1]) dayNum++;
-    pos[i] = dayNum * perDay + (off[i] - minOff);
-    if (i > 0 && pos[i] <= pos[i - 1]) pos[i] = pos[i - 1] + 1;
+    own[i] = dayNum * perDay + (off[i] - minOff);
+  }
+  // Candles sharing a slot (a DST fall-back, a stray stamp) split that slot
+  // evenly, so positions stay strictly increasing without pushing any later
+  // candle out of its own slot.
+  const pos = new Array<number>(n);
+  for (let i = 0; i < n; ) {
+    let k = i + 1;
+    while (k < n && own[k] === own[i]) k++;
+    for (let m = i; m < k; m++) pos[m] = own[i] + (m - i) / (k - i);
+    i = k;
   }
   const last = n - 1;
   return {
