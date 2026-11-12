@@ -306,6 +306,20 @@ describe("equal-width days (slots)", () => {
     expect(stepRange(map.forming - 1, map.forming - 1, map).endPos).toBe(grid.pos[times.length - 1] + 0.5);
   });
 
+  it("with slots a week pin spans perWeek, even with a Monday holiday", () => {
+    // Five weeks of trading days; Monday of week 3 is a holiday.
+    const wdays = tradingDays(25).filter((d) => d !== 14);
+    const times = hourly(wdays);
+    const grid = buildSlotGrid(times)!;
+    const weekStarts = [0, 1, 2, 3, 4].map((w) => MON + w * 7 * DAY);
+    const map = buildHtfStepMap((i) => times[i], times.length, weekStarts, 7 * DAY, "WEEK", grid);
+    for (let j = 0; j < map.forming; j++) expect(map.span(j)!.to - map.span(j)!.from).toBe(grid.perWeek);
+    const pieces = buildSteps(map, value, 0, map.nowBar - 1, all); // the newest week stays flat
+    const slope = (p: StepPiece) => (p.y1 - p.y0) / (p.x1 - p.x0);
+    expect(pieces.length).toBeGreaterThan(1);
+    for (const p of pieces) expect(slope(p)).toBeCloseTo(slope(pieces[0]), 9);
+  });
+
   it("without slots the map is unchanged", () => {
     const map = mapOf(hourly(days), startsOf(days));
     expect(map.candlePos(5)).toBe(5);

@@ -17,8 +17,9 @@
 // turns a position into a pixel with the x axis (linear in the index).
 // Under equal-width days (lib/equalWidthDays.ts) positions are display SLOTS
 // instead: candle c sits at slots.pos[c], a pin of a day or longer spans whole
-// days of slots (so every daily bar is perDay wide and a Smooth line is
-// straight), and the caller converts with candlePos / toIndex.
+// days of slots (whole weeks for a weekly pin), so every daily bar is perDay
+// wide, every weekly bar perWeek wide, and a Smooth line is straight. The
+// caller converts with candlePos / toIndex.
 //
 // Chart-free and pure, apart from the per-frame memo in stepMapFor.
 
@@ -80,8 +81,12 @@ export function buildHtfStepMap(
   // Candle c's position, and the edges a span of candles a..b-1 takes: the
   // candles themselves, or (slots, a pin of a day or longer) whole days.
   const P = (c: number): number => (slots ? slots.pos[c] : c);
+  // The whole unit a span snaps to: a week of slots for weekly pins (every
+  // week is the same width, holidays included), a day for daily and coarser
+  // pins (months differ in weeks, so they stay on days).
   const wholeDays = !!slots && htfMs >= DAY_MS;
-  const perDay = slots ? slots.perDay : 1;
+  const weekly = htfMs >= 7 * DAY_MS && htfMs < 28 * DAY_MS;
+  const perDay = slots ? (weekly ? slots.perWeek : slots.perDay) : 1;
   const dayStart = (p: number): number => Math.floor(p / perDay) * perDay;
   const leftEdge = (a: number): number => (wholeDays ? dayStart(P(a)) : P(a)) - 0.5;
   // The right edge of a run ending before candle b: where candle b's run

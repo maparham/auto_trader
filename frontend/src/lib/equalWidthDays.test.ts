@@ -121,6 +121,12 @@ describe("broker days and equal weeks", () => {
     for (let k = 1; k < g.n; k++) expect(g.pos[k]).toBeGreaterThan(g.pos[k - 1]);
   });
 
+  it("a first week opening mid-week keeps weeks on multiples of perWeek", () => {
+    const g = buildSlotGrid(stock([2, 3, 4, 7, 8]))!;
+    expect(g.pos[0]).toBe(2 * 7);
+    expect(g.pos[3 * 7]).toBe(g.perWeek); // Monday of week 2
+  });
+
   it("given week starts set the weeks", () => {
     const t = stock(weekdays);
     const g = buildSlotGrid(t, { weekStarts: [at(0, 0), at(7, 0)] })!;

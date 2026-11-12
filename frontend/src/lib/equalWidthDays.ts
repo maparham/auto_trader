@@ -130,16 +130,16 @@ export function buildSlotGrid(times: readonly number[], anchors?: SlotAnchors): 
   const order = [...seen].sort((a, b) => mod(a - firstWd, 7) - mod(b - firstWd, 7));
   const colOf = new Map(order.map((wd, c) => [wd, c]));
   const perWeek = order.length * perDay;
+  // Weeks start at multiples of perWeek and days at multiples of perDay (the
+  // Trendlines step map relies on it), so a first week that opens mid-week
+  // keeps its empty leading columns.
   const own = new Array<number>(n);
   let weekIdx = -1;
   let lastWeek = NaN;
-  let base = 0;
   for (let i = 0; i < n; i++) {
     const week = Math.floor((cal[i] + 3 - firstWd) / 7);
     if (week !== lastWeek) [weekIdx, lastWeek] = [weekIdx + 1, week];
     own[i] = weekIdx * perWeek + colOf.get(weekdayOf(cal[i]))! * perDay + (slot[i] - minSlot);
-    if (i === 0) base = colOf.get(weekdayOf(cal[0]))! * perDay;
-    own[i] -= base;
     // Mixed sources (given starts after inferred days) must never go back.
     if (i > 0 && own[i] < own[i - 1]) own[i] = own[i - 1];
   }

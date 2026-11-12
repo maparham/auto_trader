@@ -976,3 +976,44 @@ describe("TRENDLINES_TEMPLATE.draw under a 1D pin with equal-width days", () => 
     expect(last.y1).toBe(last.y0);
   });
 });
+
+describe("TRENDLINES_TEMPLATE.draw under a 1W pin with equal-width days", () => {
+  const DAY = 86_400_000;
+  const H = 3_600_000;
+  const WEEK = 7 * DAY;
+  const D0 = Date.UTC(2026, 10, 2); // Monday
+  // Five weeks of weekday hourly candles 13:00..19:00 UTC; Monday of week 3
+  // (day 14) is a holiday.
+  const bars: KLineData[] = [];
+  for (let d = 0; d < 35; d++)
+    if (d % 7 < 5 && d !== 14) for (let h = 13; h <= 19; h++) bars.push(bar(D0 + d * DAY + h * H));
+  const weekStarts = Array.from({ length: 5 }, (_, w) => D0 + w * WEEK);
+  const mtf = stash({
+    timeframe: "WEEK",
+    htfStarts: weekStarts,
+    htfMs: WEEK,
+    htfPoints: weekStarts.map((_, i) => ({ tl_1: 110 - 2 * (i - 1) })),
+  });
+
+  it("a 1W pin is straight with time gaps", () => {
+    setEqualWidthDays(true);
+    let out: { segments: Seg[] };
+    const grid = buildSlotGrid(bars.map((b) => b.timestamp))!;
+    try {
+      const xAxis = { convertToPixel: (i: number) => grid.posOf(i), convertFromPixel: (x: number) => Math.round(grid.idxOf(x)) };
+      out = draw(bars, mtf, { pinnedStyle: "ramp", xAxisOverride: xAxis });
+    } finally {
+      setEqualWidthDays(false);
+    }
+    const edges = Array.from({ length: 5 }, (_, w) => w * grid.perWeek - 0.5);
+    const ps = out.segments.filter((s) => s.x1 > s.x0 && edges.includes(s.x0));
+    expect(ps.length).toBe(4); // HTF bars 1..4
+    const slope = (s: Seg) => (s.y1 - s.y0) / (s.x1 - s.x0);
+    for (const s of ps.slice(0, -1)) {
+      expect(s.x1 - s.x0).toBe(grid.perWeek);
+      expect(slope(s)).toBeCloseTo(slope(ps[0]), 9);
+    }
+    const last = ps[ps.length - 1];
+    expect(last.y1).toBe(last.y0);
+  });
+});
