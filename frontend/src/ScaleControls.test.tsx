@@ -100,7 +100,7 @@ describe("ScaleControls equal-width days toggle", () => {
     const { rerender } = render(
       <ScaleControls controller={controller} equalWidthDays={on} onToggleEqualWidthDays={toggle} />,
     );
-    const btn = () => screen.getByRole("button", { name: "Equal-width days" }) as HTMLButtonElement;
+    const btn = () => screen.getByRole("button", { name: "Time gaps" }) as HTMLButtonElement;
     expect(btn().className).not.toContain("on");
     await user.click(btn());
     expect(on).toBe(true);
@@ -110,6 +110,6 @@ describe("ScaleControls equal-width days toggle", () => {
 
   it("is absent without a handler", () => {
     render(<ScaleControls controller={new ChartController("cell-1", SCOPE)} />);
-    expect(screen.queryByRole("button", { name: "Equal-width days" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Time gaps" })).toBeNull();
   });
 });

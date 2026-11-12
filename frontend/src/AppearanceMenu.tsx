@@ -139,7 +139,7 @@ export default function AppearanceMenu({ settings, onChange, onBarChangeAll }: P
 
           <div className="appr-label appr-switch-row">
             <span className="label-info">
-              <span id="appr-equal-days">Equal-width days</span>
+              <span id="appr-equal-days">Time gaps</span>
               <InfoTip
                 text={[
                   "Every trading day gets the same width.",

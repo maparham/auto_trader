@@ -404,6 +404,7 @@ export function ScaleControls({
       </Tooltip>
       {onToggleEqualWidthDays && (
         <Tooltip
+          title="Time gaps"
           content={[
             "Every trading day gets the same width.",
             "Missing hours show as empty space.",
@@ -411,7 +412,7 @@ export function ScaleControls({
         >
           <button
             className={equalWidthDays ? "on" : ""}
-            aria-label="Equal-width days"
+            aria-label="Time gaps"
             onClick={onToggleEqualWidthDays}
           >
             G

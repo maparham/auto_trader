@@ -10,7 +10,7 @@ describe("AppearanceMenu: Equal-width days", () => {
     const onChange = vi.fn();
     render(<AppearanceMenu settings={{ ...DEFAULT_SETTINGS, equalWidthDays: false }} onChange={onChange} />);
     fireEvent.click(screen.getAllByRole("button")[0]); // open the menu
-    const sw = screen.getByRole("switch", { name: "Equal-width days" });
+    const sw = screen.getByRole("switch", { name: "Time gaps" });
     expect(sw.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(sw);
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ equalWidthDays: true }));

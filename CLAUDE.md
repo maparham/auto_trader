@@ -172,7 +172,7 @@ End-to-end probe: `cd backend && python3 -m agent_ui_bridge.probe
 
 ## Equal-width days
 
-The Appearance menu's "Equal-width days" switch, mirrored by the toolbar's "G"
+The Appearance menu's "Time gaps" switch, mirrored by the toolbar's "G"
 beside A / L / I (`Settings.equalWidthDays`, off by default, global), draws every UTC day of an intraday chart the same width: one
 slot per chart period from the earliest to the latest time of day in the
 loaded candles, each candle in its own slot, missing periods as gaps; days
