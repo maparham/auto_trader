@@ -105,4 +105,43 @@ describe("OrderTicket proximity warnings", () => {
     expect(await screen.findByText("Order filled. Warning not set: trailing_stop")).toBeTruthy();
     expect(document.querySelector(".ot-action-done")).toBeTruthy();
   });
+
+  it("gives each side its own multiple", async () => {
+    mocks.placeOrder.mockResolvedValue({ status: "filled", deal_id: "D3", fill_price: 100, filled_quantity: 1 });
+    await renderTicket();
+    await act(async () => fireEvent.click(exitSwitches()[0]));
+    await act(async () => fireEvent.click(exitSwitches()[1]));
+    await waitFor(() => expect(warnSl().disabled).toBe(false));
+    await act(async () => fireEvent.click(warnTp()));
+    await act(async () => fireEvent.click(warnSl()));
+    fireEvent.change(screen.getByLabelText("Warn near TP ATR multiple"), { target: { value: "1.5" } });
+    fireEvent.change(screen.getByLabelText("Warn near SL ATR multiple"), { target: { value: "0.3" } });
+    expect((screen.getByLabelText("Warn near TP ATR multiple") as HTMLInputElement).value).toBe("1.5");
+    await act(async () => fireEvent.click(document.querySelector(".ot-action")!));
+    await waitFor(() => expect(mocks.addPositionAlert).toHaveBeenCalledTimes(2));
+    const calls = mocks.addPositionAlert.mock.calls.map((c) => c[0] as { side: string; atrMult: number });
+    expect(calls.find((c) => c.side === "tp")?.atrMult).toBe(1.5);
+    expect(calls.find((c) => c.side === "sl")?.atrMult).toBe(0.3);
+  });
+
+  it("keeps the warning-not-set message past 4 s until the form changes", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.placeOrder.mockResolvedValue({ status: "filled", deal_id: null, fill_price: 100, filled_quantity: 1 });
+      await renderTicket();
+      await act(async () => fireEvent.click(exitSwitches()[1]));
+      await waitFor(() => expect(warnSl().disabled).toBe(false));
+      await act(async () => fireEvent.click(warnSl()));
+      await act(async () => fireEvent.click(document.querySelector(".ot-action")!));
+      const text = "Order filled. Warning not set: no deal id from the broker";
+      expect(await screen.findByText(text)).toBeTruthy();
+      await act(async () => { vi.advanceTimersByTime(6000); });
+      expect(screen.queryByText(text)).not.toBeNull();
+      const qty = document.querySelector(".ot-qty input, input[type=number]") as HTMLInputElement;
+      await act(async () => fireEvent.change(qty, { target: { value: "2" } }));
+      expect(screen.queryByText(text)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

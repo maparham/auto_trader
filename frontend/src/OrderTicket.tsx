@@ -122,6 +122,8 @@ function seedExit(ref: number, up: boolean, atr: number | null, precision: numbe
   if (atr != null) return levelFromAtr(ref, 1, atr, up, precision);
   return Number((up ? ref * (1 + DEFAULT_BRACKET) : ref * (1 - DEFAULT_BRACKET)).toFixed(precision));
 }
+// Sticky: a real-money warning that did not get set stays until the form changes.
+const WARN_FAIL_PREFIX = "Order filled. Warning not set: ";
 const LIMIT_WARN_TIP = "Available for market orders. Turn it on from the position once filled.";
 type OrderType = "market" | "limit" | "stop";
 
@@ -155,8 +157,12 @@ export default function OrderTicket({
   // Warn-near switches ride along with the exits: spent with the draft after an order.
   const [warnTp, setWarnTp] = useState(false);
   const [warnSl, setWarnSl] = useState(false);
-  const [warnMult, setWarnMult] = useState(proximityAtrMult);
-  useEffect(() => setWarnMult(proximityAtrMult), [proximityAtrMult]);
+  const [warnTpMult, setWarnTpMult] = useState(proximityAtrMult);
+  const [warnSlMult, setWarnSlMult] = useState(proximityAtrMult);
+  useEffect(() => {
+    setWarnTpMult(proximityAtrMult);
+    setWarnSlMult(proximityAtrMult);
+  }, [proximityAtrMult]);
   const [busy, setBusy] = useState(false);
   // Synchronous in-flight guard. `disabled={busy}` only blocks the button after a
   // re-render, so a fast double-click can fire submit() twice (and double-fill)
@@ -198,6 +204,8 @@ export default function OrderTicket({
   }, [side, quantity, epic, orderType, account]);
 
   const isLimit = orderType === "limit";
+  // The sticky warning leaves on the user's next interaction with the form.
+  const dropStickyMsg = () => setMsg((m) => (m?.startsWith(WARN_FAIL_PREFIX) ? null : m));
   const round = (n: number) => Number(n.toFixed(precision));
   const fmt = (v: number | null | undefined) => (v == null ? "—" : v.toFixed(precision));
 
@@ -307,7 +315,7 @@ export default function OrderTicket({
   }, [epic, account, replaying]);
 
   useEffect(() => {
-    if (!msg) return;
+    if (!msg || msg.startsWith(WARN_FAIL_PREFIX)) return;
     window.clearTimeout(flash.current);
     flash.current = window.setTimeout(() => setMsg(null), 4000);
     return () => window.clearTimeout(flash.current);
@@ -502,12 +510,12 @@ export default function OrderTicket({
           else {
             for (const sd of warnSides) {
               const d = await addPositionAlert({
-                account, epic, dealId: result.deal_id, side: sd, atrMult: warnMult, precision,
+                account, epic, dealId: result.deal_id, side: sd, atrMult: sd === "tp" ? warnTpMult : warnSlMult, precision,
               });
               if (d && !reason) reason = d;
             }
           }
-          if (reason) setMsg(`Order filled. Warning not set: ${reason}`);
+          if (reason) setMsg(`${WARN_FAIL_PREFIX}${reason}`);
         }
       }
     } catch (e) {
@@ -567,7 +575,11 @@ export default function OrderTicket({
   }
 
   return (
-    <div className="ot">
+    <div
+      className="ot"
+      onChangeCapture={dropStickyMsg}
+      onClickCapture={dropStickyMsg}
+    >
       {/* Sell / Buy quote strip — selects the side. */}
       <div className="ot-strip">
         <button
@@ -676,7 +688,7 @@ export default function OrderTicket({
             <ProximityWarn
               label="Warn near TP"
               on={warnTp}
-              mult={warnMult}
+              mult={warnTpMult}
               disabled={!tpOn || isLimit}
               disabledReason={
                 isLimit
@@ -684,7 +696,7 @@ export default function OrderTicket({
                   : "Set a take profit first"
               }
               onToggle={setWarnTp}
-              onMult={setWarnMult}
+              onMult={setWarnTpMult}
             />
             <ExitRow
               label="Stop loss"
@@ -699,7 +711,7 @@ export default function OrderTicket({
             <ProximityWarn
               label="Warn near SL"
               on={warnSl}
-              mult={warnMult}
+              mult={warnSlMult}
               disabled={!slOn || isLimit}
               disabledReason={
                 isLimit
@@ -707,7 +719,7 @@ export default function OrderTicket({
                   : "Set a stop loss first"
               }
               onToggle={setWarnSl}
-              onMult={setWarnMult}
+              onMult={setWarnSlMult}
             />
           </>
         )}
