@@ -1188,12 +1188,12 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tab: "style",
         default: TRENDLINES_EXTEND_DEFAULTS.pinnedStyle,
         options: [
-          { value: "ramp", label: "Ramp" },
+          { value: "ramp", label: "Smooth" },
           { value: "steps", label: "Steps" },
         ],
         tip: [
           "How a line pinned to a higher timeframe draws on a lower chart.",
-          "Ramp: runs from each higher bar's value to the next. The newest bar stays flat.",
+          "Smooth: runs from each higher bar's value to the next. The newest bar stays flat.",
           "Steps: one flat piece per higher bar.",
           "Both cross each higher bar's open at the same price.",
         ],
