@@ -100,6 +100,7 @@ describe("AlertsSidebar trigger badge", () => {
         onOpenAlert={() => {}}
       />,
     );
+    fireEvent.click(screen.getByRole("button", { name: /^Alerts/ }));
     expect(screen.getAllByText("Once per bar")).toHaveLength(2);
     expect(screen.queryByText("Every time")).toBeNull();
   });
@@ -125,6 +126,7 @@ describe("AlertsSidebar account group", () => {
         onOpenAlert={() => {}}
       />,
     );
+    fireEvent.click(screen.getByRole("button", { name: /^Alerts/ }));
     expect(screen.getByText("Account")).toBeTruthy();
     expect(screen.getByText("Capital live")).toBeTruthy();
     expect(screen.getByText(/Margin level/)).toBeTruthy();
@@ -149,6 +151,7 @@ describe("AlertsSidebar account group", () => {
         onOpenAlert={() => {}}
       />,
     );
+    fireEvent.click(screen.getByRole("button", { name: /^Alerts/ }));
     expect(screen.getByText(/now 4,210 EUR/)).toBeTruthy();
     expect(screen.getByText("5,000 EUR")).toBeTruthy();
   });
@@ -191,7 +194,6 @@ describe("AlertsSidebar history: account firings", () => {
       },
     );
     const { container } = renderSidebar();
-    fireEvent.click(screen.getByRole("button", { name: /History/ }));
     const rows = container.querySelectorAll(".ap-row-hist");
     expect(rows).toHaveLength(2);
     const acct = rows[0];
