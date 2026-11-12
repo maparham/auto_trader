@@ -173,23 +173,38 @@ End-to-end probe: `cd backend && python3 -m agent_ui_bridge.probe
 ## Equal-width days
 
 The Appearance menu's "Time gaps" switch, mirrored by the toolbar's "G"
-beside A / L / I (`Settings.equalWidthDays`, off by default, global), draws every UTC day of an intraday chart the same width: one
-slot per chart period from the earliest to the latest time of day in the
-loaded candles, each candle in its own slot, missing periods as gaps; days
-without candles take no room. It is display-only: the candle list is never
-changed, so indicators, rules, backtests and alerts compute as before.
-`lib/equalWidthDays.ts` builds the grid (`buildSlotGrid`, cached per data
-list by `slotGridFor`) and `setEqualWidthDays` installs the provider
-`globalThis.__chartkarSlots`, which the klinecharts patch
-(`patches/klinecharts+10.0.0.patch`, `StoreImp._slots`/`_posOf`/`_idxOf`)
-reads for every index/x conversion, the visible range, zoom and appended
-history; without it every position equals the index. A Trendlines line
-pinned to 1D or coarser gets whole-day spans from the step map
-(`buildHtfStepMap(..., slots)`, `candlePos`/`toIndex`), so the Smooth look of
-a 1D pin is straight. Out of scope for now: drawings, indicator lines,
-chart-timeframe trendlines and alert lines follow the slots but stay straight
-in time across a gap; weekly/monthly pins and non-UTC brokers keep kinks.
-Spec: docs/superpowers/specs/2026-11-12-equal-width-days-design.md.
+beside A / L / I (`Settings.equalWidthDays`, off by default, global), draws
+every broker day of an intraday chart the same width: one slot per chart
+period from the earliest to the latest time into the day in the loaded
+candles, each candle in its own slot, missing periods as gaps. The chart is
+laid out by weeks: each week has one column per weekday that ever trades, so
+a holiday shows as an empty day, while weekends and weeks with no candles
+take no room. Nothing is per broker. A day starts at the broker's own daily
+bar start when a pane on the chart is pinned to 1D (its `mtf.htfStarts`),
+else at the daily pause found in the candles (the emptiest time-of-day bin,
+ties to the one closest to 00:00 UTC; 24/7 data gets 00:00). A 1W pin gives
+the week's first weekday the same way. It is display-only: the candle list is
+never changed, so indicators, rules, backtests and alerts compute as before.
+`lib/equalWidthDays.ts` builds the grid (`buildSlotGrid(times, anchors)`,
+cached per data list by `slotGridFor`) and `setEqualWidthDays` installs the
+provider `globalThis.__chartkarSlots(list, chart)`, which the klinecharts
+patch (`patches/klinecharts+10.0.0.patch`, `StoreImp._slots`/`_posOf`/
+`_idxOf`) reads for every index/x conversion, the visible range, zoom and
+appended history; without it every position equals the index. Pinned panes
+register their starts per chart with `setSlotAnchors(chart, id, anchors)`
+(`applyHtfPin` via `lib/slotAnchorsFromPins.ts`, cleared on unpin and in
+`removeIndicatorById`; the first registered pin wins per field), and
+`relayoutSlots` (store method `chartkarRelayoutSlots`) applies a grid change
+while keeping the candle in the middle of the view in place. A Trendlines
+line pinned to 1D or coarser gets whole-day spans from the step map
+(`buildHtfStepMap(..., slots)`, `candlePos`/`toIndex`), whole weeks for a 1W
+pin, so the Smooth look of a 1D or 1W pin is straight. Its newest bar stays
+flat on purpose, and a 1D line changes its angle a little at a holiday
+column, since daily bars skip holidays. Out of scope: monthly pins;
+drawings, indicator lines, chart-timeframe trendlines and alert lines
+follow the slots but stay straight in time across a gap. Specs:
+docs/superpowers/specs/2026-11-12-equal-width-days-design.md and
+docs/superpowers/specs/2026-11-12-time-gaps-broker-days-design.md.
 
 ## Symbol search categories
 
