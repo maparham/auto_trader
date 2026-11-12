@@ -648,7 +648,7 @@ def test_account_summary_refuses_when_terminal_is_logged_out():
     ex, _ = _exec({"get_trading_account_info": _account_info(False)})
     with pytest.raises(BrokerLoggedOut, match="not logged in to Ava-Real 1-MT5"):
         run(ex.get_account_summary())
-    assert ex._data.display_name == "Ava Trade Markets Ltd. (live, self-hosted)"
+    assert ex._data.display_name == "Ava Trade"
 
 
 def test_positions_check_the_login_on_every_read():
@@ -667,3 +667,15 @@ def test_account_summary_without_terminal_block_is_not_logged_out():
     del info["terminal"]
     ex, _ = _exec({"get_trading_account_info": info})
     assert run(ex.get_account_summary())["equity"] == 90.0
+
+
+@pytest.mark.parametrize("name,short", [
+    ("Ava Trade Markets Ltd.", "Ava Trade"),
+    ("MetaQuotes Ltd.", "MetaQuotes"),
+    ("Pepperstone Group Limited", "Pepperstone"),
+    ("Markets Ltd.", "Markets"),  # never strips to empty
+])
+def test_selector_label_is_the_short_broker_name(name, short):
+    b = _broker({})
+    b.note_account_info({"account": {"broker": name, "type": "real"}})
+    assert b.display_name == short

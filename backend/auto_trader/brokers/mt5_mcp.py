@@ -124,7 +124,10 @@ _CATCHUP = timedelta(seconds=2 * _POLL_BACKOFF)
 # (DONE, PLACED, DONE_PARTIAL). Anything else with a retcode is a rejection.
 _RETCODE_OK = {10008, 10009, 10010}
 
-_ACCOUNT_ENV = {"real": "live", "demo": "demo"}
+# Trailing company words dropped from the account's broker name for the
+# selector: "Ava Trade Markets Ltd." reads "Ava Trade".
+_NAME_SUFFIX = re.compile(r"(?:[\s,]+(?:markets?|ltd\.?|limited|llc|inc\.?|plc|corp\.?|group))+\s*$",
+                          re.IGNORECASE)
 
 
 class MCPError(RuntimeError):
@@ -784,13 +787,13 @@ class MT5MCPBroker(MarketDataBroker):
     # --- account label --------------------------------------------------------
 
     def note_account_info(self, info: dict | None) -> None:
-        """Selector label from the account block: "<broker> (live, self-hosted)"."""
+        """Selector label from the account block: the broker's short name
+        ("Ava Trade" for "Ava Trade Markets Ltd.")."""
         acct = (info or {}).get("account") or {}
-        name = acct.get("broker")
+        name = str(acct.get("broker") or "").strip()
         if not name:
             return
-        env = _ACCOUNT_ENV.get(str(acct.get("type") or "").lower())
-        self.display_name = f"{name} ({env}, self-hosted)" if env else f"{name} (self-hosted)"
+        self.display_name = _NAME_SUFFIX.sub("", name) or name
 
     @staticmethod
     def check_logged_in(info: dict | None) -> None:
