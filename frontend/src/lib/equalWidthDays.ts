@@ -55,7 +55,9 @@ const mod = (a: number, m: number) => ((a % m) + m) % m;
  * time-of-day bin (one period wide, in step with the candles) holding the
  * fewest candles. Near-ties (within a tenth of the busiest bin, so a partial
  * first or last day does not decide) go to the bin closest to 00:00 round
- * the clock, the one before midnight on an exact tie.
+ * the clock, the one before midnight on an exact tie. A bin holding more than
+ * half the busiest bin's candles is no pause (a session that trades less
+ * late in the day, say), so then the day starts at 00:00.
  */
 export function inferDayStartOffset(times: readonly number[], step: number): number {
   if (!(step > 0) || step >= DAY || times.length === 0) return 0;
@@ -64,7 +66,9 @@ export function inferDayStartOffset(times: readonly number[], step: number): num
   const counts = new Array<number>(bins).fill(0);
   for (const t of times) counts[Math.min(bins - 1, Math.floor(mod(t - phase, DAY) / step))]++;
   const min = Math.min(...counts);
-  const tol = Math.floor(Math.max(...counts) / 10);
+  const max = Math.max(...counts);
+  if (min > max / 2) return 0;
+  const tol = Math.floor(max / 10);
   let best = 0;
   let bestDist = Infinity;
   for (let b = 0; b < bins; b++) {

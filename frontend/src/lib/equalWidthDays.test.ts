@@ -101,6 +101,15 @@ describe("broker days and equal weeks", () => {
     expect(buildSlotGrid(t)!.perWeek).toBe(7 * 24);
   });
 
+  it("fewer candles late in the day is not a pause", () => {
+    // Capital TSLA-like: round the clock on weekdays, but 21:00..23:00 only
+    // trade three days in four. Its daily bars start at 00:00.
+    const t: number[] = [];
+    for (const d of weekdays.concat([14, 15, 16, 17, 18]))
+      for (let h = 0; h < 24; h++) if (h < 21 || d % 4 !== 0) t.push(at(d, h));
+    expect(inferDayStartOffset(t, HOUR)).toBe(0);
+  });
+
   it("a session crossing midnight UTC stays one day", () => {
     // 23:00 to 05:00 sessions opening Sun..Thu. The emptiest bin closest to
     // 00:00 is 22:00, so each session is one day (Mon..Fri).
