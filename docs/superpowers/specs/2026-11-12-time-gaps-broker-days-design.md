@@ -8,7 +8,7 @@ width so a Trendlines line pinned to 1D is straight on an intraday chart. A
 "day" is a UTC calendar day today, which is right for Capital (daily bars open
 at 00:00 UTC) but wrong for a broker whose daily bar starts elsewhere: FX at
 22:00 UTC, yfinance stocks at exchange midnight, a future broker anywhere.
-There the grid's days and the pin's daily bars disagree and the line kinks.
+There the grid's days and the pin's daily bars disagree and the line is not straight there.
 
 Owner's ask: no per-broker code; it must work for any broker added later.
 
@@ -26,7 +26,7 @@ Owner's ask: no per-broker code; it must work for any broker added later.
 
 ## Non-goals
 
-- Monthly pins (months differ in weeks and days; still kink).
+- Monthly pins (months differ in weeks and days; lines stay not straight).
 - The newest day stays flat on purpose (it shows the level alerts judge);
   owner confirmed.
 - Drawings, indicator lines, chart-timeframe lines: as in the first spec.
@@ -64,7 +64,7 @@ always laid out by weeks, pin or no pin:
   otherwise a week starts on the first day column (Monday for stocks, FX and
   crypto alike).
 - Position = weekNum * columns * perDay + column * perDay + slot.
-- Accepted cost: a 1D pin now kinks across a holiday column, because the
+- Accepted cost: a 1D line changes its angle a little at a holiday column, because the
   daily bars skip holidays. Everywhere else it stays straight.
 
 Everything else is unchanged: slots per day still run from the earliest to the
