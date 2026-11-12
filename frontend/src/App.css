@@ -5203,6 +5203,13 @@
   background: #fff; transition: transform 0.15s ease;
 }
 .ot-switch.on .ot-switch-knob { transform: translateX(16px); }
+.ot-switch-muted.on { background: var(--text-dim); }
+.ot-switch:disabled { opacity: 0.5; cursor: default; }
+.ot-prox { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 0 6px; font-size: 12px; color: var(--text-dim); }
+.ot-prox.disabled .ot-prox-label { opacity: 0.6; }
+.ot-prox-controls { display: flex; align-items: center; gap: 6px; }
+.ot-prox-mult { width: 44px; }
+.ot-prox-sw { display: inline-flex; }
 
 /* Compact secondary action under the Stop-loss row: moves SL to the entry price. */
 .ot-exit-head-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }

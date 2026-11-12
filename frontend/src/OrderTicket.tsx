@@ -58,12 +58,16 @@ import Tooltip from "./components/Tooltip";
 import NumberField from "./components/NumberField";
 import SelectMenu from "./components/SelectMenu";
 import ExpirySelect from "./components/ExpirySelect";
+import ProximityWarn from "./components/ProximityWarn";
+import { addPositionAlert } from "./lib/alertsApi";
 import { expiryToApi, isValidExpiry } from "./lib/expiry";
 
 interface Props {
   epic: string;
   account?: TradeAccount;
   precision?: number;
+  // Default ATR multiple for the Warn near SL/TP switches (Settings).
+  proximityAtrMult?: number;
   instrumentType?: string | null;
   trading: TradingSettings;
   // The active account's real balance/available/currency for a live account
@@ -118,12 +122,14 @@ function seedExit(ref: number, up: boolean, atr: number | null, precision: numbe
   if (atr != null) return levelFromAtr(ref, 1, atr, up, precision);
   return Number((up ? ref * (1 + DEFAULT_BRACKET) : ref * (1 - DEFAULT_BRACKET)).toFixed(precision));
 }
+const LIMIT_WARN_TIP = "Available for market orders. Turn it on from the position once filled.";
 type OrderType = "market" | "limit" | "stop";
 
 export default function OrderTicket({
   epic,
   account = "capital:paper",
   precision = 2,
+  proximityAtrMult = 0.5,
   instrumentType,
   trading,
   accountSummary,
@@ -146,6 +152,11 @@ export default function OrderTicket({
   );
   const [quantity, setQuantity] = useState("1");
   const [exitsOpen, setExitsOpen] = useState(true);
+  // Warn-near switches ride along with the exits: spent with the draft after an order.
+  const [warnTp, setWarnTp] = useState(false);
+  const [warnSl, setWarnSl] = useState(false);
+  const [warnMult, setWarnMult] = useState(proximityAtrMult);
+  useEffect(() => setWarnMult(proximityAtrMult), [proximityAtrMult]);
   const [busy, setBusy] = useState(false);
   // Synchronous in-flight guard. `disabled={busy}` only blocks the button after a
   // re-render, so a fast double-click can fire submit() twice (and double-fill)
@@ -435,6 +446,9 @@ export default function OrderTicket({
       return;
     }
     disarm();
+    const warnSides: ("sl" | "tp")[] = [];
+    if (!isLimit && tpOn && warnTp) warnSides.push("tp");
+    if (!isLimit && slOn && warnSl) warnSides.push("sl");
     submittingRef.current = true;
     setBusy(true);
     setMsg(null);
@@ -472,6 +486,8 @@ export default function OrderTicket({
         // form reads as spent rather than ready to fire the same order again.
         draftOrderSignal.set(null);
         setQuantity("1");
+        setWarnTp(false);
+        setWarnSl(false);
         const px = result.fill_price != null ? result.fill_price.toFixed(precision) : "?";
         setDone(isLimit ? "Limit order placed" : `Filled ${result.filled_quantity} @ ${px}`);
         window.clearTimeout(doneTimer.current);
@@ -480,6 +496,19 @@ export default function OrderTicket({
           onDone?.();
         }, DONE_FLASH_MS);
         refreshTrades();
+        if (!isLimit && warnSides.length) {
+          let reason: string | null = null;
+          if (!result.deal_id) reason = "no deal id from the broker";
+          else {
+            for (const sd of warnSides) {
+              const d = await addPositionAlert({
+                account, epic, dealId: result.deal_id, side: sd, atrMult: warnMult, precision,
+              });
+              if (d && !reason) reason = d;
+            }
+          }
+          if (reason) setMsg(`Order filled. Warning not set: ${reason}`);
+        }
       }
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Order failed.");
@@ -644,6 +673,19 @@ export default function OrderTicket({
               onChange={(v) => setExit("tp", v)}
               atr={exitAtrView(atrPrefs, setAtrPrefs, "tp", atrValue, entryPrice, side === "buy", precision, resolution)}
             />
+            <ProximityWarn
+              label="Warn near TP"
+              on={warnTp}
+              mult={warnMult}
+              disabled={!tpOn || isLimit}
+              disabledReason={
+                isLimit
+                  ? LIMIT_WARN_TIP
+                  : "Set a take profit first"
+              }
+              onToggle={setWarnTp}
+              onMult={setWarnMult}
+            />
             <ExitRow
               label="Stop loss"
               on={slOn}
@@ -653,6 +695,19 @@ export default function OrderTicket({
               onToggle={(on) => toggleExit("sl", on)}
               onChange={(v) => setExit("sl", v)}
               atr={exitAtrView(atrPrefs, setAtrPrefs, "sl", atrValue, entryPrice, side === "buy", precision, resolution)}
+            />
+            <ProximityWarn
+              label="Warn near SL"
+              on={warnSl}
+              mult={warnMult}
+              disabled={!slOn || isLimit}
+              disabledReason={
+                isLimit
+                  ? LIMIT_WARN_TIP
+                  : "Set a stop loss first"
+              }
+              onToggle={setWarnSl}
+              onMult={setWarnMult}
             />
           </>
         )}
