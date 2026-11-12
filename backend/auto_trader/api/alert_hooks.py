@@ -210,8 +210,9 @@ class PositionRemoval:
         if snap.trailing:
             return TRAILING
         current = snap.sl if tok.side == "sl" else snap.tp
-        tol = 0.5 * 10 ** -tok.precision
-        if current is None or not math.isclose(current, tok.level, rel_tol=0, abs_tol=tol):
+        # Exact comparison against the level the token holds: the client's
+        # display precision must not hide a real stop move.
+        if current is None or not math.isclose(current, tok.level, rel_tol=1e-9, abs_tol=1e-12):
             return f"{what} has changed since this warning"
         if not self._watch.has_alert(user_id, tok.alert_id):
             return ALERT_GONE

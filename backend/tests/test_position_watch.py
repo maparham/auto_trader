@@ -93,6 +93,7 @@ class Harness:
     async def tick(self, bid, ask=None, mid=None, broker="capital-live", epic="US100"):
         ask = bid + 1.0 if ask is None else ask
         await self.w.on_tick(broker, epic, (bid + ask) / 2 if mid is None else mid, bid, ask)
+        await self.w.drain_fires()
 
 
 def run(coro):
@@ -442,4 +443,48 @@ def test_stop_clears_extra_feeds(tmp_path):
         assert h.engine.feeds["position"]
         await h.w.stop()
         assert h.engine.feeds["position"] == set()
+    run(main())
+
+
+def test_slow_notifier_does_not_block_ticks_and_stop_drains(tmp_path):
+    async def main():
+        h = Harness(tmp_path)
+        gate = asyncio.Event()
+        started: list[dict] = []
+
+        async def slow(uid, p):
+            started.append(p)
+            await gate.wait()
+        h.w._notifiers = [slow]
+        h.exec.positions.append(replace(h.exec.positions[0], deal_id="D2"))
+        await h.add(deal="D1")
+        await h.add(deal="D2")
+        await h.w.poll_once(ACCT)
+        await asyncio.wait_for(h.w.on_tick('capital-live', 'US100', 104.5, 104.0, 105.0), 1.0)  # returns while notifier pends
+        for _ in range(200):
+            if len(started) == 2:
+                break
+            await asyncio.sleep(0.01)
+        assert len(started) == 2  # both pairs fired, neither blocked the other
+        assert h.w._fire_tasks
+        gate.set()
+        await h.w.stop()
+        assert not h.w._fire_tasks
+    run(main())
+
+
+def test_stop_cancels_pending_fire(tmp_path):
+    async def main():
+        h = Harness(tmp_path)
+
+        async def never(uid, p):
+            await asyncio.Event().wait()
+        h.w._notifiers = [never]
+        await h.add()
+        await h.w.poll_once(ACCT)
+        await h.w.on_tick('capital-live', 'US100', 104.5, 104.0, 105.0)
+        await asyncio.sleep(0)
+        assert h.w._fire_tasks
+        await asyncio.wait_for(h.w.stop(), 1.0)
+        assert not h.w._fire_tasks
     run(main())

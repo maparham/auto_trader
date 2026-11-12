@@ -135,6 +135,7 @@ class H:
 
     async def fire(self, bid: float) -> dict:
         await self.w.on_tick("capital-live", "US100", bid + 0.5, bid, bid + 1.0)
+        await self.w.drain_fires()
         assert self.notified, "the watch did not fire"
         return self.notified[-1]
 
@@ -311,6 +312,24 @@ async def test_confirm_refuses_changed_level(tmp_path):
     assert _answer(routes) == "SL has changed since this warning"
     assert h.exec.modify_calls == []
     assert h.deleted == []
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_confirm_refuses_small_move_under_coarse_precision(tmp_path):
+    h = H(tmp_path)
+    await h.setup()
+    routes = _mock_endpoints()
+    tok = (await h.fire(104.0))["removeToken"]
+    # Coarse client precision (2) must not hide a real move of the stop.
+    t = h.w._tokens[tok]
+    h.w._tokens[tok] = t._replace(level=1.08345, precision=2) if hasattr(t, "_replace") else replace(t, level=1.08345, precision=2)
+    h.exec.positions = [replace(h.exec.positions[0], stop_level=1.08349)]
+
+    await _tap(f"pry:{tok}")
+
+    assert _answer(routes) == "SL has changed since this warning"
+    assert h.exec.modify_calls == []
 
 
 @respx.mock

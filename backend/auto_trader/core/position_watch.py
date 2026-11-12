@@ -126,6 +126,7 @@ class PositionWatch:
         self._atr: dict[Pair, float] = {}
         self._atr_bucket: dict[Pair, int] = {}
         self._tokens: dict[str, RemoveToken] = {}
+        self._fire_tasks: set[asyncio.Task] = set()
         self._tasks: dict[str, asyncio.Task] = {}
         self._started = False
         self._listening: set[int] = set()
@@ -177,6 +178,12 @@ class PositionWatch:
 
     async def stop(self) -> None:
         self._started = False
+        fires = list(self._fire_tasks)
+        for t in fires:
+            t.cancel()
+        if fires:
+            await asyncio.gather(*fires, return_exceptions=True)
+        self._fire_tasks.clear()
         tasks = list(self._tasks.values())
         self._tasks = {}
         for t in tasks:
@@ -399,7 +406,7 @@ class PositionWatch:
                                          self._fired.get(key, False))
             self._fired[key] = fired_after
             if fire_now:
-                await self._fire(user_id, found, account, snap, level, price, atr_value)
+                self._spawn_fire(user_id, found, account, snap, level, price, atr_value)
 
     def _find_in(self, account: str, user_id: str, alert_id: str) -> dict | None:
         for u, r in self._alerts.get(account, []):
@@ -409,18 +416,38 @@ class PositionWatch:
 
     # ---- fire ----
 
-    async def _fire(self, user_id: str, row: dict, account: str, snap: Snap,
+    def _spawn_fire(self, user_id: str, row: dict, account: str, snap: Snap,
                     level: float, price: float, atr_value: float) -> None:
-        assert self._store is not None and self._broadcast is not None
+        """Mint the token now (the row may vanish), then run the history write,
+        broadcasts and notifiers off the feed task: a slow Telegram snapshot
+        must not stall ticks."""
         side = row["params"]["side"]
         precision = _precision(row, level)
+        token = self._mint(user_id, row["id"], account, row["params"]["dealId"], side, level,
+                           precision=precision, epic=snap.epic, direction=snap.side)
+        task = asyncio.create_task(
+            self._fire(user_id, row, account, snap, level, price, atr_value, token, precision))
+        self._fire_tasks.add(task)
+        task.add_done_callback(self._fire_done)
+
+    def _fire_done(self, task: asyncio.Task) -> None:
+        self._fire_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            log.warning("position alert fire failed", exc_info=task.exception())
+
+    async def drain_fires(self) -> None:
+        """Wait for in-flight fire pipelines (tests, orderly shutdown)."""
+        while self._fire_tasks:
+            await asyncio.gather(*list(self._fire_tasks), return_exceptions=True)
+
+    async def _fire(self, user_id: str, row: dict, account: str, snap: Snap,
+                    level: float, price: float, atr_value: float,
+                    token: str, precision: int) -> None:
+        assert self._store is not None and self._broadcast is not None
+        side = row["params"]["side"]
         text = headline(snap.epic, snap.side, side, level, price, atr_value, snap.upnl, snap.currency, precision)
         now_ms = int(self._clock() * 1000)
         data_broker = data_broker_of(account)
-        # Minted before any await, from what this fire already holds: the
-        # row may be deleted while add_triggered runs.
-        token = self._mint(user_id, row["id"], account, row["params"]["dealId"], side, level,
-                           precision=precision, epic=snap.epic, direction=snap.side)
         triggered_id: int | None
         try:
             triggered_id = await self._store.add_triggered(user_id, {
