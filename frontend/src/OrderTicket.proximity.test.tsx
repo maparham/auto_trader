@@ -119,7 +119,7 @@ describe("OrderTicket proximity warnings", () => {
     expect((screen.getByLabelText("Warn near TP ATR multiple") as HTMLInputElement).value).toBe("1.5");
     await act(async () => fireEvent.click(document.querySelector(".ot-action")!));
     await waitFor(() => expect(mocks.addPositionAlert).toHaveBeenCalledTimes(2));
-    const calls = mocks.addPositionAlert.mock.calls.map((c) => c[0] as { side: string; atrMult: number });
+    const calls = mocks.addPositionAlert.mock.calls.map((c) => (c as unknown[])[0] as { side: string; atrMult: number });
     expect(calls.find((c) => c.side === "tp")?.atrMult).toBe(1.5);
     expect(calls.find((c) => c.side === "sl")?.atrMult).toBe(0.3);
   });

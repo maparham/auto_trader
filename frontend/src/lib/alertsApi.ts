@@ -371,7 +371,7 @@ interface TriggeredRow {
   condition: AlertCondition;
   message: string;
   precision?: number;
-  alert?: { params?: Record<string, unknown>; label?: string } | null;
+  alert?: { params?: Record<string, unknown>; label?: string; headline?: string } | null;
 }
 
 function rowToSavedAlert(row: AlertRow): SavedAlert {
@@ -466,7 +466,7 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
     target: (row.alert?.params?.target as AlertTarget | undefined) ?? undefined,
     kind: row.kind,
     headline: row.kind === "account" ? accountTriggeredHeadline(row)
-      : row.kind === "position" ? (row.alert?.headline as string | undefined) : undefined,
+      : row.kind === "position" ? row.alert?.headline : undefined,
   };
 }
 
