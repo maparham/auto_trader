@@ -142,8 +142,8 @@ export default function AppearanceMenu({ settings, onChange, onBarChangeAll }: P
               <span id="appr-equal-days">Equal-width days</span>
               <InfoTip
                 text={[
-                  "Draws every day on an intraday chart the same width.",
-                  "Missing hours show as gaps.",
+                  "Every trading day gets the same width.",
+                  "Missing hours show as empty space.",
                   "Display only: indicators and alerts are unchanged.",
                 ]}
               />

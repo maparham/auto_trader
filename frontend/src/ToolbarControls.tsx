@@ -405,8 +405,8 @@ export function ScaleControls({
       {onToggleEqualWidthDays && (
         <Tooltip
           content={[
-            "Equal-width days: every day on an intraday chart the same width.",
-            "Missing hours show as gaps.",
+            "Every trading day gets the same width.",
+            "Missing hours show as empty space.",
           ]}
         >
           <button
