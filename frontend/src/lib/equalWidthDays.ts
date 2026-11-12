@@ -1,8 +1,11 @@
-// Equal-width days: a display-only slot grid for intraday charts. Every UTC
-// day that holds candles gets the same number of slots (one chart period
-// each, from the earliest to the latest time of day seen in the loaded
+// Equal-width days ("Time gaps"): a display-only slot grid for intraday
+// charts. Every broker day gets the same number of slots (one chart period
+// each, from the earliest to the latest time into the day seen in the loaded
 // candles), and each candle sits in its own time slot, so a missing period
-// shows as an empty gap. The candle list is never changed; klinecharts'
+// shows as an empty gap. Days come from pinned 1D bars when given, else from
+// the daily pause in the candles. The chart is laid out by weeks: every week
+// has a column for each weekday that ever trades, so a holiday is an empty
+// column and every week is the same width. The candle list is never changed; klinecharts'
 // patched store asks globalThis.__chartkarSlots(dataList) for each candle's
 // display position and does its index/x math in positions. Without the
 // provider every position equals the data index.
@@ -12,6 +15,8 @@ const DAY = 86_400_000;
 export interface SlotGrid {
   readonly n: number;
   readonly perDay: number;
+  /** Day columns per week times perDay: every week is this wide. */
+  readonly perWeek: number;
   /** Display position of each candle, strictly increasing. */
   readonly pos: readonly number[];
   /** Position of a fractional index: linear between neighbours, 1:1 past either end. */
@@ -37,29 +42,106 @@ function periodOf(times: readonly number[]): number {
   return best;
 }
 
-export function buildSlotGrid(times: readonly number[]): SlotGrid | null {
+/** Bar starts the grid should follow, from pinned panes' 1D and 1W bars. */
+export interface SlotAnchors {
+  dayStarts?: readonly number[];
+  weekStarts?: readonly number[];
+}
+
+const mod = (a: number, m: number) => ((a % m) + m) % m;
+
+/**
+ * Where the broker's day starts, in ms after 00:00 UTC: the start of the
+ * time-of-day bin (one period wide, in step with the candles) holding the
+ * fewest candles. Near-ties (within a tenth of the busiest bin, so a partial
+ * first or last day does not decide) go to the bin closest to 00:00 round
+ * the clock, the one before midnight on an exact tie.
+ */
+export function inferDayStartOffset(times: readonly number[], step: number): number {
+  if (!(step > 0) || step >= DAY || times.length === 0) return 0;
+  const bins = Math.max(1, Math.round(DAY / step));
+  const phase = mod(times[0], step);
+  const counts = new Array<number>(bins).fill(0);
+  for (const t of times) counts[Math.min(bins - 1, Math.floor(mod(t - phase, DAY) / step))]++;
+  const min = Math.min(...counts);
+  const tol = Math.floor(Math.max(...counts) / 10);
+  let best = 0;
+  let bestDist = Infinity;
+  for (let b = 0; b < bins; b++) {
+    if (counts[b] > min + tol) continue;
+    const start = mod(phase + b * step, DAY);
+    const dist = Math.min(start, DAY - start);
+    // Strictly closer wins; an exact tie goes to the start before midnight.
+    if (dist < bestDist || (dist === bestDist && start > DAY / 2)) [best, bestDist] = [start, dist];
+  }
+  return best;
+}
+
+/** Index of the last value at or before x in a sorted list, or -1. */
+function lastAtOrBefore(sorted: readonly number[], x: number): number {
+  let lo = 0;
+  let hi = sorted.length - 1;
+  let ans = -1;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (sorted[m] <= x) [ans, lo] = [m, m + 1];
+    else hi = m - 1;
+  }
+  return ans;
+}
+
+const calOf = (dayStart: number) => Math.floor((dayStart + DAY / 2) / DAY);
+const weekdayOf = (cal: number) => mod(cal + 3, 7); // 0 = Monday
+
+export function buildSlotGrid(times: readonly number[], anchors?: SlotAnchors): SlotGrid | null {
   const n = times.length;
   if (n < 2) return null;
+  for (let i = 0; i < n; i++) if (!Number.isFinite(times[i])) return null;
   const step = periodOf(times);
   if (!(step > 0) || step >= DAY) return null;
-  const off = new Array<number>(n);
-  const dayOf = new Array<number>(n);
-  let minOff = Infinity;
-  let maxOff = -Infinity;
+  const inferred = inferDayStartOffset(times, step);
+  const dayStarts = anchors?.dayStarts?.filter(Number.isFinite) ?? [];
+  // Each candle's day: the last given start at or before it (stepping on by
+  // whole days when the starts run out), else the inferred daily offset.
+  const slot = new Array<number>(n);
+  const cal = new Array<number>(n);
+  let minSlot = Infinity;
+  let maxSlot = -Infinity;
+  const seen = new Set<number>();
   for (let i = 0; i < n; i++) {
     const t = times[i];
-    if (!Number.isFinite(t)) return null;
-    dayOf[i] = Math.floor(t / DAY);
-    off[i] = Math.floor((t - dayOf[i] * DAY) / step);
-    if (off[i] < minOff) minOff = off[i];
-    if (off[i] > maxOff) maxOff = off[i];
+    const k = lastAtOrBefore(dayStarts, t);
+    let start: number;
+    if (k >= 0) start = dayStarts[k] + Math.floor((t - dayStarts[k]) / DAY) * DAY;
+    else start = Math.floor((t - inferred) / DAY) * DAY + inferred;
+    slot[i] = Math.floor((t - start) / step);
+    cal[i] = calOf(start);
+    seen.add(weekdayOf(cal[i]));
+    if (slot[i] < minSlot) minSlot = slot[i];
+    if (slot[i] > maxSlot) maxSlot = slot[i];
   }
-  const perDay = maxOff - minOff + 1;
+  const perDay = maxSlot - minSlot + 1;
+  // A week starts on the weekly bars' weekday when given, else on the first
+  // weekday that ever trades; its columns are the weekdays that ever trade.
+  const weekStarts = anchors?.weekStarts?.filter(Number.isFinite) ?? [];
+  const firstWd = weekStarts.length
+    ? weekdayOf(calOf(weekStarts[weekStarts.length - 1]))
+    : Math.min(...seen);
+  const order = [...seen].sort((a, b) => mod(a - firstWd, 7) - mod(b - firstWd, 7));
+  const colOf = new Map(order.map((wd, c) => [wd, c]));
+  const perWeek = order.length * perDay;
   const own = new Array<number>(n);
-  let dayNum = 0;
+  let weekIdx = -1;
+  let lastWeek = NaN;
+  let base = 0;
   for (let i = 0; i < n; i++) {
-    if (i > 0 && dayOf[i] !== dayOf[i - 1]) dayNum++;
-    own[i] = dayNum * perDay + (off[i] - minOff);
+    const week = Math.floor((cal[i] + 3 - firstWd) / 7);
+    if (week !== lastWeek) [weekIdx, lastWeek] = [weekIdx + 1, week];
+    own[i] = weekIdx * perWeek + colOf.get(weekdayOf(cal[i]))! * perDay + (slot[i] - minSlot);
+    if (i === 0) base = colOf.get(weekdayOf(cal[0]))! * perDay;
+    own[i] -= base;
+    // Mixed sources (given starts after inferred days) must never go back.
+    if (i > 0 && own[i] < own[i - 1]) own[i] = own[i - 1];
   }
   // Candles sharing a slot (a DST fall-back, a stray stamp) split that slot
   // evenly, so positions stay strictly increasing without pushing any later
@@ -75,6 +157,7 @@ export function buildSlotGrid(times: readonly number[]): SlotGrid | null {
   return {
     n,
     perDay,
+    perWeek,
     pos,
     posOf(i: number): number {
       if (i <= 0) return pos[0] + i;
