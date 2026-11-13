@@ -612,6 +612,7 @@ export default function Toolbar({
         controller={controller}
         equalWidthDays={equalWidthDays}
         onToggleEqualWidthDays={onToggleEqualWidthDays}
+        resolution={period?.resolution}
       />
 
       {/* Snapshots: ONE split control. The camera face saves instantly; the

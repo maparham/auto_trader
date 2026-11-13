@@ -80,6 +80,7 @@ export default function SnapshotToolbar({
         controller={controller}
         equalWidthDays={equalWidthDays}
         onToggleEqualWidthDays={onToggleEqualWidthDays}
+        resolution={period?.resolution}
       />
 
       {/* Broker selector — ONLY when maximized (the tab bar's copy is hidden

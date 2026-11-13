@@ -41,6 +41,7 @@ import SymbolIcon from "./SymbolIcon";
 import Tooltip from "./components/Tooltip";
 import CustomTimeframeForm from "./components/CustomTimeframeForm";
 import { isSynthetic } from "./lib/syntheticRegistry";
+import { tfSecondsOf } from "./lib/timeframe";
 
 // Shared dropdown caret — the same SVG chevron the symbol chip uses, so every
 // toolbar caret renders identically (replacing the plain "▾" text triangles that
@@ -306,12 +307,16 @@ export function ScaleControls({
   controller,
   equalWidthDays = false,
   onToggleEqualWidthDays,
+  resolution,
 }: {
   controller: ChartController | null;
   // "G" equal-width days (gaps), a GLOBAL setting (theme.ts), not per cell.
   equalWidthDays?: boolean;
   onToggleEqualWidthDays?: () => void;
+  /** The focused chart's timeframe: Time gaps does nothing at 1D or coarser. */
+  resolution?: string;
 }) {
+  const gapsApply = !resolution || (tfSecondsOf(resolution) ?? 0) < 86_400;
   const chart = controller?.chart ?? null;
 
   // "A" auto-scale mode (on = highlighted).
@@ -410,10 +415,12 @@ export function ScaleControls({
             "Missing hours show as empty space.",
             "Keeps 1D and 1W lines straight on finer charts.",
           ]}
+          note={gapsApply ? undefined : "Only on timeframes below 1D"}
         >
           <button
-            className={equalWidthDays ? "on" : ""}
+            className={equalWidthDays && gapsApply ? "on" : ""}
             aria-label="Time gaps"
+            disabled={!gapsApply}
             onClick={onToggleEqualWidthDays}
           >
             G

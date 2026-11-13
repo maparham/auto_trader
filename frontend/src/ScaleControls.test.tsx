@@ -108,6 +108,23 @@ describe("ScaleControls equal-width days toggle", () => {
     expect(btn().className).toContain("on");
   });
 
+  it("is disabled on 1D and coarser, where it has no effect", () => {
+    const controller = new ChartController("cell-1", SCOPE);
+    const g = (resolution: string) => {
+      const { unmount } = render(
+        <ScaleControls controller={controller} equalWidthDays onToggleEqualWidthDays={() => {}} resolution={resolution} />,
+      );
+      const btn = screen.getByRole("button", { name: "Time gaps" }) as HTMLButtonElement;
+      const out = { disabled: btn.disabled, on: btn.className.includes("on") };
+      unmount();
+      return out;
+    };
+    expect(g("HOUR")).toEqual({ disabled: false, on: true });
+    expect(g("MINUTE_15")).toEqual({ disabled: false, on: true });
+    expect(g("DAY")).toEqual({ disabled: true, on: false });
+    expect(g("WEEK")).toEqual({ disabled: true, on: false });
+  });
+
   it("is absent without a handler", () => {
     render(<ScaleControls controller={new ChartController("cell-1", SCOPE)} />);
     expect(screen.queryByRole("button", { name: "Time gaps" })).toBeNull();
