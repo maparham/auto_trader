@@ -145,7 +145,6 @@ export default function AppearanceMenu({ settings, onChange, onBarChangeAll }: P
                   "Every trading day gets the same width.",
                   "Missing hours show as empty space.",
                   "Keeps 1D and 1W lines straight on finer charts.",
-                  "They bend a little at holidays.",
                   "Display only: indicators and alerts are unchanged.",
                 ]}
               />
