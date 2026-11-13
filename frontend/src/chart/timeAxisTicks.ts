@@ -28,10 +28,19 @@ export function slotPositions(
   fromIdx: number,
   toIdx: number,
   tsAtIndex: (i: number) => number | null,
+  visible?: { from: number; to: number },
 ): { from: number; to: number; tsAt(p: number): number | null } {
+  // The range comes in whole candles; an edge inside a wide gap would walk
+  // far past the screen, so keep to the positions on it (plus one each side).
+  let from = grid.posOf(fromIdx);
+  let to = grid.posOf(toIdx);
+  if (visible && Number.isFinite(visible.from) && Number.isFinite(visible.to) && visible.from < visible.to) {
+    from = Math.max(from, Math.floor(visible.from) - 1);
+    to = Math.min(to, Math.ceil(visible.to) + 1);
+  }
   return {
-    from: grid.posOf(fromIdx),
-    to: grid.posOf(toIdx),
+    from,
+    to,
     tsAt: (p) => grid.slotTime(p) ?? tsAtIndex(grid.idxOf(p)),
   };
 }
@@ -219,6 +228,8 @@ interface ChartStoreLike {
   getInnerFormatter(): { formatDate(ts: number, template: string, type: string): string };
   dataIndexToTimestamp(i: number): number | null;
   getDataList(): readonly { timestamp: number }[];
+  _totalBarSpace?: number;
+  _coordinateToFloatPos?(x: number): number;
 }
 
 registerXAxis({
@@ -239,6 +250,13 @@ registerXAxis({
   } as never,
 });
 
+/** The display positions at the plot's left and right edges, if known. */
+function visiblePositions(store: ChartStoreLike): { from: number; to: number } | undefined {
+  const w = store._totalBarSpace;
+  if (typeof store._coordinateToFloatPos !== "function" || typeof w !== "number") return undefined;
+  return { from: store._coordinateToFloatPos(0), to: store._coordinateToFloatPos(w) };
+}
+
 function chartTicks(axis: AxisThis, range: { realFrom: number; realTo: number }): TimeTick[] {
   const store = axis.getParent().getChart().getChartStore();
   const period = store.getPeriod();
@@ -250,7 +268,7 @@ function chartTicks(axis: AxisThis, range: { realFrom: number; realTo: number })
   const tsAtIndex = (i: number) => store.dataIndexToTimestamp(i);
   const grid = slotGridFor(store.getDataList());
   const walk = grid
-    ? { ...slotPositions(grid, range.realFrom, range.realTo, tsAtIndex), pxAt: (p: number) => axis.convertToPixel(grid.idxOf(p)) }
+    ? { ...slotPositions(grid, range.realFrom, range.realTo, tsAtIndex, visiblePositions(store)), pxAt: (p: number) => axis.convertToPixel(grid.idxOf(p)) }
     : { from: range.realFrom, to: range.realTo, tsAt: tsAtIndex, pxAt: (i: number) => axis.convertToPixel(i) };
   return buildTimeTicks({
     ...walk,

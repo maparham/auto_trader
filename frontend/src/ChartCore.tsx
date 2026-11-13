@@ -30,7 +30,7 @@ import ChartRangeBar from "./ChartRangeBar";
 import { type RangeKey } from "./lib/rangeWindow";
 import { pageHistoryBack, coverHistoryRangeParallel, scrollbackLoadOlder, PAGE_BARS, type PageResult } from "./lib/historyPaging";
 import { klineStyles } from "./lib/chartTheme";
-import { equalWidthDaysOn, relayoutSlots, setEqualWidthDays, setSlotSource } from "./lib/equalWidthDays";
+import { setSlotSource, switchEqualWidthDays } from "./lib/equalWidthDays";
 import ChartLegend, {
   type ChartLegendHandle,
   type LegendRow,
@@ -4381,17 +4381,10 @@ export default function ChartCore({
   // Equal-width days: install or remove the slot provider the patched
   // klinecharts store reads, then relay out so candles move to (or out of)
   // their slots at once, keeping the candle at the middle of the view in
-  // place. The provider is global, so every chart agrees; the first chart to
-  // run this flips it, the others only relay out.
+  // place. The provider is global: the first chart to run this switches it
+  // for every open chart at once, the others find it already switched.
   useEffect(() => {
-    const c = chartRef.current;
-    if (!c) {
-      setEqualWidthDays(equalWidthDays);
-      return;
-    }
-    relayoutSlots(c, () => {
-      if (equalWidthDaysOn() !== equalWidthDays) setEqualWidthDays(equalWidthDays);
-    });
+    switchEqualWidthDays(equalWidthDays);
   }, [equalWidthDays, chartReady]);
 
   // Time gaps lays the chart out on the broker's own days and weeks: give the

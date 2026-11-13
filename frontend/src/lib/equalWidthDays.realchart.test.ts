@@ -3,9 +3,9 @@
 // Equal-width days against a REAL (patched) klinecharts store: while the user
 // is scrolled back, data arriving at either end must not slide the candles
 // they are reading, even when it widens the slot grid.
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { dispose, init, type Chart, type KLineData } from "klinecharts";
-import { relayoutSlots, setEqualWidthDays, setSlotAnchors, setSlotSource, slotGridFor } from "./equalWidthDays";
+import { relayoutSlots, setEqualWidthDays, setSlotAnchors, setSlotSource, slotGridFor, switchEqualWidthDays } from "./equalWidthDays";
 import { utcAnchors } from "./equalWidthDays.testUtil";
 import { applyFreeCrosshairX } from "../chart/freeCrosshair";
 
@@ -140,6 +140,50 @@ describe("equal-width days on a real klinecharts store", () => {
     relayoutSlots(chart, () => setEqualWidthDays(true));
     expect(slotGridFor(store.getDataList())).not.toBeNull();
     expect(xOfTs(ts)).toBe(x);
+  });
+
+  it("switching Time gaps keeps the centre candle on every open chart", () => {
+    const el2 = document.createElement("div");
+    document.body.appendChild(el2);
+    const chart2 = init(el2)!;
+    const store2 = (chart2 as unknown as { _chartStore: Store })._chartStore;
+    try {
+      const utc = utcAnchors(Array.from({ length: 40 }, (_, d) => D0 - 7 * DAY + d * DAY));
+      const data = [...days(10, 18), ...days(18, 19, 15), ...days(19, 20)];
+      for (const [c, s] of [[chart, store], [chart2, store2]] as const) {
+        setSlotSource(c, async () => utc);
+        setSlotAnchors(c, "broker", utc);
+        s._addData(data, "init", true);
+        c.setBarSpace(20);
+        s.setLastBarRightSideDiffBarCount(-30);
+      }
+      const centre = (s: Store) => {
+        const f = s as unknown as { coordinateToFloatIndex(x: number): number; _totalBarSpace: number };
+        return s.getDataList()[Math.round(f.coordinateToFloatIndex(f._totalBarSpace / 2))].timestamp;
+      };
+      const xOf = (s: Store, ts: number) => s.dataIndexToCoordinate(s.getDataList().findIndex((b) => b.timestamp === ts));
+      const ts2 = centre(store2);
+      const x2 = xOf(store2, ts2);
+      switchEqualWidthDays(false);
+      expect(xOf(store2, ts2)).toBe(x2);
+      switchEqualWidthDays(true);
+      expect(xOf(store2, ts2)).toBe(x2);
+    } finally {
+      setSlotSource(chart2, null);
+      dispose(el2);
+      el2.remove();
+    }
+  });
+
+  it("dropping a chart's source does not ask the old source again", async () => {
+    const utc = utcAnchors(Array.from({ length: 40 }, (_, d) => D0 - 7 * DAY + d * DAY));
+    const old = vi.fn(async () => utc);
+    setSlotSource(chart, old);
+    setSlotAnchors(chart, "broker", utc);
+    await new Promise((r) => setTimeout(r, 0));
+    old.mockClear();
+    setSlotSource(chart, null);
+    expect(old).not.toHaveBeenCalled();
   });
 
   it("the crosshair's time label shows the empty slot's own time", () => {

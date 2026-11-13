@@ -122,3 +122,19 @@ describe("time axis with Time gaps", () => {
     expect(out.map((t) => t.text)).toContain(new Date(T0 + 7 * DAY + 14 * HOUR).toISOString().slice(0, 13));
   });
 });
+
+describe("slotPositions", () => {
+  it("walks only the positions on screen when a view edge sits in a gap", () => {
+    const times = [...[14, 15, 16].map((h) => T0 + h * HOUR), ...[14, 15, 16].map((h) => T0 + 7 * DAY + h * HOUR)];
+    // Monday to Monday, every weekday a column: a wide empty run in between.
+    const wide = buildSlotGrid(times, {
+      dayStarts: Array.from({ length: 8 }, (_, d) => T0 + d * DAY),
+      weekStarts: [T0, T0 + 7 * DAY],
+    })!;
+    const visFrom = wide.pos[2] + 5; // the left edge inside the gap
+    const visTo = wide.pos[3] - 5; // the right edge inside it too
+    const w = slotPositions(wide, 2, 3, () => null, { from: visFrom, to: visTo });
+    expect(w.from).toBeGreaterThanOrEqual(visFrom - 1);
+    expect(w.to).toBeLessThanOrEqual(visTo + 1);
+  });
+});

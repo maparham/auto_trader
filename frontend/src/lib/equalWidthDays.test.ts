@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildSlotGrid,
+  relayoutSlots,
   setEqualWidthDays,
   setSlotAnchors,
   setSlotSource,
@@ -235,6 +236,32 @@ describe("slotGridFor and the chart's source", () => {
     expect((source.mock.calls[1] as unknown as [number])[0]).toBeLessThanOrEqual(older[0]);
     await flush();
     expect(slotAnchorsOf(chart)?.dayStarts).toEqual([-14 * DAY, 7 * DAY]);
+  });
+
+  it("a range the broker answered is not asked again as live candles arrive", async () => {
+    setEqualWidthDays(true);
+    const chart = {};
+    // The broker's daily history starts after the first loaded candle, so the
+    // starts can never cover every candle.
+    const t = [...day(0, [13, 14]), ...day(5, [13, 14])];
+    const source = vi.fn(async () => utcAnchors(day(5, [13])));
+    setSlotSource(chart, source);
+    provider()(listOf(t), chart);
+    await flush();
+    for (let h = 15; h < 20; h++) {
+      provider()(listOf([...t, ...day(5, [h])]), chart);
+      await flush();
+    }
+    expect(source).toHaveBeenCalledTimes(1);
+  });
+
+  it("relayout on a chart with no candles only runs the change", () => {
+    const relayout = vi.fn();
+    const chart = { _chartStore: { chartkarRelayoutSlots: relayout, getDataList: () => [] } };
+    const change = vi.fn();
+    relayoutSlots(chart, change);
+    expect(change).toHaveBeenCalledTimes(1);
+    expect(relayout).not.toHaveBeenCalled();
   });
 
   it("a new source (symbol change) drops the old starts", () => {

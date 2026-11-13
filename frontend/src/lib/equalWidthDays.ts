@@ -250,8 +250,16 @@ function mergedAnchors(chart: object | undefined): SlotAnchors | undefined {
  * null when it cannot (then the chart is drawn without Time gaps). */
 export type SlotSource = (fromMs: number, toMs: number) => Promise<SlotAnchors | null>;
 
-type SourceState = { load: SlotSource; inFlight: boolean; asked?: { from: number; to: number; at: number } };
+type SourceState = {
+  load: SlotSource;
+  inFlight: boolean;
+  asked?: { from: number; to: number; at: number };
+  /** The span the broker has answered for: what it had there is all it has. */
+  answered?: { from: number; to: number };
+};
 const sources = new WeakMap<object, SourceState>();
+/** Charts with a source, in order, so switching Time gaps reaches them all. */
+const liveCharts = new Set<object>();
 const SOURCE_KEY = "broker";
 /** A range already asked for is not asked again this soon (a failed or empty
  * answer would otherwise repeat on every layout). */
@@ -263,14 +271,19 @@ const ASK_AGAIN_MS = 60_000;
  */
 export function setSlotSource(chart: object | null | undefined, load: SlotSource | null): void {
   if (!chart) return;
+  // The old source goes first, so the relayout below cannot ask it again.
+  sources.delete(chart);
+  liveCharts.delete(chart);
   const m = anchorsByChart.get(chart);
   if (m && m.size)
     relayoutSlots(chart, () => {
       m.clear();
       bump();
     });
-  if (load) sources.set(chart, { load, inFlight: false });
-  else sources.delete(chart);
+  if (load) {
+    sources.set(chart, { load, inFlight: false });
+    liveCharts.add(chart);
+  }
 }
 
 /** Ask the chart's source for the starts its candles need, unless they are
@@ -290,6 +303,11 @@ function ensureStarts(chart: object, first: number, last: number): void {
     ws[0] <= first + DAY &&
     last < ws[ws.length - 1] + 8 * DAY;
   if (covered) return;
+  // Asked and answered before: the broker has no more starts there (its daily
+  // history begins later, or today's bar is not out yet). A new day past the
+  // answered span asks again.
+  const done = st.answered;
+  if (done && first >= done.from && last <= done.to) return;
   // From the candles only: the answer's own bars may reach further back, and
   // asking from those would walk back through history without end.
   const from = first - 8 * DAY;
@@ -309,6 +327,8 @@ function ensureStarts(chart: object, first: number, last: number): void {
     .then((res) => {
       st.inFlight = false;
       if (sources.get(chart) !== st || !res?.dayStarts?.length || !res.weekStarts?.length) return;
+      const done = st.answered;
+      st.answered = done ? { from: Math.min(done.from, from), to: Math.max(done.to, to) } : { from, to };
       const prev = mergedAnchors(chart);
       setSlotAnchors(chart, SOURCE_KEY, {
         dayStarts: sortedFinite([...(prev?.dayStarts ?? []), ...res.dayStarts]),
@@ -374,7 +394,22 @@ export function setEqualWidthDays(next: boolean): void {
   bump();
 }
 
-type RelayoutStore = { chartkarRelayoutSlots?: (change: () => void) => void };
+/**
+ * Turn Time gaps on or off for every chart with a source. The provider is
+ * global, so each chart's relayout is nested inside the previous one: every
+ * chart reads its middle candle before the one switch, then keeps it.
+ */
+export function switchEqualWidthDays(next: boolean): void {
+  if (on === next) return;
+  const charts = [...liveCharts];
+  const run = (k: number): void => {
+    if (k === charts.length) setEqualWidthDays(next);
+    else relayoutSlots(charts[k], () => run(k + 1));
+  };
+  run(0);
+}
+
+type RelayoutStore = { chartkarRelayoutSlots?: (change: () => void) => void; getDataList?: () => readonly unknown[] };
 
 /**
  * Run a change that moves the slot grid (the setting, anchors) and keep the
@@ -383,7 +418,9 @@ type RelayoutStore = { chartkarRelayoutSlots?: (change: () => void) => void };
  */
 export function relayoutSlots(chart: object | null | undefined, change: () => void): void {
   const store = (chart as { _chartStore?: RelayoutStore } | null | undefined)?._chartStore;
-  if (store && typeof store.chartkarRelayoutSlots === "function") store.chartkarRelayoutSlots(change);
+  // No candles (a chart being torn down): nothing to keep in place.
+  const empty = typeof store?.getDataList === "function" && !store.getDataList()?.length;
+  if (store && !empty && typeof store.chartkarRelayoutSlots === "function") store.chartkarRelayoutSlots(change);
   else change();
 }
 
