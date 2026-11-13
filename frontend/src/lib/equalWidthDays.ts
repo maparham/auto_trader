@@ -27,6 +27,9 @@ export interface SlotGrid {
   idxOf(p: number): number;
   /** Number of positions up to and including the last candle. */
   count(): number;
+  /** The time of the empty slot at whole position p between two candles,
+   * or null on a candle's own slot or outside the candles. */
+  timeAt(p: number): number | null;
 }
 
 // The chart period: the most common gap among the last 200 candles (ties go
@@ -123,10 +126,12 @@ export function buildSlotGrid(times: readonly number[], anchors?: SlotAnchors): 
   // Trendlines step map relies on it), so a first week that opens mid-week
   // keeps its empty leading columns. Weeks with no candles take no room.
   const own = new Array<number>(n);
+  const weekOf = new Array<number>(n); // each candle's week start, as a calendar date
   let weekIdx = -1;
   let lastWeek = NaN;
   for (let i = 0; i < n; i++) {
     const week = periodStart(weekCals, cal[i], 7);
+    weekOf[i] = week;
     if (week !== lastWeek) [weekIdx, lastWeek] = [weekIdx + 1, week];
     own[i] = weekIdx * perWeek + colOf.get(weekdayOf(cal[i]))! * perDay + (slot[i] - minSlot);
     // Never go back (a stray stamp across a boundary).
@@ -169,6 +174,29 @@ export function buildSlotGrid(times: readonly number[], anchors?: SlotAnchors): 
     },
     count(): number {
       return pos[last] + 1;
+    },
+    timeAt(p: number): number | null {
+      if (!Number.isFinite(p)) return null;
+      const P = Math.floor(p);
+      if (P <= own[0] || P >= own[last]) return null;
+      // The last candle at or before P, and the next one.
+      let lo = 0;
+      let hi = last;
+      while (hi - lo > 1) {
+        const m = (lo + hi) >> 1;
+        if (own[m] <= P) lo = m;
+        else hi = m;
+      }
+      if (own[lo] === P) return null;
+      // Weeks with no candles take no room, so P lies in lo's week or hi's.
+      const w = Math.floor(P / perWeek);
+      const k = w === Math.floor(own[lo] / perWeek) ? lo : hi;
+      const col = Math.floor((P - w * perWeek) / perDay);
+      const date = weekOf[k] + mod(order[col] - weekdayOf(weekOf[k]), 7);
+      // The broker's start of that calendar date's day (stepped on in whole
+      // days where it has none, as for a holiday).
+      const start = periodStart(dayStarts, date * DAY + DAY / 2 - 1, DAY);
+      return start + (minSlot + (P - w * perWeek - col * perDay)) * step;
     },
   };
 }

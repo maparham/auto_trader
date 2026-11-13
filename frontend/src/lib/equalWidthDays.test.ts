@@ -131,6 +131,24 @@ describe("broker days and equal weeks", () => {
     expect(g.pos).toEqual(full.pos);
   });
 
+  it("timeAt gives the time of an empty slot, null on a candle's own slot", () => {
+    const days = weekdays.filter((d) => d !== 7); // Monday of week 2 is a holiday
+    const t = stock(days).filter((x) => x !== at(1, 16)); // a missing hour on Tuesday
+    const g = buildSlotGrid(t, { dayStarts: days.map((d) => at(d, 0)), weekStarts: mondays })!;
+    expect(g.timeAt(g.pos[0])).toBeNull();
+    expect(g.timeAt(7 + 2)).toBe(at(1, 16)); // Tuesday's empty 16:00 slot
+    expect(g.timeAt(35 + 3)).toBe(at(7, 17)); // the holiday column
+    expect(g.timeAt(-1)).toBeNull(); // before the first candle: left to the chart
+    expect(g.timeAt(g.pos[g.n - 1] + 1)).toBeNull(); // after the last
+  });
+
+  it("timeAt on FX follows the broker's 22:00 day starts", () => {
+    const t = fx().filter((x) => x !== at(1, 5));
+    const g = buildSlotGrid(t, { dayStarts: fxDays, weekStarts: [at(-1, 22)] })!;
+    // Tuesday's column starts Monday 22:00 (first slot 23:00); 05:00 is slot 6.
+    expect(g.timeAt(23 + 6)).toBe(at(1, 5));
+  });
+
   it("a first week opening mid-week keeps weeks on multiples of perWeek", () => {
     const days = [2, 3, 4, 7, 8];
     const g = buildSlotGrid(stock(days), { dayStarts: weekdays.map((d) => at(d, 0)), weekStarts: mondays })!;

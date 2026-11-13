@@ -7,6 +7,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { dispose, init, type Chart, type KLineData } from "klinecharts";
 import { relayoutSlots, setEqualWidthDays, setSlotAnchors, setSlotSource, slotGridFor } from "./equalWidthDays";
 import { utcAnchors } from "./equalWidthDays.testUtil";
+import { applyFreeCrosshairX } from "../chart/freeCrosshair";
 
 function stubCanvas(): void {
   const ctx = new Proxy({ measureText: () => ({ width: 10 }) } as Record<string, unknown>, {
@@ -139,6 +140,21 @@ describe("equal-width days on a real klinecharts store", () => {
     relayoutSlots(chart, () => setEqualWidthDays(true));
     expect(slotGridFor(store.getDataList())).not.toBeNull();
     expect(xOfTs(ts)).toBe(x);
+  });
+
+  it("the crosshair's time label shows the empty slot's own time", () => {
+    applyFreeCrosshairX(chart);
+    // Day 18 opens at 15:00: its 14:00 slot is empty.
+    store._addData([...days(10, 18), ...days(18, 19, 15), ...days(19, 20)], "init", true);
+    const ch = store as unknown as {
+      setCrosshair(c: { x: number; y: number; paneId: string }): void;
+      getCrosshair(): { timestamp?: number };
+    };
+    const x15 = xOfTs(D0 + 18 * DAY + 15 * H);
+    ch.setCrosshair({ x: x15 - 20, y: 10, paneId: "candle_pane" }); // one slot left
+    expect(ch.getCrosshair().timestamp).toBe(D0 + 18 * DAY + 14 * H);
+    ch.setCrosshair({ x: x15, y: 10, paneId: "candle_pane" }); // on the candle
+    expect(ch.getCrosshair().timestamp).toBe(D0 + 18 * DAY + 15 * H);
   });
 
   it("newer history appended at the right does not slide the view", () => {
