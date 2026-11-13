@@ -139,7 +139,8 @@ class CandleCache:
         re-injecting a stale watermark, silently claiming an unfetched gap as covered.
         All requests share this in-process singleton, so the lock serializes that
         critical section across every user/chart on the same series; different keys stay
-        fully concurrent. Created lazily on the running loop — the get/set pair has no
+        fully concurrent. A window() the store already covers skips the lock: it only
+        reads (see window()). Created lazily on the running loop — the get/set pair has no
         await between it, so it's race-free on the single-threaded event loop.
 
         NB: this guards a single backend process. Running multiple worker processes
@@ -415,7 +416,9 @@ class CandleCache:
         partial: dict | None = None,
         max_fill_chunks: int | None = None,
     ) -> list[Candle]:
-        """Candles in [start, end]. Serializes per-key with recent() (see _key_lock).
+        """Candles in [start, end]. A window coverage already holds is read without
+        the key lock; anything that must fetch serializes per-key with recent() (see
+        _key_lock).
 
         `degraded` (optional out-param): when a broker fetch failed but cached bars
         were served anyway, degraded["reason"] is set to the error text — the
@@ -451,9 +454,20 @@ class CandleCache:
         backfill, and a slightly stale coverage read costs at most one
         unnecessary pass-through."""
         deadline = None if budget_s is None else time.monotonic() + budget_s
+        from_ts, to_ts = int(start.timestamp()), int(end.timestamp())
+        cov = await self._db(self._coverage, key)
+        # Fully covered: a pure store read, no broker call and no write, so it
+        # does not queue behind the key lock (a deep backfill_below walk holds it
+        # for minutes, and a chart switch's covered window used to wait it out).
+        # Safe without the lock: every writer commits its bars BEFORE it extends
+        # coverage, and nothing deletes bars, so coverage read here never claims
+        # a row that is not stored yet. A reset that shrinks coverage after this
+        # read leaves the rows in place (_read_window has no coverage floor).
+        if cov is not None and cov[0] <= from_ts and cov[1] >= to_ts:
+            self._record_hit(key)
+            bars = await self._db(self._read_window, key, from_ts, to_ts)
+            return await self._repaired(key, res_seconds, bars)
         if max_fill_chunks is not None:
-            from_ts, to_ts = int(start.timestamp()), int(end.timestamp())
-            cov = await self._db(self._coverage, key)
             chunk_secs = res_seconds * max(1, chunk_bars)
             if cov is not None and to_ts < cov[0]:
                 gap_chunks = -(-(cov[0] - from_ts) // chunk_secs)  # ceil
@@ -497,7 +511,9 @@ class CandleCache:
         # A cache hit needs the window fully inside coverage. Misses fill BELOW
         # oldest (scroll-back) and ABOVE newest (forward walks) — but the newest
         # watermark never passes the closed cutoff: the forming bar belongs to
-        # recent()/the stream and must stay re-fetchable.
+        # recent()/the stream and must stay re-fetchable. window() already served
+        # a covered window before the lock, so this hits only when coverage grew
+        # while the call waited for the lock.
         if cov is not None and cov[0] <= from_ts and cov[1] >= to_ts:
             self._record_hit(key)
             return await self._db(self._read_window, key, from_ts, to_ts)

@@ -1263,6 +1263,55 @@ def test_window_budget_already_spent_serves_cache_without_fetching(tmp_path):
     assert partial["done_chunks"] == 0
 
 
+def test_window_fully_covered_does_not_wait_for_the_key_lock(tmp_path):
+    """A window the store already covers needs no broker call, so it must not
+    queue behind a long holder of the key lock (a deep backfill walk). A chart
+    switch read a covered window in 6 s because of that wait."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in range(1000, 3100, 100)]
+    asyncio.run(cache.window(KEY, 100, _dt(1000), _dt(3000), ChunkRecordingFetcher(src).range, now=10_000))
+
+    async def run():
+        lock = cache._key_lock(KEY)
+        await lock.acquire()  # a backfill holding the lock for its whole walk
+        try:
+            f = ChunkRecordingFetcher(src)
+            out = await asyncio.wait_for(
+                cache.window(KEY, 100, _dt(1500), _dt(2500), f.range, now=10_000), timeout=1.0
+            )
+            return f, out
+        finally:
+            lock.release()
+
+    f, out = asyncio.run(run())
+    assert f.range_calls == []
+    assert [int(c.time.timestamp()) for c in out] == list(range(1500, 2501, 100))
+
+
+def test_window_not_covered_still_waits_for_the_key_lock(tmp_path):
+    """Only the fully covered read skips the lock: a window that must fetch
+    still serializes with the other writers of the same key."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    src = [_c(t, float(t)) for t in range(1000, 3100, 100)]
+    asyncio.run(cache.window(KEY, 100, _dt(2000), _dt(3000), ChunkRecordingFetcher(src).range, now=10_000))
+
+    async def run():
+        lock = cache._key_lock(KEY)
+        await lock.acquire()
+        try:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(
+                    cache.window(
+                        KEY, 100, _dt(1500), _dt(3000), ChunkRecordingFetcher(src).range, now=10_000
+                    ),
+                    timeout=0.2,
+                )
+        finally:
+            lock.release()
+
+    asyncio.run(run())
+
+
 # --- absorb_closed: live-stream bars persist as they close -------------------
 # What keeps the store's right edge tracking an open chart's stream. Coverage
 # extends only for a bar that directly abuts covered territory; anything else
