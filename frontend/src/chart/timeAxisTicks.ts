@@ -16,6 +16,25 @@
 // the buckets timeFormat.ts renders per the user's clock and date format.
 
 import { registerXAxis, utils } from "klinecharts";
+import { slotGridFor, type SlotGrid } from "../lib/equalWidthDays";
+
+/**
+ * With Time gaps on, ticks walk display positions instead of candles, so an
+ * empty slot (a holiday, closed hours) can carry a label too. Past the
+ * candles positions are 1:1 with indices, so the chart extrapolates as before.
+ */
+export function slotPositions(
+  grid: SlotGrid,
+  fromIdx: number,
+  toIdx: number,
+  tsAtIndex: (i: number) => number | null,
+): { from: number; to: number; tsAt(p: number): number | null } {
+  return {
+    from: grid.posOf(fromIdx),
+    to: grid.posOf(toIdx),
+    tsAt: (p) => grid.slotTime(p) ?? tsAtIndex(grid.idxOf(p)),
+  };
+}
 
 /** Expected px between neighbouring ticks before the next coarser step. */
 export const MIN_TICK_PX = 80;
@@ -199,6 +218,7 @@ interface ChartStoreLike {
   getStyles(): { xAxis: { tickText: { size: number; weight: string | number; family: string } } };
   getInnerFormatter(): { formatDate(ts: number, template: string, type: string): string };
   dataIndexToTimestamp(i: number): number | null;
+  getDataList(): readonly { timestamp: number }[];
 }
 
 registerXAxis({
@@ -227,14 +247,16 @@ function chartTicks(axis: AxisThis, range: { realFrom: number; realTo: number })
   const { size, weight, family } = store.getStyles().xAxis.tickText;
   const { formatDate } = store.getInnerFormatter();
   const widths = new Map<string, number>();
+  const tsAtIndex = (i: number) => store.dataIndexToTimestamp(i);
+  const grid = slotGridFor(store.getDataList());
+  const walk = grid
+    ? { ...slotPositions(grid, range.realFrom, range.realTo, tsAtIndex), pxAt: (p: number) => axis.convertToPixel(grid.idxOf(p)) }
+    : { from: range.realFrom, to: range.realTo, tsAt: tsAtIndex, pxAt: (i: number) => axis.convertToPixel(i) };
   return buildTimeTicks({
-    from: range.realFrom,
-    to: range.realTo,
+    ...walk,
     barSpace: store.getBarSpace().bar,
     barMs: periodMs(period),
-    tsAt: (i) => store.dataIndexToTimestamp(i),
     offsetAt: (ts) => zoneOffset(dtf, zone, ts),
-    pxAt: (i) => axis.convertToPixel(i),
     format: (ts, template) => formatDate(ts, template, "xAxis"),
     textWidth: (s) => {
       let w = widths.get(s);

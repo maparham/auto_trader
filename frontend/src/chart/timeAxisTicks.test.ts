@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { MIN_TICK_PX, buildTimeTicks, pickStep } from "./timeAxisTicks";
+import { MIN_TICK_PX, buildTimeTicks, pickStep, slotPositions } from "./timeAxisTicks";
+import { buildSlotGrid } from "../lib/equalWidthDays";
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -96,5 +97,28 @@ describe("buildTimeTicks", () => {
       textWidth: () => 40,
     });
     expect(out.length).toBeGreaterThan(0);
+  });
+});
+
+describe("time axis with Time gaps", () => {
+  it("an empty day column gets its own day label", () => {
+    // Hourly 14:00..20:00 UTC, Mon..Fri for two weeks; week 2's Monday is a holiday.
+    const days = [0, 1, 2, 3, 4, 8, 9, 10, 11];
+    const times = days.flatMap((d) => Array.from({ length: 7 }, (_, h) => T0 + d * DAY + (14 + h) * HOUR));
+    const grid = buildSlotGrid(times, {
+      dayStarts: days.map((d) => T0 + d * DAY),
+      weekStarts: [T0, T0 + 7 * DAY],
+    })!;
+    const pos = slotPositions(grid, 0, times.length - 1, (i) => times[i] ?? null);
+    const out = buildTimeTicks({
+      ...pos,
+      barSpace: 20,
+      barMs: HOUR,
+      offsetAt: () => 0,
+      pxAt: (p) => p * 20,
+      format: (ts) => new Date(ts).toISOString().slice(0, 13),
+      textWidth: () => 40,
+    });
+    expect(out.map((t) => t.text)).toContain(new Date(T0 + 7 * DAY + 14 * HOUR).toISOString().slice(0, 13));
   });
 });

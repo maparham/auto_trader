@@ -30,6 +30,9 @@ export interface SlotGrid {
   /** The time of the empty slot at whole position p between two candles,
    * or null on a candle's own slot or outside the candles. */
   timeAt(p: number): number | null;
+  /** The time at whole position p: its candle's, or the empty slot's; null
+   * outside the candles. */
+  slotTime(p: number): number | null;
 }
 
 // The chart period: the most common gap among the last 200 candles (ties go
@@ -197,6 +200,21 @@ export function buildSlotGrid(times: readonly number[], anchors?: SlotAnchors): 
       // days where it has none, as for a holiday).
       const start = periodStart(dayStarts, date * DAY + DAY / 2 - 1, DAY);
       return start + (minSlot + (P - w * perWeek - col * perDay)) * step;
+    },
+    slotTime(p: number): number | null {
+      const P = Math.floor(p);
+      if (!(P >= own[0] && P <= own[last])) return null;
+      const gap = this.timeAt(P);
+      if (gap !== null) return gap;
+      // A candle's own slot: the first candle in it.
+      let lo = 0;
+      let hi = last;
+      while (lo < hi) {
+        const m = (lo + hi) >> 1;
+        if (own[m] < P) lo = m + 1;
+        else hi = m;
+      }
+      return times[lo];
     },
   };
 }
