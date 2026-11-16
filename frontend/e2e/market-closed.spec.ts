@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { seedSingleChartDefault, seedTwoChartTabs, skipUnlessCapital, stubStateApi } from "./helpers";
 
 // When the lead cell's market is closed (closed:true from /api/market/{epic},
@@ -6,6 +6,19 @@ import { seedSingleChartDefault, seedTwoChartTabs, skipUnlessCapital, stubStateA
 // crescent-moon badge and the chart's price label reads "closed" in place of the
 // candle countdown. The chart fetches that meta on load and polls it — here we
 // stub the endpoint so the test is hermetic.
+
+// The tab badges read every tab's status in one call (GET /api/markets/status,
+// repeated ?epic=); answer it from `closedFor(epic)`.
+const stubMarketsStatus = (page: Page, closedFor: (epic: string) => boolean) =>
+  page.route("**/api/markets/status**", (r) => {
+    const epics = new URL(r.request().url()).searchParams.getAll("epic");
+    const body: Record<string, { closed: boolean; nextOpen: string | null }> = {};
+    for (const e of epics) {
+      const closed = closedFor(e);
+      body[e] = { closed, nextOpen: closed ? "2026-06-26T22:00:00+00:00" : null };
+    }
+    return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
 
 test("a closed market badges its tab", async ({ page }) => {
   await seedSingleChartDefault(page);
@@ -17,6 +30,7 @@ test("a closed market badges its tab", async ({ page }) => {
       body: JSON.stringify({ epic: "US100", pricePrecision: 2, closed: true, nextOpen: "2026-06-26T22:00:00+00:00" }),
     }),
   );
+  await stubMarketsStatus(page, () => true);
   await page.goto("/");
   await page.locator(".tab-bar").waitFor();
 
@@ -77,6 +91,7 @@ test("a backgrounded tab's closed market still badges (App-level epic poll)", as
       }),
     });
   });
+  await stubMarketsStatus(page, (e) => e === "OIL_CRUDE");
   await page.goto("/");
   await page.locator(".tab-bar").waitFor();
 
