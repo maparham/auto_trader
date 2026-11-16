@@ -53,7 +53,7 @@ import httpx
 from auto_trader.brokers._mt5_symbols import MT5_CATEGORIES, _classify_symbol, avatrade_ticker
 from auto_trader.brokers._prices import pick_side
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
-from auto_trader.core.broker_health import BrokerLoggedOut, BrokerReconnecting, BrokerTimeout
+from auto_trader.core.broker_health import BrokerLoggedOut, BrokerReconnecting, BrokerTimeout, UnknownEpic
 from auto_trader.core.models import (
     Candle,
     Order,
@@ -142,6 +142,11 @@ class MCPAuthError(MCPError):
 class MCPToolError(MCPError):
     """The terminal refused the tool call (`isError`): unknown symbol, trade
     rejected, trading disabled, and so on. The message is the terminal's text."""
+
+
+class MCPUnknownSymbol(MCPToolError, UnknownEpic):
+    """The terminal has no such symbol. Still an MCPToolError for local
+    handlers, and an UnknownEpic so the breaker does not count it."""
 
 
 def _parse_body(text: str) -> dict:
@@ -353,7 +358,12 @@ class MT5MCPBroker(MarketDataBroker):
         return await self.client.call(tool, args, timeout=timeout or self.READ_BUDGET)
 
     async def _select(self, symbol: str) -> None:
-        await self.call("add_marketwatch_symbol", {"symbol": symbol})
+        try:
+            await self.call("add_marketwatch_symbol", {"symbol": symbol})
+        except MCPToolError as exc:
+            if "not found" in str(exc).lower():
+                raise MCPUnknownSymbol(symbol) from exc
+            raise
 
     async def _symbol_call(self, tool: str, args: dict, *, timeout: float | None = None) -> Any:
         """A per-symbol read that needs the symbol in Market Watch: on the

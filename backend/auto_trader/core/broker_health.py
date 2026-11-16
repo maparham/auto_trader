@@ -65,6 +65,12 @@ class BrokerTimeout(Exception):
         self.cause = cause
 
 
+class UnknownEpic(Exception):
+    """The broker answered that it has no such symbol. That is the caller's
+    mistake (a symbol from another broker's catalogue, say), not an outage,
+    so the breaker ignores it and the API answers 404."""
+
+
 class BrokerDown(Exception):
     """The broker's edge answered with an HTML outage page (5xx): the request
     reached the broker's infrastructure, which says the API behind it is down.

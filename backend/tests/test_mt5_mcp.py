@@ -679,3 +679,24 @@ def test_selector_label_is_the_short_broker_name(name, short):
     b = _broker({})
     b.note_account_info({"account": {"broker": name, "type": "real"}})
     assert b.display_name == short
+
+
+def test_history_for_a_symbol_the_terminal_lacks_is_unknown_epic():
+    from auto_trader.brokers.mt5_mcp import MCPUnknownSymbol
+    from auto_trader.core.broker_health import UnknownEpic
+
+    b = _broker({"get_chart_history": MCPToolError("Tool 'get_chart_history' symbol not found"),
+                 "add_marketwatch_symbol": MCPToolError("Tool 'add_marketwatch_symbol' symbol not found")})
+    start = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    with pytest.raises(UnknownEpic) as e:
+        run(b.get_candles("AAPL", Resolution.DAY, start, start + timedelta(days=10)))
+    assert isinstance(e.value, MCPUnknownSymbol) and isinstance(e.value, MCPToolError)
+
+
+def test_other_select_errors_stay_plain_tool_errors():
+    from auto_trader.core.broker_health import UnknownEpic
+
+    b = _broker({"add_marketwatch_symbol": MCPToolError("trade disabled")})
+    with pytest.raises(MCPToolError) as e:
+        run(b._select("EURUSD"))
+    assert not isinstance(e.value, UnknownEpic)

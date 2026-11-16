@@ -38,6 +38,7 @@ from auto_trader.core.broker_health import (
     BrokerReconnecting,
     BrokerTimeout,
     BrokerUnavailable,
+    UnknownEpic,
 )
 from auto_trader.core.candle_aggregate import (
     DERIVED,
@@ -237,11 +238,16 @@ async def guarded(
         # keeping it out of the breaker means every poll surfaces the specific
         # "your network is blocking the broker" 503 instead of degrading to the
         # generic BrokerUnavailable message once the breaker opens.
+        # UnknownEpic is `ignore`d: the broker answered, it just has no such
+        # symbol, so a tab still naming another broker's symbols must not open
+        # the breaker for every other call.
         return await BROKER_HEALTH.run(
             broker_id,
             factory,
-            ignore=(IGAllowanceExceeded, BrokerReconnecting, BrokerBlocked),
+            ignore=(IGAllowanceExceeded, BrokerReconnecting, BrokerBlocked, UnknownEpic),
         )
+    except UnknownEpic as e:
+        raise HTTPException(404, f"{label}: unknown epic '{e}'") from e
     except BrokerBlocked as e:
         raise broker_blocked_http(label, e) from e
     except BrokerDown as e:
