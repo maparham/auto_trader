@@ -21,6 +21,7 @@ _EXACT = frozenset(
         "/api/candles/synthetic",
         "/api/markets",
         "/api/markets/all",
+        "/api/markets/status",
         "/api/brokers",
         "/api/demo/snapshot",
         "/api/patterns/families",

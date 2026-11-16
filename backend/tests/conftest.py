@@ -16,6 +16,16 @@ def _isolated_run_store(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_market_status(monkeypatch):
+    """The market-status cache is a process-wide singleton; give each test an
+    empty one so a meta cached by one test never answers another."""
+    import auto_trader.api.routers.markets as markets_router
+    from auto_trader.core.market_status import MarketStatusCache
+
+    monkeypatch.setattr(markets_router, "MARKET_STATUS", MarketStatusCache())
+
+
+@pytest.fixture(autouse=True)
 def _isolated_alert_store(tmp_path, monkeypatch):
     """Alerts persist via a module singleton; point BOTH the router AND the
     module singleton itself at a per-test temp store so the suite never

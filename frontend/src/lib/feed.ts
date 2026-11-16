@@ -48,6 +48,7 @@ export {
   fetchCandleCacheStats,
   fetchCandleCacheGlobalStats,
   fetchMarketMeta,
+  fetchMarketsStatus,
 } from "./feed/instruments";
 export type {
   Instrument,

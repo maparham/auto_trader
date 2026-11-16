@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from auto_trader.brokers.yahoo_earnings import EARNINGS
 from auto_trader.brokers.yahoo_splits import SPLITS
 from auto_trader.core.catalog_cache import cached_catalog
+from auto_trader.core.market_status import MARKET_STATUS
 
 from .. import deps
 from ..deps import broker_query, get_data, guarded, request_is_admin
@@ -57,18 +60,68 @@ async def all_markets(
     return [MarketDTO(**m) for m in found]
 
 
+async def _cached_meta(
+    broker_id: str, epic: str, max_age_s: float | None = None
+) -> dict | None:
+    """The broker's meta for `epic`, from the shared server-side cache
+    (core/market_status.py), so every user and reload reuses one lookup."""
+    broker = get_data(broker_id)
+    return await MARKET_STATUS.get(
+        broker_id,
+        epic,
+        lambda: guarded(broker_id, lambda: broker.get_market_meta(epic), "market lookup"),
+        max_age_s,
+    )
+
+
+# Most epics one status call may ask for, and how many uncached ones it looks
+# up upstream at once.
+_STATUS_MAX_EPICS = 100
+_STATUS_CONCURRENCY = 4
+# The oldest cached answer a fresh=1 meta request accepts.
+_FRESH_MAX_AGE_S = 30.0
+
+
+@router.get("/api/markets/status")
+async def markets_status(
+    epic: list[str] = Query(default_factory=list),
+    broker_id: str = Depends(broker_query),
+) -> dict[str, dict[str, object]]:
+    # Open/closed for many epics in one call (the tab bar's closed badges).
+    # Served from the shared cache, so it costs no upstream call once warm. A
+    # failed lookup answers closed: null plus error: true for that epic only;
+    # closed: null alone means the broker doesn't report open/closed.
+    epics = list(dict.fromkeys(e for e in epic if e))
+    if len(epics) > _STATUS_MAX_EPICS:
+        raise HTTPException(422, f"at most {_STATUS_MAX_EPICS} epics")
+    gate = asyncio.Semaphore(_STATUS_CONCURRENCY)
+
+    async def one(e: str) -> tuple[str, dict[str, object]]:
+        async with gate:
+            try:
+                meta = await _cached_meta(broker_id, e) or {}
+            except Exception:
+                return e, {"closed": None, "nextOpen": None, "error": True}
+        return e, {"closed": meta.get("closed"), "nextOpen": meta.get("nextOpen")}
+
+    return dict(await asyncio.gather(*(one(e) for e in epics)))
+
+
 @router.get("/api/market/{epic}")
 async def market_meta(
-    epic: str, broker_id: str = Depends(broker_query)
+    epic: str,
+    broker_id: str = Depends(broker_query),
+    fresh: bool = False,
 ) -> dict[str, object]:
     # Display precision + open/closed status for one epic, from the platform's own
     # single-market snapshot (one upstream call). The chart calls this on load so a
     # symbol persisted without precision (the bulk list omits it, e.g. OIL_CRUDE)
     # still renders at the right scale, and polls it so the tab badge / price label
     # flip when the market closes while the chart is open.
-    broker = get_data(broker_id)
-    meta = await guarded(broker_id, lambda: broker.get_market_meta(epic), "market lookup")
-    meta = meta or {}
+    # fresh=1 (the chart's re-check after its stream went quiet) refuses a
+    # cached answer older than _FRESH_MAX_AGE_S, so a market that just closed
+    # shows as fast as before the shared cache.
+    meta = await _cached_meta(broker_id, epic, _FRESH_MAX_AGE_S if fresh else None) or {}
     return {
         "epic": epic,
         "pricePrecision": meta.get("pricePrecision"),

@@ -335,9 +335,12 @@ export async function fetchCandleCacheGlobalStats(): Promise<CandleCacheGlobalSt
 export async function fetchMarketMeta(
   epic: string,
   brokerId: string = DEFAULT_BROKER,
+  opts: { fresh?: boolean } = {},
 ): Promise<MarketMeta> {
   try {
-    const url = `${BASE}/api/market/${encodeURIComponent(epic)}?broker=${encodeURIComponent(brokerId)}`;
+    // fresh: refuse a cached answer older than ~30 s on the backend.
+    const fresh = opts.fresh ? "&fresh=1" : "";
+    const url = `${BASE}/api/market/${encodeURIComponent(epic)}?broker=${encodeURIComponent(brokerId)}${fresh}`;
     // Bounded: a hung poll must free its connection fast (see META_TIMEOUT_MS). A
     // timeout/throw lands in the catch below and is treated as "unknown" (open).
     const res = await fetchWithTimeout(url, META_TIMEOUT_MS);
@@ -354,5 +357,44 @@ export async function fetchMarketMeta(
     };
   } catch {
     return { pricePrecision: null, closed: null, nextOpen: null };
+  }
+}
+
+export interface MarketStatus {
+  closed: boolean | null;
+  nextOpen: string | null;
+  // The lookup failed (worth a retry). closed: null WITHOUT this means the
+  // broker doesn't report open/closed at all.
+  error?: boolean;
+}
+
+/** Open/closed for many epics in one call, served from the backend's shared
+ * cache (core/market_status.py). An epic whose lookup failed answers
+ * closed: null with error: true. Returns null (never throws) when the whole call fails. */
+export async function fetchMarketsStatus(
+  epics: string[],
+  brokerId: string = DEFAULT_BROKER,
+): Promise<Record<string, MarketStatus> | null> {
+  if (epics.length === 0) return {};
+  try {
+    const q = epics.map((e) => `epic=${encodeURIComponent(e)}`).join("&");
+    const url = `${BASE}/api/markets/status?${q}&broker=${encodeURIComponent(brokerId)}`;
+    const res = await fetchWithTimeout(url, META_TIMEOUT_MS * 3);
+    if (!res.ok) return null;
+    const d = (await res.json()) as Record<
+      string,
+      { closed?: unknown; nextOpen?: unknown; error?: unknown }
+    >;
+    const out: Record<string, MarketStatus> = {};
+    for (const [epic, v] of Object.entries(d)) {
+      out[epic] = {
+        closed: typeof v?.closed === "boolean" ? v.closed : null,
+        nextOpen: typeof v?.nextOpen === "string" ? v.nextOpen : null,
+        ...(v?.error === true ? { error: true } : {}),
+      };
+    }
+    return out;
+  } catch {
+    return null;
   }
 }

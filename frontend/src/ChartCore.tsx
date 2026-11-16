@@ -4197,7 +4197,10 @@ export default function ChartCore({
     const recheck = async (wantPrecision: boolean): Promise<void> => {
       let meta: Awaited<ReturnType<typeof fetchMarketMeta>>;
       try {
-        meta = await fetchMarketMeta(symbol.epic, brokerId);
+        // Every re-check after the first load asks for a fresh answer, so the
+        // backend's shared cache can't hand back a minutes-old "open" (or a
+        // "closed" right at its reopen time).
+        meta = await fetchMarketMeta(symbol.epic, brokerId, { fresh: !wantPrecision });
       } catch {
         schedule(false, null); // transient: treat as open, re-arm the silence check
         return;
