@@ -1,0 +1,469 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assistant Panel Redesign</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: the current panel on the left as a static picture, the proposed panel on the right docked to a small chart so the text-to-chart links can be tried. */
+:root {
+  --bg: #101418;
+  --surface: #161a1f;
+  --surface-2: #1c2127;
+  --input-bg: #0d1014;
+  --border: #2a2f36;
+  --text: #d1d4dc;
+  --text-dim: #8a93a0;
+  --text-faint: #6b7480;
+  --accent: #2962ff;
+  --accent-text: #ffffff;
+  --pos: #26a69a;
+  --neg: #ef5350;
+  --hover: rgba(255, 255, 255, 0.08);
+  --hover-strong: rgba(255, 255, 255, 0.14);
+  --line-blue: #4c8dff;
+  --line-auto: #9aa4b2;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, system-ui, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #ffffff; --surface: #f5f7fa; --surface-2: #ffffff; --input-bg: #ffffff;
+    --border: #cfd6df; --text: #1f2933; --text-dim: #5a6573; --text-faint: #8a93a0;
+    --accent: #2962ff; --accent-text: #ffffff; --pos: #0f9d8a; --neg: #e53935;
+    --hover: rgba(19, 23, 34, 0.08); --hover-strong: rgba(19, 23, 34, 0.14);
+    --line-blue: #2962ff; --line-auto: #6b7480;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #ffffff; --surface: #f5f7fa; --surface-2: #ffffff; --input-bg: #ffffff;
+  --border: #cfd6df; --text: #1f2933; --text-dim: #5a6573; --text-faint: #8a93a0;
+  --accent: #2962ff; --accent-text: #ffffff; --pos: #0f9d8a; --neg: #e53935;
+  --hover: rgba(19, 23, 34, 0.08); --hover-strong: rgba(19, 23, 34, 0.14);
+  --line-blue: #2962ff; --line-auto: #6b7480;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.5; }
+button, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.page {
+  max-width: 1240px; margin: 0 auto; padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 24px;
+}
+.intro h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; text-wrap: balance; }
+.intro p { margin: 0; color: var(--text-dim); max-width: 65ch; }
+
+.stage { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+.frame { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.frame.now { flex: 0 1 372px; }
+.frame.next { flex: 1 1 560px; }
+.frame-head { display: flex; align-items: center; gap: 10px; min-height: 28px; }
+.frame-head h2 { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); margin: 0; }
+.replay { margin-left: auto; border: 1px solid var(--border); background: var(--surface); border-radius: 5px; padding: 3px 10px; font-size: 12px; }
+.replay:hover { background: var(--hover); }
+
+.app { display: flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--bg); }
+.chart { flex: 1 1 260px; min-width: 0; min-height: 220px; display: flex; }
+.chart svg { width: 100%; height: 100%; min-height: 220px; display: block; }
+.chart .lbl { font: 10px var(--mono); fill: var(--text-dim); }
+.chart .grid { stroke: var(--border); stroke-width: 1; fill: none; opacity: 0.6; }
+#chart [data-id] { transition: opacity 0.12s, stroke-width 0.12s; }
+#chart.has-hl [data-id] { opacity: 0.25; }
+#chart.has-hl [data-id].hl { opacity: 1; stroke-width: 3.5; }
+
+/* ---------- shared panel shell ---------- */
+.panel { display: flex; flex-direction: column; height: 620px; background: var(--surface); min-width: 0; }
+.panel.old { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.panel.new { flex: 0 1 372px; border-left: 1px solid var(--border); --fs: 13px; font-size: var(--fs); }
+.p-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 600; }
+.p-head .spark { color: var(--accent); }
+.p-head .sp { flex: 1; }
+.p-scroll { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+
+/* ---------- current panel (static picture) ---------- */
+.old { font-size: 16px; line-height: 1.4; }
+.old .ctl { color: var(--text-dim); font-size: 12px; padding: 0 5px; }
+.old .u { align-self: flex-end; max-width: 86%; background: var(--hover-strong); border-radius: 8px; padding: 8px 10px; }
+.old .tool { color: var(--text-dim); }
+.old .a { background: color-mix(in srgb, var(--accent) 11%, var(--surface)); border-left: 3px solid var(--accent); padding: 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.old .a b { font-weight: 600; }
+.old .more { color: var(--text-dim); font-size: 14px; }
+.old .chip { border: 1px solid var(--border); border-radius: 14px; padding: 3px 11px; background: var(--surface); }
+.old .chip .n { background: var(--hover-strong); border-radius: 3px; padding: 0 4px; font-size: 13px; margin-right: 5px; }
+.old .chip.q { color: var(--text-dim); }
+.old .foot { border-top: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.old .ctx { background: var(--hover-strong); border-radius: 10px; padding: 0 8px; font-size: 13px; color: var(--text-dim); }
+.old .box { align-self: stretch; height: 56px; border: 1px solid var(--border); border-radius: 4px; background: var(--input-bg); color: var(--text-faint); padding: 6px 8px; }
+
+/* ---------- proposed panel ---------- */
+.icon-btn { border: 0; background: none; border-radius: 4px; width: 24px; height: 24px; display: grid; place-items: center; color: var(--text-dim); position: relative; }
+.icon-btn:hover { background: var(--hover); color: var(--text); }
+.menu-wrap { position: relative; }
+.menu { position: absolute; right: 0; top: 28px; z-index: 5; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; display: flex; align-items: center; gap: 6px; white-space: nowrap; font-weight: 400; font-size: 12px; color: var(--text-dim); }
+.menu button { border: 1px solid var(--border); background: none; border-radius: 4px; padding: 1px 8px; }
+.menu button:hover { background: var(--hover); }
+
+.msg.user { align-self: flex-end; max-width: 88%; background: var(--hover-strong); border-radius: 10px 10px 2px 10px; padding: 6px 10px; overflow-wrap: anywhere; }
+.msg.bot { line-height: 1.55; overflow-wrap: anywhere; }
+
+.trail { display: flex; flex-direction: column; gap: 4px; color: var(--text-dim); font-size: 0.92em; }
+.trail-head { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 2px 6px 2px 2px; border-radius: 4px; color: inherit; }
+.trail-head:hover { background: var(--hover); }
+.trail-head .spin { width: 11px; height: 11px; border: 1.5px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+.trail-head.done .spin { animation: none; border: 0; width: auto; height: auto; }
+.trail-head.done .spin::before { content: "✓"; color: var(--pos); font-size: 11px; }
+.trail-head .chev { display: none; transition: transform 0.12s; }
+.trail-head.done .chev { display: inline; }
+.trail-head[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.trail-list { list-style: none; margin: 0 0 0 7px; padding: 2px 0 2px 12px; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 3px; }
+.trail-list li::before { content: "✓ "; color: var(--pos); }
+.trail-list li[data-obj] { cursor: default; border-radius: 3px; }
+.trail-list li[data-obj]:hover { color: var(--text); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.obj { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); background: var(--surface-2); border-radius: 4px; padding: 0 6px; margin: 0 1px; font-size: 0.94em; line-height: 1.5; vertical-align: baseline; }
+.obj:hover { border-color: var(--text-faint); background: var(--hover); }
+.obj i { width: 12px; height: 0; border-top: 2px solid var(--line-blue); }
+.obj[data-obj="tl"] i { border-top: 2px dashed var(--line-auto); }
+.obj[data-obj="pv"] i { width: 6px; height: 6px; border: 0; border-radius: 50%; background: var(--text-dim); }
+
+.changes { display: flex; align-items: center; gap: 8px; font-size: 0.9em; color: var(--text-dim); }
+.changes .what { font-family: var(--mono); color: var(--pos); border-radius: 3px; }
+.changes.undone .what { color: var(--text-faint); }
+.changes button { border: 1px solid var(--border); background: none; border-radius: 4px; padding: 0 8px; }
+.changes button:hover { background: var(--hover); }
+
+.empty { margin: auto 0; display: flex; flex-direction: column; gap: 8px; }
+.empty p { margin: 0 0 2px; color: var(--text-dim); }
+.empty button { text-align: left; border: 1px solid var(--border); background: var(--surface-2); border-radius: 6px; padding: 7px 10px; }
+.empty button:hover { background: var(--hover); border-color: var(--text-faint); }
+
+.dock { border-top: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.ask { border: 1px solid var(--border); background: var(--surface-2); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; animation: rise 0.18s ease-out; }
+.ask .q { font-weight: 600; margin-bottom: 2px; }
+.ask .opt { display: flex; align-items: center; gap: 8px; text-align: left; border: 1px solid var(--border); background: none; border-radius: 6px; padding: 5px 8px; }
+.ask .opt:hover { background: var(--hover); border-color: var(--text-faint); }
+.ask kbd { font: 11px var(--mono); min-width: 18px; text-align: center; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--text-dim); }
+.ask .else { align-self: flex-start; border: 0; background: none; color: var(--text-dim); padding: 2px; border-radius: 3px; }
+.ask .else:hover { color: var(--text); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+
+.composer { border: 1px solid var(--border); background: var(--input-bg); border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+.composer:focus-within { border-color: var(--accent); }
+.composer textarea { border: 0; background: none; resize: none; outline: none; width: 100%; min-height: 22px; max-height: 120px; padding: 2px 4px; line-height: 1.45; }
+.composer textarea::placeholder { color: var(--text-faint); }
+.c-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; position: relative; }
+.ctx { font-size: 11px; color: var(--text-dim); background: var(--hover); border-radius: 4px; padding: 1px 6px; display: inline-flex; align-items: center; gap: 4px; }
+.ctx button { border: 0; background: none; padding: 0; color: var(--text-faint); line-height: 1; }
+.ctx button:hover { color: var(--text); }
+.add { font-size: 11px; border: 1px dashed var(--border); background: none; border-radius: 4px; padding: 0 6px; color: var(--text-dim); }
+.add:hover { background: var(--hover); color: var(--text); }
+.pick { position: absolute; left: 0; bottom: 26px; z-index: 5; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px; display: flex; flex-direction: column; min-width: 170px; }
+.pick button { border: 0; background: none; text-align: left; border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+.pick button:hover { background: var(--hover); }
+.send { margin-left: auto; width: 26px; height: 26px; border: 0; border-radius: 6px; background: var(--accent); color: var(--accent-text); display: grid; place-items: center; }
+.send:disabled { background: var(--hover-strong); color: var(--text-faint); cursor: default; }
+
+.notes { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px 28px; border-top: 1px solid var(--border); padding-top: 20px; }
+.notes b { display: block; font-weight: 600; }
+.notes span { color: var(--text-dim); }
+
+@media (max-width: 700px) { .panel.new { flex-basis: 100%; border-left: 0; border-top: 1px solid var(--border); } }
+@media (prefers-reduced-motion: reduce) { .ask { animation: none; } .trail-head .spin { animation: none; } }
+</style>
+
+<div class="page">
+  <div class="intro">
+    <h1>Assistant panel, before and after</h1>
+    <p>Same conversation in both. The right one is live: hover the chips in the reply, open the steps, answer the question with the mouse or keys 1 and 2, then try Undo and New chat.</p>
+  </div>
+
+  <div class="stage">
+    <section class="frame now">
+      <div class="frame-head"><h2>Now</h2></div>
+      <div class="panel old" role="img" aria-label="Static picture of the current assistant panel">
+        <div class="p-head"><span class="spark">✦</span> Assistant <span class="sp"></span><span class="ctl">A−</span><span class="ctl">A+</span><span class="ctl">✎</span><span class="ctl">×</span></div>
+        <div class="p-scroll">
+          <div class="u">How to get TRENDLINES to draw the blue line that starts at 2025-10-29 17:00:00 and has 2026-02-26 01:00:00 its second pivot?</div>
+          <div class="tool">✓ Moved the visible range</div>
+          <div class="a">
+            <div>Your blue line is a manual drawing, and it runs below that bar's high, so it doesn't sit exactly on the pivot.</div>
+            <b>Want your blue line to match the Trendlines line?</b>
+            <span class="more">More</span>
+            <span class="chip"><span class="n">1</span>Leave it as is</span>
+            <span class="chip"><span class="n">2</span>Add matching blue segment</span>
+            <span class="chip q">Something else…</span>
+          </div>
+        </div>
+        <div class="foot"><span class="ctx">NVDA · 4H</span><div class="box">Describe what you want…</div></div>
+      </div>
+    </section>
+
+    <section class="frame next">
+      <div class="frame-head"><h2>Proposed</h2><button type="button" class="replay" id="replay">Replay the turn</button></div>
+      <div class="app">
+        <div class="chart">
+          <svg id="chart" viewBox="0 0 360 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NVDA 4H chart with a dashed Trendlines line and a blue manual line">
+            <path class="grid" d="M0 60H360M0 130H360M0 200H360M0 262H360"/>
+            <text class="lbl" x="8" y="16">NVDA · 4H</text>
+            <text class="lbl" x="8" y="30">TRENDLINES</text>
+            <g id="candles"></g>
+            <line data-id="tl" x1="40" y1="220" x2="336" y2="87.3" stroke="var(--line-auto)" stroke-width="1.5" stroke-dasharray="5 4" fill="none"/>
+            <line data-id="bl" x1="40" y1="222" x2="336" y2="104" stroke="var(--line-blue)" stroke-width="1.5" fill="none"/>
+            <line data-id="seg" id="seg" hidden x1="40" y1="220" x2="250" y2="125.9" stroke="var(--line-blue)" stroke-width="2.5" fill="none"/>
+            <g data-id="pv" stroke="var(--text-dim)" stroke-width="1.5" fill="var(--bg)">
+              <circle cx="40" cy="220" r="3.5"/><circle cx="250" cy="125.9" r="3.5"/>
+            </g>
+            <text class="lbl" x="40" y="278" text-anchor="middle">29 Oct</text>
+            <text class="lbl" x="250" y="278" text-anchor="middle">26 Feb</text>
+          </svg>
+        </div>
+
+        <div class="panel new" id="panel">
+          <div class="p-head">
+            <span class="spark">✦</span> Assistant <span class="sp"></span>
+            <button type="button" class="icon-btn" id="newchat" aria-label="New chat">✎</button>
+            <div class="menu-wrap">
+              <button type="button" class="icon-btn" id="more" aria-label="Panel options" aria-expanded="false">⋯</button>
+              <div class="menu" id="menu" hidden>Text size <button type="button" id="fsDown" aria-label="Smaller text">A−</button><button type="button" id="fsUp" aria-label="Larger text">A+</button></div>
+            </div>
+          </div>
+          <div class="p-scroll" id="scroll">
+            <div class="empty" id="empty" hidden>
+              <p>Ask about this chart, or start from what is on it:</p>
+              <button type="button" data-play>Why doesn't my blue line match Trendlines?</button>
+              <button type="button" data-fill="Explain the latest RSI divergence">Explain the latest RSI divergence</button>
+              <button type="button" data-fill="Add a 50 and 200 EMA and tell me the trend">Add a 50 and 200 EMA and tell me the trend</button>
+            </div>
+            <div id="log" style="display:contents"></div>
+          </div>
+          <div class="dock">
+            <div class="ask" id="ask" hidden>
+              <div class="q">Want your blue line to match the Trendlines line?</div>
+              <button type="button" class="opt" data-n="1"><kbd>1</kbd>Leave it as is</button>
+              <button type="button" class="opt" data-n="2"><kbd>2</kbd>Add matching blue segment</button>
+              <button type="button" class="else" id="else">Type a different answer</button>
+            </div>
+            <div class="composer">
+              <textarea id="input" rows="1" placeholder="Describe what you want…" aria-label="Message"></textarea>
+              <div class="c-row" id="crow">
+                <span class="ctx">NVDA · 4H</span>
+                <button type="button" class="add" id="add" aria-expanded="false">@ From chart</button>
+                <div class="pick" id="pick" hidden>
+                  <button type="button" data-obj="bl" data-label="Blue line">Blue line (drawing)</button>
+                  <button type="button" data-obj="tl" data-label="Trendlines line">Trendlines line</button>
+                </div>
+                <button type="button" class="send" id="send" aria-label="Send" disabled>↑</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <ul class="notes">
+    <li><b>Plain replies</b><span>Only your message gets a bubble. The reply is text on the panel, at the app's own type size.</span></li>
+    <li><b>Steps trail</b><span>Tool calls collapse into one line with a spinner while running. Open it to see each step.</span></li>
+    <li><b>Linked objects</b><span>Lines and bars named in the reply are chips. Hovering one lights it up on the chart.</span></li>
+    <li><b>Docked question</b><span>A question sits above the input as its own card, with key hints, so it never scrolls away.</span></li>
+    <li><b>Change footer</b><span>Each turn that edits the chart says what it touched and carries its own Undo.</span></li>
+    <li><b>Richer input</b><span>Send button, auto-growing box, and chart objects attached as context chips.</span></li>
+    <li><b>Useful empty state</b><span>A new chat offers prompts built from what is on the chart.</span></li>
+  </ul>
+</div>
+
+<script>
+(function () {
+  var $ = function (s) { return document.querySelector(s); };
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var chart = $('#chart'), log = $('#log'), scroller = $('#scroll'), ask = $('#ask');
+  var empty = $('#empty'), input = $('#input'), send = $('#send'), panel = $('#panel');
+  var run = 0;
+
+  /* candles riding above the trendline, touching it at both pivots */
+  (function () {
+    var s = 7, rnd = function () { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    var g = $('#candles'), ns = 'http://www.w3.org/2000/svg';
+    for (var i = 0; i < 38; i++) {
+      var x = 24 + i * 8.4;
+      var d = 3 + 40 * Math.abs(Math.sin((x - 40) / 210 * Math.PI));
+      var low = 220 - (x - 40) * 130 / 290 - d;
+      var bh = 6 + rnd() * 14, top = low - 4 - bh, high = top - 2 - rnd() * 7;
+      var col = rnd() > 0.42 ? 'var(--pos)' : 'var(--neg)';
+      var w = document.createElementNS(ns, 'line');
+      w.setAttribute('x1', x); w.setAttribute('x2', x); w.setAttribute('y1', high); w.setAttribute('y2', low);
+      w.setAttribute('stroke', col); w.setAttribute('stroke-width', 1); w.setAttribute('fill', 'none');
+      var r = document.createElementNS(ns, 'rect');
+      r.setAttribute('x', x - 2.5); r.setAttribute('y', top); r.setAttribute('width', 5); r.setAttribute('height', bh);
+      r.setAttribute('fill', col);
+      g.appendChild(w); g.appendChild(r);
+    }
+  })();
+
+  function wait(ms, instant) {
+    return (instant || reduce) ? Promise.resolve() : new Promise(function (r) { setTimeout(r, ms); });
+  }
+  function el(tag, cls, html) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (html != null) e.innerHTML = html;
+    return e;
+  }
+  function toBottom() { scroller.scrollTop = scroller.scrollHeight; }
+  function showSeg(on) { $('#seg').toggleAttribute('hidden', !on); }
+
+  function userMsg(t) { var e = el('div', 'msg user'); e.textContent = t; log.appendChild(e); toBottom(); }
+
+  async function trail(steps, instant, id) {
+    var t = el('div', 'trail');
+    var head = el('button', 'trail-head', '<span class="spin"></span><span class="lbl"></span><span class="chev" aria-hidden="true">›</span>');
+    head.type = 'button'; head.setAttribute('aria-expanded', 'false');
+    var list = el('ol', 'trail-list'); list.hidden = true;
+    t.appendChild(head); t.appendChild(list); log.appendChild(t);
+    head.onclick = function () {
+      if (!head.classList.contains('done')) return;
+      list.hidden = !list.hidden; head.setAttribute('aria-expanded', String(!list.hidden)); toBottom();
+    };
+    var lbl = head.querySelector('.lbl');
+    for (var i = 0; i < steps.length; i++) {
+      lbl.textContent = steps[i].t + '…'; toBottom();
+      await wait(700, instant);
+      if (id !== run) return false;
+      var li = el('li'); li.textContent = steps[i].t;
+      if (steps[i].o) { li.dataset.obj = steps[i].o; li.tabIndex = 0; }
+      list.appendChild(li);
+    }
+    head.classList.add('done');
+    lbl.textContent = steps.length === 1 ? steps[0].t : steps.length + ' steps';
+    return true;
+  }
+
+  async function reply(parts, instant, id) {
+    var m = el('div', 'msg bot'); log.appendChild(m);
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      if (typeof p === 'string') {
+        var words = p.split(/(?<= )/);
+        for (var j = 0; j < words.length; j++) {
+          m.appendChild(document.createTextNode(words[j]));
+          await wait(26, instant);
+          if (id !== run) return null;
+        }
+      } else {
+        var c = el('button', 'obj', '<i></i>'); c.type = 'button'; c.dataset.obj = p.o;
+        c.appendChild(document.createTextNode(p.t)); m.appendChild(c);
+      }
+      toBottom();
+    }
+    return m;
+  }
+
+  var Q = 'How to get TRENDLINES to draw the blue line that starts at 2025-10-29 17:00 and has 2026-02-26 01:00 as its second pivot?';
+  var STEPS = [{ t: 'Read the Trendlines settings', o: 'tl' }, { t: 'Found your blue line', o: 'bl' }, { t: 'Moved the visible range' }];
+  var PARTS = ['Your ', { o: 'bl', t: 'blue line' }, ' is a manual drawing. It passes below the ', { o: 'pv', t: '26 Feb 01:00 pivot' },
+    ', so it does not sit on it. The ', { o: 'tl', t: 'Trendlines line' }, ' already runs through both pivots.'];
+
+  async function play(instant) {
+    var id = ++run;
+    log.innerHTML = ''; empty.hidden = true; ask.hidden = true; showSeg(false);
+    userMsg(Q);
+    await wait(350, instant); if (id !== run) return;
+    if (!await trail(STEPS, instant, id)) return;
+    if (!await reply(PARTS, instant, id)) return;
+    await wait(250, instant); if (id !== run) return;
+    ask.hidden = false; toBottom();
+  }
+
+  async function choose(n) {
+    if (ask.hidden) return;
+    var id = ++run; ask.hidden = true;
+    userMsg(n === 1 ? 'Leave it as is' : 'Add matching blue segment');
+    await wait(350); if (id !== run) return;
+    if (n === 1) { await reply(['Left as is. Nothing on the chart changed.'], false, id); return; }
+    if (!await trail([{ t: 'Added a blue segment', o: 'seg' }], false, id)) return;
+    showSeg(true);
+    var m = await reply(['Added a ', { o: 'seg', t: 'blue segment' }, ' from 29 Oct 17:00 to 26 Feb 01:00, on top of the Trendlines line. Your original line is untouched.'], false, id);
+    if (!m) return;
+    var f = el('div', 'changes', '<span class="what" data-obj="seg" tabindex="0">+1 drawing</span><button type="button">Undo</button>');
+    var on = true, what = f.querySelector('.what'), btn = f.querySelector('button');
+    btn.onclick = function () {
+      on = !on; showSeg(on);
+      what.textContent = on ? '+1 drawing' : 'Reverted';
+      btn.textContent = on ? 'Undo' : 'Redo';
+      f.classList.toggle('undone', !on);
+    };
+    log.appendChild(f); toBottom();
+  }
+
+  /* text-to-chart highlight */
+  function hl(o) {
+    chart.classList.toggle('has-hl', !!o);
+    chart.querySelectorAll('[data-id]').forEach(function (n) { n.classList.toggle('hl', n.dataset.id === o); });
+  }
+  function objOf(e) { var t = e.target.closest && e.target.closest('[data-obj]'); return t ? t.dataset.obj : null; }
+  document.addEventListener('mouseover', function (e) { hl(objOf(e)); });
+  document.addEventListener('focusin', function (e) { hl(objOf(e)); });
+  document.addEventListener('focusout', function () { hl(null); });
+
+  /* question card */
+  ask.addEventListener('click', function (e) {
+    var b = e.target.closest('.opt'); if (b) choose(Number(b.dataset.n));
+  });
+  $('#else').onclick = function () { input.placeholder = 'Type your answer…'; input.focus(); };
+  document.addEventListener('keydown', function (e) {
+    if (ask.hidden || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target === input && input.value) return;
+    if (e.key === '1' || e.key === '2') { e.preventDefault(); choose(Number(e.key)); }
+  });
+
+  /* composer */
+  function grow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px'; send.disabled = !input.value.trim(); }
+  input.addEventListener('input', grow);
+  function submit() {
+    var t = input.value.trim(); if (!t) return;
+    var id = ++run; ask.hidden = true; empty.hidden = true;
+    input.value = ''; input.placeholder = 'Describe what you want…'; grow();
+    userMsg(t);
+    wait(350).then(function () { if (id === run) reply(['This is a mockup. Only the two answers to the question are wired up.'], false, id); });
+  }
+  send.onclick = submit;
+  input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
+
+  var pick = $('#pick'), add = $('#add');
+  add.onclick = function () { pick.hidden = !pick.hidden; add.setAttribute('aria-expanded', String(!pick.hidden)); };
+  pick.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    pick.hidden = true; add.setAttribute('aria-expanded', 'false');
+    if ($('#crow').querySelector('.ctx[data-obj="' + b.dataset.obj + '"]')) return;
+    var c = el('span', 'ctx'); c.dataset.obj = b.dataset.obj;
+    c.appendChild(document.createTextNode(b.dataset.label + ' '));
+    var x = el('button'); x.type = 'button'; x.textContent = '×'; x.setAttribute('aria-label', 'Remove ' + b.dataset.label);
+    x.onclick = function () { c.remove(); hl(null); };
+    c.appendChild(x); add.before(c); input.focus();
+  });
+
+  /* header */
+  var menu = $('#menu'), more = $('#more'), fs = 13;
+  more.onclick = function () { menu.hidden = !menu.hidden; more.setAttribute('aria-expanded', String(!menu.hidden)); };
+  function setFs(d) { fs = Math.max(12, Math.min(16, fs + d)); panel.style.setProperty('--fs', fs + 'px'); }
+  $('#fsDown').onclick = function () { setFs(-1); };
+  $('#fsUp').onclick = function () { setFs(1); };
+  $('#newchat').onclick = function () { ++run; log.innerHTML = ''; ask.hidden = true; showSeg(false); empty.hidden = false; input.focus(); };
+  empty.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.hasAttribute('data-play')) play(false);
+    else { input.value = b.dataset.fill; grow(); input.focus(); }
+  });
+  $('#replay').onclick = function () { play(false); };
+
+  play(true);
+})();
+</script>

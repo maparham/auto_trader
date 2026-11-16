@@ -1,0 +1,397 @@
+<title>Ghost Bar Experiment</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column; controls bar, then three chart panels sharing one price scale, then notes. */
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --fg: #1b2230; --muted: #667085; --rule: #e3e6ec;
+  --line: #2f6fdb; --ghost: #b7bfcc; --up: #1f9d74; --down: #d9534f; --hover: #8a5cf6;
+  --sans: "Inter", system-ui, -apple-system, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f131a; --panel: #161b24; --fg: #e6e9ef; --muted: #8b95a7; --rule: #262d3a;
+  --line: #5b9bff; --ghost: #4a5466; --up: #2fbf8e; --down: #ef6b67; --hover: #a98bff; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f131a; --panel: #161b24; --fg: #e6e9ef; --muted: #8b95a7; --rule: #262d3a;
+  --line: #5b9bff; --ghost: #4a5466; --up: #2fbf8e; --down: #ef6b67; --hover: #a98bff; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 24px 40px; }
+.wrap { max-width: 1100px; margin: 0 auto; display: grid; gap: 16px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0; text-wrap: balance; }
+.lede { color: var(--muted); margin: 4px 0 0; max-width: 70ch; }
+.controls { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
+.ctl { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.seg button { font: 500 13px var(--sans); color: var(--fg); background: var(--panel); border: 0; padding: 5px 10px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--panel); }
+.seg button:focus-visible, select:focus-visible { outline: 2px solid var(--line); outline-offset: 2px; }
+select { font: 13px var(--sans); color: var(--fg); background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 4px 6px; }
+.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 12px 6px; display: grid; gap: 6px; min-width: 0; }
+.phead { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; align-items: baseline; }
+.ptitle { font-weight: 600; font-size: 14px; }
+.ptitle span { font-weight: 400; color: var(--muted); }
+.read { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.read b { color: var(--fg); font-weight: 500; }
+.read .bad { color: var(--down); }
+canvas { width: 100%; height: 240px; display: block; touch-action: none; }
+.notes { color: var(--muted); font-size: 13px; max-width: 75ch; display: grid; gap: 6px; }
+.notes b { color: var(--fg); font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); }
+.sw { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--line); vertical-align: middle; margin-right: 6px; }
+.sw.ghost { width: 10px; height: 12px; border: 1px dashed var(--ghost); }
+.sw.hover { border-top: 1px dashed var(--hover); }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Ghost bars: a 1D trendline on TSLA hourly candles</h1>
+    <p class="lede">Capital.com TSLA candles, last 10 daily bars, with simulated holes (switchable). The line runs through the Nov 2 and Nov 3 highs and is touched again by Nov 10's high, which is simulated. The top panel is the chart as it is today. The bottom one pads every day to the same number of slots with empty ghost bars, so the daily line is straight. Hover any panel to read the line at that moment in all three.</p>
+  </header>
+
+  <div class="controls">
+    <div class="ctl">Chart <div class="seg" id="tf"><button aria-pressed="true" data-v="H1">1H</button><button aria-pressed="false" data-v="H4">4H</button></div></div>
+    <div class="ctl">Holes <div class="seg" id="holes"><button aria-pressed="true" data-v="on">Simulated</button><button aria-pressed="false" data-v="off">Real data only</button></div></div>
+    <div class="ctl">Anchor 1 <select id="a1d"></select><select id="a1k"><option value="high">high</option><option value="low">low</option></select></div>
+    <div class="ctl">Anchor 2 <select id="a2d"></select><select id="a2k"><option value="high">high</option><option value="low">low</option></select></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw"></span>1D trendline</span>
+    <span><span class="sw ghost"></span>ghost bar (no data, skipped by every calculation)</span>
+    <span><span class="sw hover"></span>hovered moment</span>
+  </div>
+
+  <section class="panel">
+    <div class="phead">
+      <div class="ptitle">Real candles <span>as drawn today</span>
+        <div class="seg" id="mode" style="margin-left:8px;vertical-align:middle"><button aria-pressed="true" data-v="smooth">Smooth</button><button aria-pressed="false" data-v="steps">Steps</button><button aria-pressed="false" data-v="straight">Straight through anchors</button></div>
+      </div>
+      <div class="read" id="r0"></div>
+    </div>
+    <canvas id="c0"></canvas>
+  </section>
+
+  <section class="panel">
+    <div class="phead">
+      <div class="ptitle">Ghost-padded <span id="gsub"></span></div>
+      <div class="read" id="r1"></div>
+    </div>
+    <canvas id="c1"></canvas>
+  </section>
+
+  <div class="notes">
+    <div><b>What to look for.</b> In the ghost panel the line is one straight stroke and every day opens at the daily value. In the top panel, Smooth and Steps hit the same daily values at each day's open; Straight through anchors drifts, because the anchor candles sit at different hours of their days.</div>
+    <div><b>Where the ghosts are.</b> A slot is one chart period from the daily open (24 a day on 1H, 6 on 4H). A slot with no candle is a ghost: early closes, late opens, gaps. Weekends are not ghosts, since no daily bar covers them. "Simulated" removes candles to fake an early close, a late open, a halt and a short day; "Real data only" shows TSLA as Capital.com serves it.</div>
+    <div><b>Readouts.</b> "Newest" is the line at the newest candle. The daily line's own value for today is shown beside it; a red number means the panel disagrees with it.</div>
+  </div>
+</div>
+
+<script>
+const DATA = {"d":[[1793318400,397.17,404.2,387.535,399.655],[1793577600,401.655,414.215,397.635,404.445],[1793664000,404.415,408.42,395.7,396.03],[1793750400,396.025,396.7,373.62,382.215],[1793836800,382.16,383.17,335.16,337.945],[1793923200,338.165,363.825,337.875,358.7],[1794182400,358.48,382.16,353.4,378.835],[1794268800,378.825,381.515,370.285,381.185],[1794355200,381.2,395.42,380.58,386.56],[1794441600,386.605,387.6,386.035,386.31]],"h":[[1793318400,397.17,397.185,394.115,395.045],[1793322000,395.075,395.09,392.94,393.58],[1793325600,393.605,395.875,393.455,395.645],[1793329200,395.635,396.6,395.345,396.26],[1793332800,396.22,397.1,395.455,396.33],[1793336400,396.345,396.81,395.01,395.255],[1793340000,395.205,396.515,394.33,395.69],[1793343600,395.695,396.1,394.805,395.025],[1793347200,394.745,395.255,392.9,395.095],[1793350800,395.24,395.7,392.65,393.755],[1793354400,393.76,394.32,393.185,394.26],[1793358000,394.32,394.655,392.155,394.64],[1793361600,394.635,396.05,394.5,394.94],[1793365200,394.9,396.16,387.535,395.915],[1793368800,395.94,404.2,395.71,401.63],[1793372400,401.635,403.38,398.77,401.315],[1793376000,401.325,401.455,398.785,399.305],[1793379600,399.28,399.48,395.425,395.46],[1793383200,395.48,396.81,393.895,396.49],[1793386800,396.52,400.07,395.835,399.845],[1793390400,399.78,400.36,399.05,399.655],[1793581200,401.655,402.375,400.26,400.305],[1793584800,400.28,401.34,400.26,401.235],[1793588400,401.21,402.155,401.065,401.305],[1793592000,401.345,401.72,400.67,400.68],[1793595600,400.675,401.485,400.25,401.24],[1793599200,401.14,401.35,400.805,400.91],[1793602800,400.885,401.14,400.34,400.795],[1793606400,400.715,402.9,400.715,402.44],[1793610000,401.995,403.74,400.835,403.485],[1793613600,403.3,404.055,402.68,403.08],[1793617200,403.275,403.42,402.72,403.06],[1793620800,403.275,404.855,402.825,402.96],[1793624400,402.905,406.09,402.025,404.985],[1793628000,405.02,410.45,397.635,400.225],[1793631600,400.285,414.215,399.845,413.02],[1793635200,413.065,413.98,409.805,411.51],[1793638800,411.505,412.845,407.22,408.735],[1793642400,408.73,409.235,406.905,406.94],[1793646000,406.95,407.13,401.96,404.89],[1793649600,404.865,405.235,401.055,403.855],[1793653200,403.905,404.925,403.405,403.995],[1793656800,404.01,404.76,403.135,404.455],[1793660400,404.53,405.46,404.2,404.445],[1793664000,404.415,404.445,403.53,404.25],[1793667600,404.195,404.95,403.795,404.765],[1793671200,404.69,405.235,404.24,404.24],[1793674800,404.29,404.855,403.24,403.295],[1793678400,403.32,403.595,402.105,402.3],[1793682000,402.25,402.485,401.415,401.465],[1793685600,401.455,402.105,400.95,401.45],[1793689200,401.485,402.49,400.34,402.345],[1793692800,402.295,402.915,401.715,402.775],[1793696400,402.235,404.275,401.295,401.75],[1793700000,401.735,402.895,401.55,402.105],[1793703600,402.2,403.16,400.98,401.91],[1793707200,401.9,404.335,401.49,403.89],[1793710800,403.765,408.42,403.33,407.095],[1793714400,407.135,407.355,400.945,402.335],[1793718000,402.4,403.335,400.31,401.68],[1793721600,401.64,402.13,397.79,398.92],[1793725200,398.915,399.31,396.84,397.405],[1793728800,397.4,399.415,397.355,399.07],[1793732400,399.08,400.155,397.155,397.575],[1793736000,397.635,399.955,396.54,398.21],[1793739600,398.205,399.025,397.28,397.63],[1793743200,397.65,397.9,397.53,397.79],[1793746800,397.845,398.29,395.7,396.03],[1793750400,396.025,396.7,390.595,391.16],[1793754000,391.205,391.7,384.285,386.875],[1793757600,386.82,387.9,380.15,382.345],[1793761200,382.295,382.775,378.695,379.88],[1793764800,379.815,382.11,376.735,381.195],[1793768400,381.2,385.44,381.2,384.355],[1793772000,384.31,384.9,380.79,380.87],[1793775600,380.82,381.715,379.025,379.105],[1793779200,379.15,382.34,378.625,380.525],[1793782800,380.915,385.52,377.65,385.125],[1793786400,385.14,385.54,381.515,381.9],[1793790000,381.88,382.625,378.765,378.99],[1793793600,379.085,379.225,373.62,376.025],[1793797200,375.9,381.75,375.525,379.24],[1793800800,379.275,385.18,375.565,383.115],[1793804400,383.14,391.74,382.53,387.55],[1793808000,387.6,387.66,381.0,385.04],[1793811600,385.0,391.33,384.33,391.045],[1793815200,391.075,391.49,388.24,388.925],[1793818800,388.93,392.055,388.245,388.325],[1793822400,388.395,388.545,383.39,385.275],[1793826000,385.28,385.655,383.87,384.625],[1793829600,384.63,385.11,384.555,384.67],[1793833200,384.71,384.77,382.11,382.215],[1793836800,382.16,383.17,381.275,381.275],[1793840400,382.195,382.24,377.815,379.93],[1793844000,379.835,381.71,379.74,380.4],[1793847600,380.425,380.71,379.36,379.36],[1793851200,379.32,379.455,377.725,378.45],[1793854800,378.395,378.565,376.415,376.72],[1793858400,376.68,377.87,376.375,377.075],[1793862000,377.055,378.485,376.76,377.38],[1793865600,377.34,379.26,377.015,378.305],[1793869200,378.57,378.755,376.1,378.18],[1793872800,378.185,379.57,377.355,377.695],[1793876400,377.7,378.77,376.745,378.625],[1793880000,378.805,379.225,376.04,376.4],[1793883600,376.33,377.215,374.65,375.125],[1793887200,375.02,375.165,345.605,347.4],[1793890800,347.375,351.95,340.58,343.95],[1793894400,343.905,351.96,342.005,344.6],[1793898000,344.545,345.225,340.135,340.525],[1793901600,340.425,341.93,338.155,340.91],[1793905200,340.905,346.155,339.75,344.53],[1793908800,344.57,346.01,340.745,343.45],[1793912400,343.455,344.31,340.295,340.49],[1793916000,340.495,340.925,338.09,338.09],[1793919600,338.155,339.75,335.16,337.945],[1793923200,338.165,347.355,337.875,345.86],[1793926800,345.12,348.74,344.135,347.715],[1793930400,347.72,350.7,347.62,349.88],[1793934000,349.72,350.12,346.655,347.325],[1793937600,347.255,348.325,345.615,347.74],[1793941200,347.67,348.765,346.1,346.615],[1793944800,346.64,346.645,345.18,345.845],[1793948400,345.78,346.835,343.75,346.575],[1793952000,346.56,348.91,346.45,348.105],[1793955600,348.415,353.86,348.325,351.825],[1793959200,351.77,351.955,348.5,348.68],[1793962800,348.83,352.73,348.43,351.075],[1793966400,351.18,351.21,347.315,349.205],[1793970000,349.185,352.9,347.73,352.885],[1793973600,352.785,357.05,347.6,356.225],[1793977200,356.25,362.39,355.63,359.34],[1793980800,359.29,362.0,356.53,361.475],[1793984400,361.395,361.395,356.275,358.93],[1793988000,358.895,360.975,357.955,359.54],[1793991600,359.55,361.27,358.935,361.025],[1793995200,360.97,363.825,357.895,358.21],[1793998800,358.18,359.275,357.16,358.7],[1794186000,358.48,358.84,353.4,356.82],[1794189600,356.865,362.625,356.825,360.69],[1794193200,360.655,361.535,360.095,360.2],[1794196800,360.29,361.69,360.13,361.36],[1794200400,361.27,361.325,359.625,359.79],[1794204000,359.795,361.365,359.66,360.2],[1794207600,360.21,360.295,355.075,355.345],[1794211200,355.385,359.53,355.215,358.86],[1794214800,358.845,359.525,356.845,358.915],[1794218400,359.015,359.905,358.075,358.185],[1794222000,358.2,359.955,357.395,359.745],[1794225600,359.725,363.175,359.72,361.73],[1794229200,361.675,362.17,359.49,359.79],[1794232800,359.765,378.935,357.675,377.41],[1794236400,377.49,380.065,374.055,379.875],[1794240000,379.87,379.94,375.98,377.42],[1794243600,377.455,378.38,376.86,377.495],[1794247200,377.525,378.25,376.095,377.615],[1794250800,377.585,381.555,377.17,380.975],[1794254400,380.99,382.16,377.81,377.96],[1794258000,377.955,379.28,377.295,379.28],[1794261600,379.285,379.495,378.465,378.645],[1794265200,378.735,379.03,378.245,378.835],[1794268800,378.825,379.16,377.61,377.83],[1794272400,377.915,378.56,377.2,378.055],[1794276000,377.94,378.4,377.21,377.49],[1794279600,377.485,377.485,376.085,377.06],[1794283200,377.06,377.875,376.55,376.595],[1794286800,376.55,378.2,376.285,377.85],[1794290400,377.845,377.845,376.32,377.02],[1794294000,376.825,377.645,376.33,377.005],[1794297600,377.11,377.725,376.77,377.045],[1794301200,376.985,377.595,375.24,376.95],[1794304800,376.9,377.005,375.63,376.54],[1794308400,376.615,376.925,375.675,375.9],[1794312000,376.16,376.265,372.77,373.57],[1794315600,373.49,374.8,370.285,370.695],[1794319200,370.65,377.845,370.375,376.895],[1794322800,376.7,378.135,374.65,376.895],[1794326400,376.89,378.335,374.72,375.29],[1794330000,375.255,376.62,373.925,376.05],[1794333600,376.04,377.72,375.145,377.17],[1794337200,377.175,379.415,376.38,378.235],[1794340800,378.21,379.975,377.005,379.74],[1794344400,379.74,379.97,378.935,379.54],[1794348000,379.485,379.765,379.31,379.395],[1794351600,379.475,381.515,379.35,381.185],[1794355200,381.2,381.95,380.58,381.885],[1794358800,381.71,384.55,381.325,383.395],[1794362400,383.39,383.84,382.51,383.57],[1794366000,383.54,385.59,383.375,385.49],[1794369600,385.4,385.52,384.465,384.515],[1794373200,384.475,386.705,384.465,386.4],[1794376800,386.375,387.31,385.08,385.395],[1794380400,385.29,385.605,384.08,384.845],[1794384000,384.93,386.945,384.54,385.945],[1794387600,386.08,389.06,386.08,387.95],[1794391200,387.905,388.02,386.655,386.94],[1794394800,387.015,387.265,385.775,386.875],[1794398400,386.885,387.9,385.53,385.93],[1794402000,385.865,386.445,384.79,385.3],[1794405600,385.27,392.655,384.725,389.815],[1794409200,389.84,395.42,389.23,395.13],[1794412800,395.115,395.21,391.695,392.875],[1794416400,392.87,394.08,391.29,392.885],[1794420000,392.915,394.825,391.915,394.3],[1794423600,394.27,394.415,391.35,391.715],[1794427200,391.72,392.135,388.72,390.83],[1794430800,390.83,391.76,390.28,390.705],[1794434400,390.66,390.86,387.465,387.465],[1794438000,387.525,388.32,385.585,386.56],[1794441600,386.605,387.6,386.035,386.605]]};
+const HOUR = 3600;
+const D = DATA.d.map(([t, o, h, l, c]) => ({ t, o, h, l, c }));
+const H1 = DATA.h.map(([t, o, h, l, c]) => ({ t, o, h, l, c }));
+// Simulated third pivot: the line through the Nov 2 and Nov 3 highs, touched
+// again by Nov 10's high (its 10:00 candle), far to the right. Nov 10's other
+// candles are capped just under the line. Only the default anchors meet it.
+(() => {
+  const j = 7, lineAt = D[1].h + (D[2].h - D[1].h) * (j - 1);
+  const wickT = D[j].t + 10 * HOUR;
+  for (const x of H1) {
+    if (dayOf0(x.t) !== j) continue;
+    if (x.t === wickT) x.h = lineAt;
+    else {
+      x.h = Math.min(x.h, lineAt - 0.6);
+      x.o = Math.min(x.o, x.h); x.c = Math.min(x.c, x.h);
+    }
+    x.l = Math.min(x.l, x.o, x.c);
+  }
+  D[j].h = lineAt;
+})();
+function dayOf0(t) { let j = -1; for (let k = 0; k < D.length; k++) if (D[k].t <= t) j = k; return j; }
+// Simulated holes, in hours from the daily open: an early close, a late
+// open, a halt and a short day, so the days hold very different counts.
+const HOLES = [
+  { j: 0, from: 12, to: 24 },
+  { j: 2, from: 0, to: 10 },
+  { j: 4, from: 8, to: 17 },
+  { j: 5, from: 16, to: 24 },
+  { j: 7, from: 0, to: 6 },
+  { j: 7, from: 14, to: 24 },
+];
+const inHole = (t, j) => HOLES.some((h) => h.j === j && t >= D[j].t + h.from * HOUR && t < D[j].t + h.to * HOUR);
+const state = { holes: "on", tf: "H1", mode: "smooth", a1: { j: 1, k: "high" }, a2: { j: 2, k: "high" }, hoverT: null };
+
+const fmtDay = (t) => new Date(t * 1000).toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", timeZone: "UTC" });
+const fmtTime = (t) => new Date(t * 1000).toLocaleString("en-GB", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC";
+const dayOf = (t) => { let j = -1; for (let k = 0; k < D.length; k++) if (D[k].t <= t) j = k; return j; };
+
+/** Chart candles for the timeframe, each tagged with its daily bar j and its slot from the daily open. */
+function candles() {
+  const step = state.tf === "H1" ? HOUR : 4 * HOUR;
+  const N = 86400 / step;
+  const out = [];
+  for (const x of H1) {
+    const j = dayOf(x.t);
+    if (j < 0) continue;
+    if (state.holes === "on" && inHole(x.t, j)) continue;
+    const slot = Math.min(N - 1, Math.floor((x.t - D[j].t) / step));
+    const prev = out[out.length - 1];
+    if (state.tf === "H4" && prev && prev.j === j && prev.slot === slot) {
+      prev.h = Math.max(prev.h, x.h); prev.l = Math.min(prev.l, x.l); prev.c = x.c;
+      continue;
+    }
+    out.push({ t: D[j].t + slot * step, o: x.o, h: x.h, l: x.l, c: x.c, j, slot });
+  }
+  return { list: out, N, step };
+}
+
+function lineFns(cs) {
+  const { a1, a2 } = state;
+  const px = (a) => (a.k === "high" ? D[a.j].h : D[a.j].l);
+  const p1 = px(a1), p2 = px(a2);
+  const value = (j) => p1 + ((p2 - p1) * (j - a1.j)) / (a2.j - a1.j);
+  // The candle that made each anchor's wick.
+  const wick = (a) => {
+    let best = -1;
+    cs.list.forEach((c, i) => {
+      if (c.j !== a.j) return;
+      if (best < 0 || (a.k === "high" ? c.h > cs.list[best].h : c.l < cs.list[best].l)) best = i;
+    });
+    return best;
+  };
+  // Every other day whose high (or low) sits on the line is a touch.
+  const touches = [];
+  for (let j = 0; j < D.length - 1; j++) {
+    if (j === a1.j || j === a2.j) continue;
+    const pj = px({ j, k: a1.k });
+    if (Math.abs(pj - value(j)) < 0.05) touches.push([wick({ j, k: a1.k }), pj]);
+  }
+  return { value, p1, p2, w1: wick(a1), w2: wick(a2), touches };
+}
+
+/** Each day's first and last candle index in the real list. */
+function daySpans(list) {
+  const spans = new Map();
+  list.forEach((c, i) => {
+    const s = spans.get(c.j);
+    if (s) s.b = i; else spans.set(c.j, { a: i, b: i });
+  });
+  return spans;
+}
+
+/** Line value at real candle i (its center), for the chosen mode. */
+function realValueAt(i, cs, L, spans) {
+  const c = cs.list[i];
+  const lastJ = cs.list[cs.list.length - 1].j;
+  if (state.mode === "steps") return L.value(c.j);
+  if (state.mode === "straight") return L.p1 + ((L.p2 - L.p1) * (i - L.w1)) / (L.w2 - L.w1);
+  const s = spans.get(c.j);
+  if (c.j === lastJ) return L.value(c.j);
+  const frac = (i - (s.a - 0.5)) / (s.b - s.a + 1);
+  return L.value(c.j) + (L.value(c.j + 1) - L.value(c.j)) * frac;
+}
+const ghostValueAt = (j, slot, N, L) => L.value(j + (slot + 0.5) / N);
+
+function setupCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1;
+  const r = cv.getBoundingClientRect();
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, W: r.width, Hh: r.height };
+}
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+function draw() {
+  const cs = candles();
+  const L = lineFns(cs);
+  const list = cs.list;
+  const spans = daySpans(list);
+  const lastJ = list[list.length - 1].j;
+  const newest = list[list.length - 1];
+  const N = cs.N;
+  document.getElementById("gsub").textContent = `every day ${N} slots`;
+
+  let lo = Infinity, hi = -Infinity;
+  for (const c of list) { lo = Math.min(lo, c.l); hi = Math.max(hi, c.h); }
+  const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
+  const col = { line: css("--line"), ghost: css("--ghost"), up: css("--up"), down: css("--down"), rule: css("--rule"), muted: css("--muted"), hover: css("--hover"), fg: css("--fg") };
+
+  // Panel geometry. Real: one position per candle. Ghost: N slots per day.
+  const panels = [
+    { id: "c0", n: list.length, pos: (i) => i },
+    { id: "c1", n: D.length * N, pos: (i) => list[i].j * N + list[i].slot },
+  ];
+  const results = [];
+  panels.forEach((P, pi) => {
+    const cv = document.getElementById(P.id);
+    const { ctx, W, Hh } = setupCanvas(cv);
+    const padL = 6, padR = 52, padT = 8, padB = 22;
+    const pw = W - padL - padR, ph = Hh - padT - padB;
+    const bw = pw / P.n;
+    const X = (p) => padL + (p + 0.5) * bw;
+    const Y = (v) => padT + ((hi - v) / (hi - lo)) * ph;
+    ctx.clearRect(0, 0, W, Hh);
+    ctx.font = "11px " + css("--mono");
+    // Price grid.
+    ctx.fillStyle = col.muted; ctx.strokeStyle = col.rule; ctx.lineWidth = 1;
+    const stepP = 10;
+    for (let v = Math.ceil(lo / stepP) * stepP; v < hi; v += stepP) {
+      ctx.beginPath(); ctx.moveTo(padL, Math.round(Y(v)) + 0.5); ctx.lineTo(padL + pw, Math.round(Y(v)) + 0.5); ctx.stroke();
+      ctx.fillText(v.toFixed(0), padL + pw + 6, Y(v) + 4);
+    }
+    // Day separators and labels.
+    for (let j = 0; j < D.length; j++) {
+      const s = spans.get(j);
+      if (!s) continue;
+      const p0 = pi === 0 ? s.a : j * N;
+      const xs = padL + p0 * bw;
+      ctx.strokeStyle = col.rule; ctx.beginPath(); ctx.moveTo(Math.round(xs) + 0.5, padT); ctx.lineTo(Math.round(xs) + 0.5, padT + ph); ctx.stroke();
+      ctx.fillStyle = col.muted;
+      if (bw * (pi === 0 ? s.b - s.a + 1 : N) > 44) ctx.fillText(fmtDay(D[j].t), xs + 3, Hh - 6);
+    }
+    // Ghost slots: every empty slot of a past day, and of today up to the newest candle.
+    if (pi === 1) {
+      const have = new Set(list.map((c) => c.j * N + c.slot));
+      const lastPos = lastJ * N + newest.slot;
+      ctx.setLineDash([3, 3]); ctx.strokeStyle = col.ghost;
+      for (let j = 0; j <= lastJ; j++) {
+        if (!spans.has(j)) continue;
+        for (let s = 0; s < N; s++) {
+          const p = j * N + s;
+          if (p > lastPos || have.has(p)) continue;
+          const x0 = padL + p * bw + bw * 0.15, w = Math.max(1, bw * 0.7);
+          ctx.strokeRect(x0, padT + ph * 0.25, w, ph * 0.5);
+        }
+      }
+      ctx.setLineDash([]);
+    }
+    // Candles.
+    list.forEach((c, i) => {
+      const x = X(P.pos(i));
+      const up = c.c >= c.o;
+      ctx.strokeStyle = ctx.fillStyle = up ? col.up : col.down;
+      ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, Y(c.h)); ctx.lineTo(Math.round(x) + 0.5, Y(c.l)); ctx.stroke();
+      const w = Math.max(1, bw * 0.7);
+      ctx.fillRect(x - w / 2, Math.min(Y(c.o), Y(c.c)), w, Math.max(1, Math.abs(Y(c.o) - Y(c.c))));
+    });
+    // The trendline.
+    ctx.strokeStyle = col.line; ctx.lineWidth = 2; ctx.beginPath();
+    const j1 = state.a1.j;
+    if (pi === 1) {
+      const pStart = j1 * N - 0.5, pEnd = lastJ * N + newest.slot + 0.5;
+      ctx.moveTo(X(pStart), Y(L.value(j1)));
+      ctx.lineTo(X(pEnd), Y(L.value((pEnd + 0.5) / N)));
+    } else if (state.mode === "straight") {
+      ctx.moveTo(X(L.w1), Y(L.p1));
+      ctx.lineTo(X(list.length - 1), Y(realValueAt(list.length - 1, cs, L, spans)));
+    } else {
+      let first = true;
+      for (let j = j1; j <= lastJ; j++) {
+        const s = spans.get(j);
+        if (!s) continue;
+        const y0 = Y(L.value(j));
+        const y1 = state.mode === "steps" || j === lastJ ? y0 : Y(L.value(j + 1));
+        if (first) { ctx.moveTo(X(s.a - 0.5), y0); first = false; } else ctx.lineTo(X(s.a - 0.5), y0);
+        ctx.lineTo(X(s.b + 0.5), y1);
+      }
+    }
+    ctx.stroke(); ctx.lineWidth = 1;
+    // Pivot rings at the pivot prices, on their wick candles.
+    for (const [w, p] of [[L.w1, L.p1], [L.w2, L.p2], ...L.touches]) {
+      if (w < 0) continue;
+      ctx.strokeStyle = col.fg; ctx.beginPath(); ctx.arc(X(P.pos(w)), Y(p), 4, 0, Math.PI * 2); ctx.stroke();
+    }
+    // Hover.
+    let hv = null;
+    if (state.hoverT != null) {
+      const ht = state.hoverT;
+      const j = dayOf(ht);
+      const slot = Math.floor((ht - D[j].t) / cs.step);
+      const i = list.findIndex((c) => c.t === ht);
+      const p = pi === 1 ? j * N + slot : i;
+      if (p >= 0) {
+        const v = pi === 1 ? ghostValueAt(j, slot, N, L) : realValueAt(i, cs, L, spans);
+        ctx.strokeStyle = col.hover; ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(Math.round(X(p)) + 0.5, padT); ctx.lineTo(Math.round(X(p)) + 0.5, padT + ph); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = col.hover; ctx.beginPath(); ctx.arc(X(p), Y(v), 3, 0, Math.PI * 2); ctx.fill();
+        hv = v;
+      } else hv = "none";
+    }
+    P.geo = { padL, bw, W };
+    const nowV = pi === 1 ? ghostValueAt(lastJ, newest.slot, N, L) : realValueAt(list.length - 1, cs, L, spans);
+    results.push({ nowV, hv });
+  });
+
+  const daily = L.value(lastJ);
+  const fmt = (v) => v.toFixed(2);
+  results.forEach((r, pi) => {
+    const off = Math.abs(r.nowV - daily) > 0.005;
+    let s = `Newest <b class="${off ? "bad" : ""}">${fmt(r.nowV)}</b> · daily ${fmt(daily)}`;
+    if (state.hoverT != null)
+      s = `${fmtTime(state.hoverT)} · ${r.hv === "none" ? "no candle here" : `line <b>${fmt(r.hv)}</b>`}<br>` + s;
+    document.getElementById("r" + pi).innerHTML = s;
+  });
+  draw.panels = panels;
+  draw.cs = cs;
+}
+
+// Hover: map x in either panel to a candle or slot time, shared by all panels.
+for (const [pi, id] of [[0, "c0"], [1, "c1"]]) {
+  const cv = document.getElementById(id);
+  const move = (e) => {
+    const P = draw.panels?.[pi];
+    if (!P?.geo) return;
+    const r = cv.getBoundingClientRect();
+    const p = Math.floor((e.clientX - r.left - P.geo.padL) / P.geo.bw);
+    const cs = draw.cs;
+    let t = null;
+    if (pi === 0) { const c = cs.list[Math.max(0, Math.min(cs.list.length - 1, p))]; t = c.t; }
+    else {
+      const j = Math.floor(p / cs.N), slot = p - j * cs.N;
+      const last = cs.list[cs.list.length - 1];
+      if (j >= 0 && j < D.length && (j < last.j || (j === last.j && slot <= last.slot))) t = D[j].t + slot * cs.step;
+    }
+    if (t !== state.hoverT) { state.hoverT = t; draw(); }
+  };
+  cv.addEventListener("pointermove", move);
+  cv.addEventListener("pointerleave", () => { state.hoverT = null; draw(); });
+}
+
+function seg(id, key) {
+  const el = document.getElementById(id);
+  el.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    state[key] = b.dataset.v;
+    for (const x of el.querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));
+    state.hoverT = null;
+    draw();
+  });
+}
+seg("tf", "tf");
+seg("mode", "mode");
+seg("holes", "holes");
+
+for (const n of ["1", "2"]) {
+  const sd = document.getElementById(`a${n}d`), sk = document.getElementById(`a${n}k`);
+  D.slice(0, -1).forEach((d, j) => sd.add(new Option(fmtDay(d.t), String(j))));
+  sd.value = String(state["a" + n].j); sk.value = state["a" + n].k;
+  const upd = () => {
+    const j = Number(sd.value);
+    const other = state[n === "1" ? "a2" : "a1"];
+    if (j === other.j) { sd.value = String(state["a" + n].j); return; }
+    state["a" + n] = { j, k: sk.value };
+    draw();
+  };
+  sd.addEventListener("change", upd); sk.addEventListener("change", upd);
+}
+
+window.addEventListener("resize", draw);
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", draw);
+draw();
+</script>
