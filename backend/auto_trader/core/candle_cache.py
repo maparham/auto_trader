@@ -1056,9 +1056,9 @@ class CandleCache:
         continuous empty run >= `max_empty_gap_seconds` is the broker floor (short
         weekend/holiday gaps don't trip it) and sets a persistent marker so reopens skip.
 
-        Holds the per-key lock across the whole walk (serialized with window()/recent()).
-        A first-ever deep backfill can hold it for the run; live bars keep flowing over
-        the stream meanwhile, and recent() bridges any gap once the lock frees. Returns
+        Takes the per-key lock only to save each step, never across a broker fetch, so
+        chart reads of the series are not held up by the walk (see the loop's comment
+        for how a step stays safe when coverage moves under it). Returns
         "cold" (no coverage yet), "target", "floor", or "error" (a fetch raised).
 
         `on_progress(cursor_ts, bars_stored)` fires after every step — stored chunks
@@ -1068,23 +1068,43 @@ class CandleCache:
             return "floor"
         now_s = now if now is not None else time.time()
         cutoff = _bucket_start(now_s, res_seconds)
-        async with self._key_lock(key):
-            cov = await self._db(self._coverage, key)
-            if cov is None:
-                return "cold"  # a forward load must establish a block to anchor below
-            oldest = cov[0]
-            empty_span = 0
-            while oldest > target_oldest_ts:
-                step_start = max(target_oldest_ts, oldest - max_bars_per_step * res_seconds)
-                start_dt = datetime.fromtimestamp(step_start, tz=timezone.utc)
-                end_dt = datetime.fromtimestamp(oldest - 1, tz=timezone.utc)
-                try:
-                    fetched = await fetch_range(start_dt, end_dt)
-                except Exception:
-                    log.warning("backfill fetch failed for %s; stopping (floor unset)", key)
-                    return "error"
-                closed = [b for b in fetched if int(b.time.timestamp()) < cutoff]
-                new_oldest = min((int(b.time.timestamp()) for b in closed), default=None)
+        cov = await self._db(self._coverage, key)
+        if cov is None:
+            return "cold"  # a forward load must establish a block to anchor below
+        # The broker fetch runs WITHOUT the key lock: a deep walk is minutes of
+        # calls, and holding the lock across them made every chart read of this
+        # series (recent(), an uncovered window()) wait the walk out. Only the
+        # save of each step takes the lock, and first re-checks that coverage's
+        # oldest is still the one this step fetched below. If another writer moved
+        # it meanwhile (a disjoint recent() RESET, or a window() fill that went
+        # deeper), unioning this chunk would claim the gap between them as covered,
+        # so the step is dropped and the walk re-anchors on the new oldest.
+        anchor = cov[0]  # coverage oldest the next save must still find
+        oldest = anchor  # walk cursor; runs below anchor through proven-empty windows
+        empty_span = 0
+        while oldest > target_oldest_ts:
+            step_start = max(target_oldest_ts, oldest - max_bars_per_step * res_seconds)
+            start_dt = datetime.fromtimestamp(step_start, tz=timezone.utc)
+            end_dt = datetime.fromtimestamp(oldest - 1, tz=timezone.utc)
+            try:
+                fetched = await fetch_range(start_dt, end_dt)
+            except Exception:
+                log.warning("backfill fetch failed for %s; stopping (floor unset)", key)
+                return "error"
+            closed = [b for b in fetched if int(b.time.timestamp()) < cutoff]
+            new_oldest = min((int(b.time.timestamp()) for b in closed), default=None)
+            async with self._key_lock(key):
+                cov = await self._db(self._coverage, key)
+                if cov is None:
+                    return "cold"
+                if cov[0] != anchor:
+                    log.info(
+                        "backfill %s: coverage moved %s -> %s mid-step, re-anchoring",
+                        _key_label(key), _stamp(anchor), _stamp(cov[0]),
+                    )
+                    anchor = oldest = cov[0]
+                    empty_span = 0
+                    continue
                 if new_oldest is None:
                     # Proven-empty window: advance the local cursor and accrue the gap.
                     # Do NOT extend coverage, so coverage.oldest stays at the deepest
@@ -1102,10 +1122,10 @@ class CandleCache:
                 # Lower oldest only to the deepest real bar. MIN keeps oldest; passing
                 # new_oldest as the hi arg leaves newest intact (new_oldest < newest).
                 await self._db(self._extend_coverage, key, new_oldest, new_oldest)
-                oldest = new_oldest
+                anchor = oldest = new_oldest
                 if on_progress is not None:
                     on_progress(oldest, len(closed))
-            return "target"
+        return "target"
 
 
 from auto_trader.config import settings  # noqa: E402  (singleton at module load, mirrors tick_store)

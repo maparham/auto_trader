@@ -901,6 +901,84 @@ class _OneThenError:
         raise RuntimeError("stop after one step")
 
 
+class _GatedSource(_RangeSource):
+    """_RangeSource whose FIRST range call waits on `gate`, so a test can act
+    while a backfill step's broker fetch is in flight."""
+
+    def __init__(self, have_ts: list[int]):
+        super().__init__(have_ts)
+        self.gate = asyncio.Event()
+        self.in_fetch = asyncio.Event()
+
+    async def range(self, start, end):
+        if not self.range_calls:
+            self.in_fetch.set()
+            await self.gate.wait()
+        return await super().range(start, end)
+
+
+def test_backfill_does_not_hold_the_key_lock_during_a_broker_fetch(tmp_path):
+    """A deep backfill walk is minutes of broker calls. Holding the key lock
+    across them made a chart's recent() read on the same series wait the whole
+    walk out; the lock is only needed while a step saves its bars."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(t, 1.0) for t in range(6000, 6600, 60)], cutoff_ts=10_000)
+    src = _GatedSource(have_ts=list(range(0, 6600, 60)))
+
+    async def fresh_tail(n):
+        return [_c(t, 2.0) for t in range(6000, 6600, 60)][-n:]
+
+    async def run():
+        walk = asyncio.create_task(
+            cache.backfill_below(KEY, 60, src.range, target_oldest_ts=5000, now=6600)
+        )
+        await asyncio.wait_for(src.in_fetch.wait(), timeout=1.0)
+        got = await asyncio.wait_for(cache.recent(KEY, 60, 5, fresh_tail, now=6600), timeout=1.0)
+        src.gate.set()
+        return got, await walk
+
+    got, status = asyncio.run(run())
+    assert len(got) == 5
+    assert status == "target"
+    assert cache._coverage(KEY)[0] == 5040
+
+
+def test_backfill_never_claims_a_gap_when_coverage_resets_mid_fetch(tmp_path):
+    """Without the lock across the fetch, a recent() that lands a disjoint
+    block can RESET coverage while a step is fetching. The step must not then
+    union its chunk with the new block (that would claim the unfetched gap
+    between them): it re-anchors on the new coverage and walks down from it."""
+    cache = CandleCache(str(tmp_path / "c.db"))
+    cache._store_closed(KEY, [_c(t, 1.0) for t in range(6000, 7200, 60)], cutoff_ts=20_000)
+    src = _GatedSource(have_ts=list(range(0, 12_000, 60)))
+
+    async def run():
+        walk = asyncio.create_task(
+            cache.backfill_below(
+                KEY, 60, src.range, target_oldest_ts=5000, max_bars_per_step=20, now=20_000,
+            )
+        )
+        await asyncio.wait_for(src.in_fetch.wait(), timeout=1.0)
+        # A disjoint recent() block: stored bars 10980..11880, coverage reset to it.
+        # (A timeout, not a hang, if the walk still holds the lock over its fetch.)
+        lock = cache._key_lock(KEY)
+        await asyncio.wait_for(lock.acquire(), timeout=1.0)
+        try:
+            cache._store_closed(KEY, [_c(t, 1.0) for t in range(10_980, 11_940, 60)], 20_000, False)
+            cache._set_coverage(KEY, 10_980, 11_880)
+        finally:
+            lock.release()
+        src.gate.set()
+        return await walk
+
+    asyncio.run(run())
+    lo, hi = cache._coverage(KEY)
+    assert hi == 11_880  # the reset block's top: the walk re-anchored on it
+    stored = cache._read_window(KEY, lo, hi)
+    # Every bar the broker has inside the claimed span is really stored.
+    assert [int(c.time.timestamp()) for c in stored] == list(range(lo, hi + 1, 60))
+
+
 def test_backfill_cold_returns_cold_no_fetch(tmp_path):
     cache = CandleCache(str(tmp_path / "c.db"))
     src = _RangeSource(have_ts=[100, 160])
