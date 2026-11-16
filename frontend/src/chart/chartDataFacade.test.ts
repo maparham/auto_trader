@@ -8,6 +8,7 @@ function fakeChart() {
     setSymbol: vi.fn(),
     setPeriod: vi.fn(),
     resetData: vi.fn(),
+    getDataList: () => [],
     _loader: () => loader,
   } as any;
 }
@@ -58,6 +59,26 @@ describe("chartDataFacade", () => {
     chart._loader().getBars({ type: "forward", timestamp: 5, symbol: {} as any, period: {} as any, callback: cb });
     expect(order).toEqual(["shift:2", "deliver"]);
     expect(cb).toHaveBeenCalledWith(page, true);
+  });
+
+  // klinecharts' forward merge builds a NEW array (page.concat(old)), so the
+  // array setBars handed over stops being the chart's list: drag pages and
+  // every later live bar land only in the new one. getBars() must follow the
+  // chart's list, or the bar cache saves a copy frozen at the first drag.
+  it("getBars follows the chart's list after a forward page lands", () => {
+    const f = createChartDataFacade();
+    let list: any[] = [{ timestamp: 5, open: 1, high: 1, low: 1, close: 1 }];
+    const chart = { ...fakeChart(), getDataList: () => list };
+    f.attach(chart);
+    f.setBars(list, true);
+    const page = [{ timestamp: 1, open: 1, high: 1, low: 1, close: 1 }];
+    f.onLoadRequest = (_type, _ts, done) => done(page, true);
+    const cb = vi.fn((p: any[]) => {
+      list = p.concat(list); // what the chart's forward merge does
+    });
+    chart._loader().getBars({ type: "forward", timestamp: 5, symbol: {} as any, period: {} as any, callback: cb });
+    expect(f.getBars()).toBe(list);
+    expect(f.getBars().map((b) => b.timestamp)).toEqual([1, 5]);
   });
 
   it("skips onForwardPrepend for empty pages and backward loads", () => {

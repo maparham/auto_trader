@@ -76,6 +76,11 @@ export function createChartDataFacade(): ChartDataFacade {
             // the old data. See onForwardPrepend's doc for why the shift exists.
             if (type === "forward" && pageBars.length) facade.onForwardPrepend?.(pageBars.length);
             callback(pageBars, pageMore);
+            // The forward merge builds a NEW array (page.concat(old)); from here
+            // on drag pages and live bars land only in that one. Follow it, so
+            // getBars() (the bar cache's unmount capture) and a later re-init
+            // serve the chart's real list, not a copy frozen at the first drag.
+            if (type === "forward" && pageBars.length && chart) bars = chart.getDataList();
             if (type === "forward" && pageBars.length) facade.onForwardPrepended?.();
           });
         },
