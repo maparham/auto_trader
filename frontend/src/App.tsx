@@ -118,6 +118,7 @@ import {
   clearScratch,
   loadAutosave,
   loadSnapshotMeta,
+  getPersistBroker,
   type ChartTab,
   type Workspace,
 } from "./lib/persist";
@@ -138,6 +139,7 @@ import {
   makeTab,
   applyCellPeriod,
   resolveStartup,
+  rememberActiveTab,
 } from "./app/workspace";
 import { useDockPanels, useModalRequests, usePanelOpenStates } from "./app/usePanelSignals";
 import { useAccounts } from "./app/useAccounts";
@@ -255,7 +257,10 @@ export default function App() {
   const { searchGlow, flashCells } = useSearchGlow();
   // Remember the active tab for this browser tab so a reload restores it.
   useEffect(() => {
-    if (activeId) sessionStorage.setItem(ACTIVE_TAB_SESSION_KEY, activeId);
+    // getPersistBroker, not brokerId: on the switch render activeId is still the
+    // outgoing broker's tab, and only the reseed's new id may land under the new
+    // broker (keyed on activeId alone, this runs after persistBroker has flipped).
+    if (activeId) rememberActiveTab(getPersistBroker(), activeId);
   }, [activeId]);
   // Reload/close within the template-autosave debounce (~800ms after an edit)
   // would drop the pending capture with the page timer, leaving the symbol's

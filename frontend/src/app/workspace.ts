@@ -28,6 +28,18 @@ export const DEFAULT_PERIOD: Period =
 // survives a reload but isn't shared with sibling tabs) — see the activeId state.
 export const ACTIVE_TAB_SESSION_KEY = "auto-trader.activeTabId";
 
+// The same memory, per broker: a broker switch swaps the whole workspace, so the
+// single key above always points at the outgoing broker's tab. Switching back
+// reads the incoming broker's own entry instead of falling to its first tab.
+const activeTabKeyFor = (broker: string) => `${ACTIVE_TAB_SESSION_KEY}.${broker}`;
+export function rememberActiveTab(broker: string, tabId: string): void {
+  sessionStorage.setItem(ACTIVE_TAB_SESSION_KEY, tabId);
+  sessionStorage.setItem(activeTabKeyFor(broker), tabId);
+}
+export function rememberedActiveTab(broker: string): string {
+  return sessionStorage.getItem(activeTabKeyFor(broker)) ?? "";
+}
+
 // The first instrument a brand-new broker workspace opens on (each broker is an
 // isolated instance with a FRESH START — no carry-over). Epics are broker-specific,
 // so a per-broker default; pricePrecision is just a render seed (the chart fetches

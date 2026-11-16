@@ -23,7 +23,7 @@ import {
 } from "../lib/persist";
 import { clearHistoryForKey } from "../lib/history";
 import { loadSettings, type Settings } from "../theme";
-import { resolveStartup } from "./workspace";
+import { rememberedActiveTab, resolveStartup } from "./workspace";
 import type { ReadyCells, Ref } from "./types";
 
 export function useBackendSync({
@@ -67,7 +67,7 @@ export function useBackendSync({
   const [hydrateEpoch, setHydrateEpoch] = useState(0);
   // Re-read the active workspace from localStorage and force a grid remount. Shared
   // by the startup hydrate and live cross-tab pushes. LayoutManager re-reads too.
-  const reseedFromLocal = () => {
+  const reseedFromLocal = (preferTabId?: string) => {
     // Someone else (another device/browser tab, a broker or layout switch)
     // just rewrote the workspace we snapshotted — a pending merge-undo would
     // restore a stale state and silently clobber their edit, so drop it even
@@ -83,7 +83,7 @@ export function useBackendSync({
       r.activeLayoutId === activeLayoutIdRef.current &&
       JSON.stringify(r.ws.tabs) === JSON.stringify(workspaceRef.current.tabs);
     setTabs(r.ws.tabs);
-    setActiveId((prev) => pickActiveTabId(prev, r.ws));
+    setActiveId((prev) => pickActiveTabId(preferTabId || prev, r.ws));
     setActiveLayoutId(r.activeLayoutId);
     setLayoutRev((n) => n + 1);
     if (!same) setHydrateEpoch((n) => n + 1);
@@ -111,7 +111,9 @@ export function useBackendSync({
     if (prev === brokerId) return; // initial mount or env-only change
     prevBrokerRef.current = brokerId;
     setPersistBroker(brokerId);
-    reseedFromLocal(); // resolves the new broker's workspace + forces a remount
+    // Resolves the new broker's workspace + forces a remount, landing on the tab
+    // this browser tab last had open on that broker.
+    reseedFromLocal(rememberedActiveTab(brokerId));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brokerId]);
 
