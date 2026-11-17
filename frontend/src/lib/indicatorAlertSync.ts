@@ -5,9 +5,10 @@ import { requestConfirm } from "./signals";
 import { repointIndicatorAlert } from "./alertsApi";
 import { alertInstanceOf } from "./indicatorAlertInstance";
 import type { AlertInstance } from "./indicatorAlertInstance";
+import { loadIndicators } from "./persist";
 import {
-  deleteIndicatorAlert, linkedAlerts, linkedLineAlerts, patchIndicatorAlert, patchLineAlert,
-  scopeLinkedAlerts, scopeLinkedLineAlerts, type IndicatorAlert, type LineAlert,
+  deleteIndicatorAlert, linkedAlerts, linkedLineAlerts, loadIndicatorAlerts, loadLineAlerts,
+  patchIndicatorAlert, patchLineAlert, scopeLinkedAlerts, scopeLinkedLineAlerts, type IndicatorAlert, type LineAlert,
 } from "./alertsApi";
 
 const plural = (n: number) => (n === 1 ? "1 alert" : `${n} alerts`);
@@ -96,4 +97,31 @@ export async function reconcileLinksForScope(scope: string, liveInstanceIds: Set
     ...stale.map((a) => patchIndicatorAlert(a.id, { params: { link: null } })),
     ...staleLines.map((a) => patchLineAlert(a.id, { params: { link: null } })),
   ]);
+}
+
+// A symbol's template re-creates its indicators in a cell under freshly
+// minted ids (`idMap`: template id to new id). An alert on this epic whose
+// link names a template id in a cell that no longer holds it (a closed tab:
+// its scope is purged, and the symbol opened again lands in a new one) moves
+// to the new instance, so its bell and dashed line come back. A link whose
+// cell still holds the instance is left alone: that chart still shows it.
+export function adoptOrphanedLinks(scope: string, epic: string, idMap: ReadonlyMap<string, string>): void {
+  if (idMap.size === 0) return;
+  const held = new Map<string, Set<string>>();
+  const orphaned = (link: { scope: string; instanceId: string } | null): string | null => {
+    const newId = link ? idMap.get(link.instanceId) : undefined;
+    if (!link || newId == null) return null;
+    let ids = held.get(link.scope);
+    if (!ids) held.set(link.scope, (ids = new Set(loadIndicators(link.scope).map((i) => i.id))));
+    return ids.has(link.instanceId) ? null : newId;
+  };
+  for (const a of loadIndicatorAlerts(epic)) {
+    const id = orphaned(a.params.link);
+    if (id != null) void patchIndicatorAlert(a.id, { params: { link: { scope, instanceId: id } } });
+  }
+  for (const a of loadLineAlerts(epic)) {
+    const id = orphaned(a.params.link);
+    if (id != null)
+      void patchLineAlert(a.id, { params: { link: { scope, instanceId: id, lineKey: a.params.link!.lineKey } } });
+  }
 }

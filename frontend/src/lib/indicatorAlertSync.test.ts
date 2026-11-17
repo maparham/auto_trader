@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-  reconcileLinksForScope, relinkAlerts, syncAlertsAfterEdit, syncAlertsAfterRemove,
+  adoptOrphanedLinks, reconcileLinksForScope, relinkAlerts, syncAlertsAfterEdit, syncAlertsAfterRemove,
   syncAvwapAlertsAfterReanchor,
 } from "./indicatorAlertSync";
 import { getPersistBroker } from "./persist/core";
+import * as persist from "./persist";
 import * as alertsApi from "./alertsApi";
 import {
   addIndicatorAlert, addLineAlert, alertLabel, findServerAlert, linkedAlerts, linkedLineAlerts,
@@ -232,6 +233,48 @@ describe("line alerts follow pane removal, not settings edits", () => {
     await addLineAlert(mkLine("al-l-rc", "line-rc", broker));
     await reconcileLinksForScope("line-rc", new Set());
     expect(findServerAlert("al-l-rc")?.params.link).toBeNull();
+  });
+});
+
+// A closed tab's scope is purged; the symbol opened again lands in a new
+// scope, its template instances under freshly minted ids.
+describe("adoptOrphanedLinks", () => {
+  it("moves alerts of a dead scope onto the re-created instances", async () => {
+    const broker = getPersistBroker();
+    await addLineAlert(mkLine("al-ad-line", "ad-dead", broker));
+    await addIndicatorAlert(mkAlert({ id: "al-ad-ind", scope: "ad-dead", instanceId: "EMA#x1", broker }));
+
+    adoptOrphanedLinks("ad-new", "US100", new Map([["TRENDLINES", "TRENDLINES#n"], ["EMA#x1", "EMA"]]));
+
+    expect(findServerAlert("al-ad-line")?.params.link)
+      .toEqual({ scope: "ad-new", instanceId: "TRENDLINES#n", lineKey: "k" });
+    expect(findServerAlert("al-ad-ind")?.params.link).toEqual({ scope: "ad-new", instanceId: "EMA" });
+  });
+
+  it("leaves an alert whose cell still holds its instance", async () => {
+    const broker = getPersistBroker();
+    // Node env: no localStorage, so the cell's saved indicators are stubbed.
+    vi.spyOn(persist, "loadIndicators").mockImplementation((scope) =>
+      scope === "ad-live" ? [{ id: "TRENDLINES", type: "TRENDLINES" }] : []);
+    await addLineAlert(mkLine("al-ad-live", "ad-live", broker));
+
+    adoptOrphanedLinks("ad-new-2", "US100", new Map([["TRENDLINES", "TRENDLINES#n"]]));
+
+    expect(findServerAlert("al-ad-live")?.params.link)
+      .toEqual({ scope: "ad-live", instanceId: "TRENDLINES", lineKey: "k" });
+  });
+
+  it("leaves other symbols, unlinked alerts and unknown ids alone", async () => {
+    const broker = getPersistBroker();
+    await addLineAlert(mkLine("al-ad-epic", "ad-dead-3", broker));
+    await addLineAlert({ ...mkLine("al-ad-null", "ad-dead-3", broker), params: { ...mkLine("x", "x").params, link: null } });
+
+    adoptOrphanedLinks("ad-new-3", "GOLD", new Map([["TRENDLINES", "TRENDLINES#n"]]));
+    adoptOrphanedLinks("ad-new-3", "US100", new Map([["RSI", "RSI#n"]]));
+
+    expect(findServerAlert("al-ad-epic")?.params.link)
+      .toEqual({ scope: "ad-dead-3", instanceId: "TRENDLINES", lineKey: "k" });
+    expect(findServerAlert("al-ad-null")?.params.link).toBeNull();
   });
 });
 

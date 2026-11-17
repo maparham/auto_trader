@@ -47,7 +47,7 @@ import {
 } from "./templateSignatures";
 import { withLayoutEventsSuppressed } from "./persist/layoutEvents";
 import { withHistorySuppressed } from "./history";
-import { reconcileLinksForScope } from "./indicatorAlertSync";
+import { adoptOrphanedLinks, reconcileLinksForScope } from "./indicatorAlertSync";
 
 // Snapshot a cell's current layout for `epic` into a template. Reads the persisted
 // per-cell stores (authoritative), plus each AVWAP instance's separately-stored
@@ -261,10 +261,14 @@ export function replaceSymbolTemplate(
         }
       }
       const added: IndicatorInstance[] = [];
+      const reIds = new Map<string, string>(); // template id -> id minted here
       for (const q of want.values()) {
         for (const inst of q) {
           const addedInst = addTemplateIndicator(chart, controller, scope, epic, t, inst);
-          if (addedInst) added.push(addedInst);
+          if (addedInst) {
+            added.push(addedInst);
+            reIds.set(inst.id, addedInst.id);
+          }
         }
       }
       const full = [...kept, ...added];
@@ -277,6 +281,10 @@ export function replaceSymbolTemplate(
       // bare name ("EMA") a removed one just freed, and must not adopt its
       // alert.
       void reconcileLinksForScope(scope, new Set(kept.map((i) => i.id)));
+      // The epic's alerts left behind by a closed tab follow its template
+      // into this cell (after the save above: an id this cell now holds
+      // under the same name counts as held).
+      adoptOrphanedLinks(scope, epic, reIds);
 
       // --- drawings: the epic's set becomes exactly the template's -------------
       // Order-sensitive signature compare skips the rewrite (and the id-minting

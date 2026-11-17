@@ -6,17 +6,18 @@
 // epic/resolution/broker bind and reconciles it on the alerts signal and on
 // indicator add/remove (the pane the line lives in can come and go).
 // Also the frozen-trendline (`line`) alerts: a dashed line through their
-// anchors on the candle pane of the linked cell, while its Trendlines pane
-// alerts on the alert's timeframe. Under a coarser pin it follows the
+// anchors on the candle pane of every cell showing their broker and epic, on
+// the alert's timeframe or under a Trendlines pane pinned to it. Under a coarser pin it follows the
 // trendline's own steps instead (alertStepPoints, the alertSteps overlay). The line runs from its
 // first anchor to the chart's last bar and stops there, so it lies on the
 // trendline while that is drawn and still shows what the alert watches once
 // the trendline is gone; the bell past its end (useChartPaint/
 // AlertCurveBells) marks it.
 import type { Chart, KLineData } from "klinecharts";
-import { alertTimeframeOf, lineAlertShown } from "../indicatorAlertInstance";
+import { alertTimeframeOf } from "../indicatorAlertInstance";
 import { loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert, type LineAlertParams } from "../alertsApi";
 import { getIndicatorsByPane } from "../indicators";
+import { indTypeOf } from "../indicators/shared";
 import { isInsetInstance } from "../indicators/inset";
 import type { TrendlinesMtf } from "../indicators/trendlines";
 import { stepMapFor } from "../indicators/trendlineSteps";
@@ -266,54 +267,59 @@ export class IndicatorAlertLines {
     this.reconcileRays(c, hidden, hiddenChanged);
   }
 
-  // Line alerts to draw: linked to this cell, whose Trendlines instance is
-  // here and alerts on the alert's timeframe (a pinned pane, its pin), with
-  // the two points the ray runs through.
+  // Line alerts to draw: every line alert of this broker and epic, on any
+  // cell, not only the one it was made on (a closed tab's alerts would
+  // otherwise lose their line and bell). On the alert's own timeframe it
+  // needs no pane: the alert holds its line. On a finer chart it follows
+  // the steps of a Trendlines pane pinned to the alert's timeframe, and is
+  // not drawn without one.
   private wantedRays(): Map<string, Ray> {
     const out = new Map<string, Ray>();
     if (!this.chart) return out;
     const alerts = loadLineAlerts(this.epic, this.broker);
     if (alerts.length === 0) return out;
-    const panes = getIndicatorsByPane(this.chart);
+    // The chart's coarser-pinned Trendlines panes, by the timeframe they alert on.
+    const pinnedExt = new Map<string, { mtf?: TrendlinesMtf; pinnedStyle?: string }>();
+    for (const [, inds] of getIndicatorsByPane(this.chart)) {
+      for (const ind of inds.values()) {
+        if (indTypeOf(ind) !== "TRENDLINES") continue;
+        const ext = ind.extendData as { mtf?: TrendlinesMtf; pinnedStyle?: string } | undefined;
+        const tf = alertTimeframeOf(ext as Record<string, unknown> | undefined, this.resolution);
+        if (ext?.mtf?.timeframe && tf !== this.resolution && !pinnedExt.has(tf)) pinnedExt.set(tf, ext);
+      }
+    }
     let dataList: KLineData[] | null = null;
     for (const a of alerts) {
-      const link = a.params.link;
-      if (!link || link.scope !== this.scope) continue;
-      for (const [, inds] of panes) {
-        const ind = inds.get(link.instanceId);
-        if (!ind) continue;
-        const ext = ind.extendData as { mtf?: TrendlinesMtf; pinnedStyle?: string } | undefined;
-        if (!lineAlertShown(ext as Record<string, unknown> | undefined, this.resolution, a.params.timeframe)) break;
-        const { t1, p1, t2, p2 } = a.params.anchors;
-        dataList ??= this.chart.getDataList();
-        const pinned = !!ext?.mtf?.timeframe && a.params.timeframe !== this.resolution;
-        // Under a coarser pin, the trendline's own steps, so the line lies
-        // on them. Otherwise two points on the alert's own line that are
-        // inside the loaded bars; the anchors themselves only as a last resort.
-        if (pinned && ext?.mtf && (ext.mtf.htfMs ?? 0) > chartGapMs(dataList)) {
-          const sp = alertStepPoints(dataList, ext.mtf, a.params);
-          if (sp) {
-            // The pane's pinned style: steps, or the ramp (default). The key's
-            // first letter is the overlay kind, so a style change re-creates it.
-            const flat = ext.pinnedStyle === "steps";
-            const key = `${flat ? "S" : "R"}|${sp.steps.map((q) => `${q.timestamp}:${q.value}`).join("|")}`;
-            out.set(a.id, { points: sp.bell, drawn: sp.bell, key, name: flat ? "alertSteps" : "alertRamp", steps: sp.steps });
-            break;
-          }
+      const own = a.params.timeframe === this.resolution;
+      const ext = own ? undefined : pinnedExt.get(a.params.timeframe);
+      if (!own && !ext) continue;
+      const { t1, p1, t2, p2 } = a.params.anchors;
+      dataList ??= this.chart.getDataList();
+      // Under a coarser pin, the trendline's own steps, so the line lies
+      // on them. Otherwise two points on the alert's own line that are
+      // inside the loaded bars; the anchors themselves only as a last resort.
+      if (ext?.mtf && (ext.mtf.htfMs ?? 0) > chartGapMs(dataList)) {
+        const sp = alertStepPoints(dataList, ext.mtf, a.params);
+        if (sp) {
+          // The pane's pinned style: steps, or the ramp (default). The key's
+          // first letter is the overlay kind, so a style change re-creates it.
+          const flat = ext.pinnedStyle === "steps";
+          const key = `${flat ? "S" : "R"}|${sp.steps.map((q) => `${q.timestamp}:${q.value}`).join("|")}`;
+          out.set(a.id, { points: sp.bell, drawn: sp.bell, key, name: flat ? "alertSteps" : "alertRamp", steps: sp.steps });
+          continue;
         }
-        let points: RayPoints | null = loadedLinePoints(a.params, pinned ? ext?.mtf?.htfStarts ?? [] : this.barTimes(dataList), dataList);
-        points ??= [
-          { timestamp: t1, value: p1 },
-          { timestamp: t2, value: p2 },
-        ];
-        const drawn = this.toLastBar(points, dataList);
-        if (drawn)
-          out.set(a.id, {
-            points, drawn, name: "segment",
-            key: `L|${drawn.map((q) => `${q.timestamp}:${q.value}`).join("|")}`,
-          });
-        break;
       }
+      let points: RayPoints | null = loadedLinePoints(a.params, ext ? ext.mtf?.htfStarts ?? [] : this.barTimes(dataList), dataList);
+      points ??= [
+        { timestamp: t1, value: p1 },
+        { timestamp: t2, value: p2 },
+      ];
+      const drawn = this.toLastBar(points, dataList);
+      if (drawn)
+        out.set(a.id, {
+          points, drawn, name: "segment",
+          key: `L|${drawn.map((q) => `${q.timestamp}:${q.value}`).join("|")}`,
+        });
     }
     return out;
   }

@@ -39,14 +39,6 @@ export function alertTimeframeOf(ext: Record<string, unknown> | undefined, resol
   return (pin && tryCanonicalTf(pin)) || resolution;
 }
 
-/** True when a line alert on `alertTf` draws on this pane at `resolution`:
- * on its pin's timeframe (alertTimeframeOf), or on the chart's own. Coarser
- * pins used to freeze their alerts on the chart's timeframe; those alerts
- * still exist and still draw here. */
-export function lineAlertShown(ext: Record<string, unknown> | undefined, resolution: string, alertTf: string): boolean {
-  return alertTf === resolution || alertTf === alertTimeframeOf(ext, resolution);
-}
-
 /** A pane's plotted value for a registry output name: result rows key most
  * outputs by the same name, a few by its camelCase form (FVG `bull_top`). */
 export function chartValueOf(row: Record<string, number | undefined> | undefined, output: string): number | undefined {

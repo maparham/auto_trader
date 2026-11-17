@@ -42,7 +42,7 @@ import { slopeMaLines } from "../lib/indicators/slope";
 import { getTrendlineTags } from "../lib/indicators/trendlines";
 import { getIndicatorById, getIndicatorsByPane } from "../lib/indicators";
 import { loadIndicatorAlerts, loadLineAlerts } from "../lib/alertsApi";
-import { alertTimeframeOf, chartValueOf, lineAlertShown } from "../lib/indicatorAlertInstance";
+import { alertTimeframeOf, chartValueOf } from "../lib/indicatorAlertInstance";
 import type { AlertCurveBellTag } from "./AlertCurveBells";
 import { bellPastCurveEnd, gapAlongLine, lineEndX, stepPastTags } from "./lineAlertBellPlace";
 import { indTypeOf } from "../lib/customIndicators";
@@ -889,17 +889,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       // history.
       controller.indicatorAlerts.refreshRays();
       for (const a of loadLineAlerts(epicRef.current, brokerIdRef.current)) {
-        const p = a.params;
-        const link = p.link;
-        if (!link || link.scope !== scope) continue;
-        // Shown even while the indicator is hidden, like the dashed line:
-        // the alert still fires, so its bell stays reachable.
-        const ind = getIndicatorById(chart, link.instanceId);
-        if (!ind) continue;
-        // Same check the line uses: the instance must alert on the alert's
-        // timeframe here (the chart's, or its pin's); otherwise neither draws.
-        const ext = ind.extendData as Record<string, unknown> | undefined;
-        if (!lineAlertShown(ext, resRef.current, p.timeframe)) continue;
+        // Wherever refreshRays drew the alert's line (any cell of this
+        // symbol, on its timeframe or under a pin to it), the bell follows.
         const pts = controller.indicatorAlerts.rayPoints(a.id);
         const dl = chart.getDataList();
         if (!pts || dl.length === 0) continue;
@@ -907,7 +898,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // in pixel space through the ray's two points.
         const px = chart.convertToPixel(
           [pts[0], pts[1], { timestamp: dl[dl.length - 1].timestamp, value: pts[1].value }],
-          { paneId: ind.paneId ?? "candle_pane", absolute: true },
+          { paneId: "candle_pane", absolute: true },
         ) as Array<{ x: number; y: number }>;
         const [q0, q1, last] = px;
         if (!q0 || !q1 || !last || q1.x === q0.x) continue;
@@ -915,7 +906,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // The ×N / #rank tags Trendlines paints at its line ends sit in the
         // same column: walk the bell right, along its own line, past any it
         // would cover. Tags are pane pixels; the bell is chart-absolute.
-        const paneId = ind.paneId ?? "candle_pane";
+        const paneId = "candle_pane";
         const paneTop = chart.getSize(paneId)?.top ?? 0;
         // Right edge of the plot, left of the price axis strip.
         const plotRight = chart.getSize(paneId, "main")?.width ?? Infinity;

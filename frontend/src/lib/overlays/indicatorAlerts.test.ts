@@ -144,14 +144,15 @@ const lineAlert = (scope: string, tf = "HOUR") => ({
 });
 
 describe("IndicatorAlertLines: line alerts", () => {
-  it("draws a dashed line from the first anchor to the last bar, on the linked cell's timeframe only", () => {
+  it("draws a dashed line from the first anchor to the last bar, on any cell, on the alert's timeframe only", () => {
     alerts.splice(0, alerts.length);
     lineAlerts.splice(0, lineAlerts.length, lineAlert("s1"), { ...lineAlert("s1", "DAY"), id: "al-l2" }, { ...lineAlert("s2"), id: "al-l3" });
     const { chart, created } = fakeChart();
     const lines = new IndicatorAlertLines();
     lines.attach(chart as never, "s1", "b", "US100", "HOUR");
     lines.reconcile();
-    expect(created).toHaveLength(1);
+    // al-l3 was made on another cell (a closed tab): it draws here too.
+    expect(created.map((o) => o.id)).toEqual(["lnalert:al-l", "lnalert:al-l3"]);
     expect(created[0]).toMatchObject({
       id: "lnalert:al-l", name: "segment", lock: true, visible: true,
       points: [{ timestamp: 2, value: 10 }, { timestamp: 10, value: 14 }],
@@ -244,6 +245,27 @@ describe("IndicatorAlertLines: line alerts", () => {
       points: [...knots, { timestamp: bars[39].timestamp, value: 97 }],
     });
     expect(lines.rayStepped("al-l")).toBe(true);
+  });
+
+  it("needs no Trendlines pane on the alert's own timeframe, and no link", () => {
+    alerts.splice(0, alerts.length);
+    lineAlerts.splice(0, lineAlerts.length, { ...lineAlert("s1"), params: { ...lineAlert("s1").params, link: null } });
+    const { chart, created } = fakeChart();
+    const lines = new IndicatorAlertLines();
+    lines.attach({ ...chart, getIndicators: () => [] } as never, "s9", "b", "US100", "HOUR");
+    lines.reconcile();
+    expect(created.map((o) => o.id)).toEqual(["lnalert:al-l"]);
+  });
+
+  it("is not drawn on a finer chart without a Trendlines pane pinned to its timeframe", () => {
+    alerts.splice(0, alerts.length);
+    lineAlerts.splice(0, lineAlerts.length, lineAlert("s1"));
+    const { chart, created } = fakeChart();
+    const lines = new IndicatorAlertLines();
+    // HOUR alert on a 15m chart: the fake's Trendlines pane is not pinned.
+    lines.attach(chart as never, "s1", "b", "US100", "MINUTE_15");
+    lines.reconcile();
+    expect(created).toEqual([]);
   });
 
   it("rayPoints reports the ray's own anchors, surviving the live TrendLine list moving on", () => {
