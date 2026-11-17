@@ -68,7 +68,7 @@ test("tab bar is at the top and tabs reorder by drag", async ({ page }) => {
 
   // Persists across reload.
   await page.reload();
-  expect(await page.locator(".tab-bar .tab .tab-period").allTextContents()).toEqual([
+  await expect(page.locator(".tab-bar .tab .tab-period")).toHaveText([
     "1D",
     "1W",
     "1H",
