@@ -72,7 +72,10 @@ export default function SelectMenu({
       setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      // Mark it handled so a window-level Esc (the order ticket's close) skips it.
+      e.preventDefault();
+      setOpen(false);
     };
     // NOT scrolling of the list itself: this listener is capture-phase on
     // window, so a wheel inside a list long enough to overflow (maxHeight, with

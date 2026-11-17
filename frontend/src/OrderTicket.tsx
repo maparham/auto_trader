@@ -38,6 +38,7 @@ import {
   editTradeSignal,
   pendingEditsSignal,
   setTradeSelected,
+  tradeLineUiSignal,
   type DraftOrder,
   type PendingEdit,
 } from "./lib/signals";
@@ -261,6 +262,26 @@ export default function OrderTicket({
   // symbol) — a clicked row can belong to any instrument. While editing, the
   // ticket swaps its new-order form for an edit form rendered from this trade.
   const editTrade = editId ? positions.find((t) => t.id === editId) ?? null : null;
+
+  // Esc closes the docked ticket, but only when nothing else owns that Esc: a
+  // handler that already acted (chart tool, dropdown) calls preventDefault, an
+  // open dialog has its own Esc, and a selected trade or an edit in progress
+  // uses Esc to discard or deselect (App's handler).
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+  const closable = onCancel != null;
+  useEffect(() => {
+    if (!closable) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (editTrade || tradeLineUiSignal.value.selected) return;
+      if (document.querySelector(".modal-backdrop")) return;
+      e.preventDefault();
+      onCancelRef.current?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [closable, editTrade]);
 
   // Exits in ATRs (new-order form). The edit form runs its own fetch for the
   // edited trade's epic. Nothing is fetched while replaying (blind session).

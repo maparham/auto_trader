@@ -162,3 +162,36 @@ describe("OrderTicket editing a position: stop vs the entry price", () => {
     expect(screen.getByText(/Stop loss must be below the entry price \(99\.000\)/)).toBeTruthy();
   });
 });
+
+describe("OrderTicket close (Cancel button and Esc)", () => {
+  it("Cancel calls onCancel; no onCancel means no button", () => {
+    const onCancel = vi.fn();
+    const { unmount } = render(<OrderTicket epic="US100" trading={trading} onCancel={onCancel} />);
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    unmount();
+    render(<OrderTicket epic="US100" trading={trading} />);
+    expect(document.querySelector(".ot-cancel")).toBeNull();
+  });
+
+  it("Esc closes the ticket", () => {
+    const onCancel = vi.fn();
+    render(<OrderTicket epic="US100" trading={trading} onCancel={onCancel} />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("Esc already handled elsewhere, or a dialog open, leaves it open", () => {
+    const onCancel = vi.fn();
+    render(<OrderTicket epic="US100" trading={trading} onCancel={onCancel} />);
+    const handled = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+    handled.preventDefault();
+    window.dispatchEvent(handled);
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    document.body.appendChild(backdrop);
+    fireEvent.keyDown(window, { key: "Escape" });
+    backdrop.remove();
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+});
