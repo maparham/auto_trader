@@ -5629,6 +5629,13 @@
 }
 .ot-edit-cancel:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .ot-edit-cancel:disabled { opacity: 0.5; cursor: default; }
+.ot-cancel {
+  width: 100%; margin-top: 6px; padding: 8px 0;
+  border: 1px solid var(--border); border-radius: 6px;
+  cursor: pointer; font-size: 13px; color: var(--text-dim); background: transparent;
+}
+.ot-cancel:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.ot-cancel:disabled { opacity: 0.5; cursor: default; }
 
 /* ns-resize cursor while hovering ON a draggable trade line (set by PositionLines).
    The in-band snap case uses the cursorMode `.cur-ns` instead (see cursor modes). */

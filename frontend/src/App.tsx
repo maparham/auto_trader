@@ -1185,6 +1185,7 @@ export default function App() {
                 return c ? { stamp: chartSeriesStamp(c), bars: c.getDataList() } : undefined;
               }}
               onDone={() => tradePanelOpen.set(false)}
+              onCancel={() => tradePanelOpen.set(false)}
             />
           </aside>
         )}

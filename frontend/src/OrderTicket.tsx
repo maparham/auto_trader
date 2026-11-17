@@ -104,6 +104,9 @@ interface Props {
   // brief confirmation flash. The docked ticket closes itself through this; a
   // ticket with no caller (the mobile Trade tab) just resets for the next order.
   onDone?: () => void;
+  // Closes the ticket without placing anything. No caller (mobile) means no
+  // Cancel button.
+  onCancel?: () => void;
 }
 
 // How long the action button shows its green "Filled" state before onDone.
@@ -141,6 +144,7 @@ export default function OrderTicket({
   brokerId,
   chartCandles,
   onDone,
+  onCancel,
 }: Props) {
   // A chart-staged draft (the price-axis "+" menu's Buy/Sell limit items) is placed
   // on draftOrderSignal BEFORE this ticket mounts; seed local state from it (same-epic
@@ -780,6 +784,11 @@ export default function OrderTicket({
           </>
         )}
       </button>
+      {onCancel && (
+        <button className="ot-cancel" type="button" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+      )}
 
       <div className={`ot-msg${msg || levelError ? " show" : ""}${levelError && !msg ? " ot-msg-err" : ""}`}>
         {msg ?? levelError ?? ""}
