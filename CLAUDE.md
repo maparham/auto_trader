@@ -43,6 +43,32 @@ rather than flipping their signals directly. Claims are inert until App calls
 open-state and a boot-time cross-close would overwrite the saved flag; when
 both are saved open, live wins and backtest just starts closed.
 
+## Hosting
+
+The hosted API (`api.chartkar.app`) runs on the Iran VPS 95.38.187.63, not
+AWS (moved 2026-11-18). The frontend stays on Cloudflare Pages. Caddy on the
+box terminates TLS for a DNS-only A record. A Cloudflare Tunnel was tried and
+rejected: traffic from Iran to Cloudflare stalls after a few KB. Deploy with
+`scripts/deploy-demo.sh` (root@95.38.187.63, service user `chartkar`, same
+unit names as before).
+
+Foreign brokers (Capital, IG, AvaTrade via MT5/MetaApi) must NEVER be reached
+from the Iranian IP: they geo-block it and may flag the accounts. This is
+enforced, not just configured. `auto-trader-demo` may only reach loopback
+(`IPAddressDeny=any` in the box-only drop-in `no-direct-egress.conf`), and
+`demo.env` points HTTP(S)_PROXY at Xray on 127.0.0.1:18483. Xray sends `.ir`
+domains (Nobitex) out directly and everything else to the `claude-gateway`
+Lightsail box, whose Xray passes only an allowlist of domains. A new
+external host the backend needs goes in that allowlist; never add a
+`NO_PROXY` exception. The snapshot renderer's Chromium uses the same proxy
+(chartkar.app is allowlisted) and reaches `api.chartkar.app` directly via
+`/etc/auto-trader/renderer.env`.
+
+The MT5 Wine terminal stays on the AWS box (3.139.146.5). The box-only unit
+`mt5-forward` forwards 127.0.0.1:22346 to it over SSH, with a key limited to
+that one port. The API on AWS is disabled by the drop-in `moved-to-iran.conf`.
+Delete it to roll back.
+
 ## Agent UI Bridge
 
 MCP agents can drive the running UI: connect to `http://localhost:8000/mcp`

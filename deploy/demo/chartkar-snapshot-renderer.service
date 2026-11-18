@@ -14,20 +14,28 @@
 # exists only on the box (auto-trader-demo.service.d/malloc.conf).
 #
 # Installed by scripts/deploy-demo.sh.
+#
+# Iran VPS (since 2026-11-18): Chromium loads https://chartkar.app (Cloudflare
+# Pages), and Cloudflare traffic from Iran stalls, so it goes through the Xray
+# proxy that demo.env sets (the gateway allowlists chartkar.app). The optional
+# /etc/auto-trader/renderer.env is read AFTER demo.env and overrides NO_PROXY so
+# api.chartkar.app (this box) is fetched directly. Chromium itself was
+# downloaded through the proxy too: cdn.playwright.dev refuses Iranian IPs.
 [Unit]
 Description=Chartkar snapshot renderer (Playwright + Chromium, HTTP on 127.0.0.1:9223)
 After=network.target
 
 [Service]
-User=ec2-user
+User=chartkar
 WorkingDirectory=/opt/auto-trader/backend
 EnvironmentFile=/etc/auto-trader/demo.env
+EnvironmentFile=-/etc/auto-trader/renderer.env
 Environment=MALLOC_ARENA_MAX=2
 ExecStart=/opt/auto-trader/venv/bin/python3 -m auto_trader.snapshot_renderer
 Restart=always
 RestartSec=3
-MemoryHigh=450M
-MemoryMax=600M
+MemoryHigh=600M
+MemoryMax=800M
 MemorySwapMax=0
 
 [Install]

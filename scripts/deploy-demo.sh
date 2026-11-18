@@ -39,9 +39,11 @@
 #
 # Snapshots: PROD_SNAPSHOT_DISABLED in backend/.env lands on the box as
 # SNAPSHOT_DISABLED (prod only, so local dev keeps live-chart alert photos).
-# The box has 916 MB RAM and launching Chromium for an alert photo pushed it
-# into swap hard enough to freeze the API for ~50s. Any non-empty value
-# disables, so re-enabling means deleting the line on the box as well as here.
+# It was set on the old 916 MB AWS box, where Chromium froze the API. The
+# Iran box (2 GB + 2 GB swap) runs photos again, so the key is commented out
+# locally and absent on the box. Any non-empty value disables, so disabling
+# again means setting it here and redeploying; re-enabling means deleting the
+# line on the box as well as here.
 #
 # Assistant: ASSISTANT_API_KEY (the in-app assistant's gateway key) is synced
 # as is. CI runners have no backend/.env, so it reaches the box only from a
@@ -153,9 +155,10 @@ if [ "$DO_BACKEND" = 1 ]; then
   echo "==> backend: rsync -> $HOST:/opt/auto-trader/backend"
   rsync -az --delete \
     --exclude '__pycache__' --exclude '*.db' --exclude '.pytest_cache' \
-    --chown=chartkar:chartkar \
     -e "ssh -i $SSH_KEY -o BatchMode=yes" \
     "$WT/backend/" "$HOST:/opt/auto-trader/backend/"
+  # Not rsync --chown: macOS ships openrsync, which lacks it.
+  "${SSH[@]}" "$HOST" 'chown -R chartkar:chartkar /opt/auto-trader/backend'
 
   if [ "$DO_SYNC" = 1 ]; then
     echo "==> backend: sync credentials -> $HOST:/etc/auto-trader/demo.env"
