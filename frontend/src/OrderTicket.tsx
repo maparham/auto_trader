@@ -23,6 +23,7 @@ import {
   breakevenEligible,
   breakevenTargetEligible,
   getLivePrice,
+  brokerOf,
   fetchQuote,
   placeOrder,
   refreshTrades,
@@ -62,6 +63,8 @@ import ExpirySelect from "./components/ExpirySelect";
 import ProximityWarn from "./components/ProximityWarn";
 import { addPositionAlert } from "./lib/alertsApi";
 import { expiryToApi, isValidExpiry } from "./lib/expiry";
+import { useMarketClosed } from "./lib/useMarketClosed";
+import { fmtNextOpen } from "./lib/marketInfoFormat";
 
 interface Props {
   epic: string;
@@ -209,6 +212,13 @@ export default function OrderTicket({
   }, [side, quantity, epic, orderType, account]);
 
   const isLimit = orderType === "limit";
+  // The account's own broker answers open/closed (an mt5-self ticket on a
+  // chart fed by another broker still asks the terminal). A market order on a
+  // closed market is refused by the broker, so it is blocked here with the
+  // reopen time; a limit order may still rest. Paper fills on the last quote
+  // as before.
+  const market = useMarketClosed(epic, brokerOf(account), !replaying);
+  const closedBlocks = market.closed && !isLimit && !account.endsWith(":paper");
   // The sticky warning leaves on the user's next interaction with the form.
   const dropStickyMsg = () => setMsg((m) => (m?.startsWith(WARN_FAIL_PREFIX) ? null : m));
   const round = (n: number) => Number(n.toFixed(precision));
@@ -460,7 +470,7 @@ export default function OrderTicket({
 
   async function submit() {
     if (submittingRef.current) return; // a previous click is still in flight
-    if (levelError) return;
+    if (levelError || closedBlocks) return;
     const qty = Number(quantity);
     if (!epic || !Number.isFinite(qty) || qty <= 0) {
       setMsg("Enter a valid size.");
@@ -789,9 +799,14 @@ export default function OrderTicket({
         </div>
       )}
 
+      {market.closed && (
+        <div className="ot-closed" role="status">
+          {market.nextOpen ? `Market closed · opens ${fmtNextOpen(market.nextOpen)}` : "Market closed"}
+        </div>
+      )}
       <button
         className={`ot-action ot-action-${done ? "done" : side}${armed ? " ot-action-armed" : ""}`}
-        disabled={busy || done != null || levelError != null}
+        disabled={busy || done != null || levelError != null || closedBlocks}
         onClick={submit}
       >
         {done ? (

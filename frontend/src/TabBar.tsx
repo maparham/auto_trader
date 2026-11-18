@@ -17,6 +17,7 @@ import type { PriceSide, TabStrip } from "./theme";
 import { fmtBarChange, useTabBarChange } from "./lib/tabBarChange";
 import { fetchAllMarkets, type Instrument } from "./lib/feed";
 import { emptyHistory, recent, step, visit } from "./lib/tabHistory";
+import { fmtNextOpen } from "./lib/marketInfoFormat";
 import { inShell } from "./lib/shellBridge";
 
 // Where the floating clone of the dragged chip sits for a given cursor point:
@@ -44,30 +45,6 @@ const emptyImg = typeof Image === "undefined" ? null : new Image();
 if (emptyImg != null)
   emptyImg.src =
     "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
-
-// Format an ISO-8601 UTC next-open time for the closed-badge tooltip, in the
-// viewer's local zone. "today"/"tomorrow" when near; otherwise a dated weekday
-// (e.g. "Mon, Jun 29 22:00") since the next open can be up to a week out and the
-// weekday alone can't tell this week from next. Falls back to the raw string if
-// it doesn't parse.
-// toLocaleString with options builds a new Intl formatter per call (~1 ms), and
-// this runs for every closed chip on every TabBar render (all of them on a
-// weekend), which showed up as frozen frames mid-zoom.
-const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
-const dateFmt = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" });
-
-function fmtNextOpen(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const time = timeFmt.format(d);
-  const startOfDay = (x: Date) =>
-    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const days = Math.round((startOfDay(d) - startOfDay(new Date())) / 86_400_000);
-  if (days <= 0) return `today ${time}`;
-  if (days === 1) return `tomorrow ${time}`;
-  const date = dateFmt.format(d);
-  return `${date} ${time}`;
-}
 
 // The chip's inner markup, shared by the real tab and its floating drag clone
 // so the two can't drift (the clone previously copy-pasted this and lost the

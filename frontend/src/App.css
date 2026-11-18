@@ -5249,6 +5249,9 @@
 /* real-money two-step confirm: first click arms, second deals (auto-disarms) */
 .ot-action-armed { outline: 2px solid #fff; outline-offset: -3px; }
 
+/* closed market: plain note above the action button */
+.ot-closed { font-size: 12px; color: var(--text-dim); text-align: center; }
+
 .ot-msg {
   min-height: 14px; font-size: 11px; color: var(--text-dim);
   opacity: 0; transition: opacity 0.15s ease;

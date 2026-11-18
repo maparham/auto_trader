@@ -50,6 +50,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from auto_trader.brokers._market_hours import _market_hours_state
+from auto_trader.brokers._mt5_sessions import MT5Sessions
 from auto_trader.brokers._mt5_symbols import MT5_CATEGORIES, _classify_symbol, avatrade_ticker
 from auto_trader.brokers._prices import pick_side
 from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
@@ -337,12 +339,14 @@ class MT5MCPBroker(MarketDataBroker):
         self._stream_lock = asyncio.Lock()
         self._poll_task: asyncio.Task | None = None
         self._last_tick: dict[str, datetime] = {}
+        self.sessions = MT5Sessions(self.call)
 
     async def aclose(self) -> None:
         for task in (self._label_task, self._poll_task):
             if task is not None:
                 task.cancel()
         self._label_task = self._poll_task = None
+        await self.sessions.aclose()
         await self.client.aclose()
 
     # --- time -----------------------------------------------------------------
@@ -760,8 +764,9 @@ class MT5MCPBroker(MarketDataBroker):
         return round(lots, 8)
 
     async def get_market_meta(self, epic: str) -> dict | None:
-        """Precision + sizing bounds in instrument UNITS. The MCP exposes no
-        trading sessions, so `closed` stays None (unknown reads as open)."""
+        """Precision + sizing bounds in instrument UNITS. `closed`/`nextOpen`
+        come from the symbol's trade sessions (MT5Sessions); while those are
+        unknown, `closed` stays None (unknown reads as open)."""
         try:
             row = await self._market_row(epic)
         except Exception:
@@ -772,18 +777,22 @@ class MT5MCPBroker(MarketDataBroker):
         cs = _f(row.get("contract_size")) or 1.0
         vmin, step = _f(row.get("volume_min")), _f(row.get("volume_step"))
         disabled = str(row.get("trade_mode_name") or "").lower() == "disabled"
+        closed, next_open = (True, None) if disabled else self._session_state(epic)
         return {
             "epic": epic,
             "pricePrecision": row.get("digits"),
             "minVolume": vmin * cs if vmin is not None else None,
             "volumeStep": step * cs if step is not None else None,
             "contractSize": cs,
-            "closed": True if disabled else None,
-            "nextOpen": None,
-            "status": "CLOSED" if disabled else "TRADEABLE",
+            "closed": closed,
+            "nextOpen": next_open,
+            "status": "CLOSED" if closed else "TRADEABLE",
             "type": _classify_symbol(epic),
             "yahooTicker": avatrade_ticker(epic, row.get("description"), row.get("isin")),
         }
+
+    def _session_state(self, epic: str) -> tuple[bool | None, str | None]:
+        return _market_hours_state(self.sessions.opening_hours(epic), datetime.now(timezone.utc))
 
     async def get_market_detail(self, epic: str) -> dict | None:
         """Details popover: the raw Market Watch row verbatim plus the curated
@@ -801,6 +810,8 @@ class MT5MCPBroker(MarketDataBroker):
                           type=_classify_symbol(epic))
         if row.get("currency_profit"):
             instrument["currency"] = row["currency_profit"]
+        if (hours := self.sessions.opening_hours(epic)) is not None:
+            instrument["openingHours"] = hours
         snapshot: dict = {}
         if row.get("bid") is not None:
             snapshot["bid"] = row["bid"]
@@ -1206,4 +1217,5 @@ def register(registry: "BrokerRegistry", *, url: str, key: str,
     paper_exec.register(registry, broker, broker_id=BROKER_ID)
     registry.add_exec(f"{BROKER_ID}:live", MT5MCPExecutionBroker(broker))
     broker.start_display_name_fetch()
+    broker.sessions.ensure_fresh()
     return broker

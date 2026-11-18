@@ -183,6 +183,33 @@ if [ "$DO_BACKEND" = 1 ]; then
     '
   fi
 
+  # mt5-self market hours: the terminal's MCP has no sessions tool, so the
+  # backend runs this MQL5 script (brokers/_mt5_sessions.py). Copy and compile
+  # it into the terminal when it changed. MCP can run only scripts the
+  # terminal already knows: a NEW script path needs a restart or a Navigator
+  # refresh in the terminal, once. A compile failure warns and does not stop
+  # the deploy (the hours then stay unknown, which reads as open).
+  echo "==> backend: MT5 sessions script"
+  "${SSH[@]}" "$HOST" '
+    T="$HOME/mt5/prefix/drive_c/Program Files/MetaTrader 5"
+    [ -d "$T/MQL5" ] || { echo "    no MT5 terminal on the box, skipped"; exit 0; }
+    src=/opt/auto-trader/backend/auto_trader/brokers/mql5/ChartkarSessions.mq5
+    dir="$T/MQL5/Scripts/Chartkar"
+    if cmp -s "$src" "$dir/ChartkarSessions.mq5" && [ -f "$dir/ChartkarSessions.ex5" ]; then
+      echo "    unchanged"; exit 0
+    fi
+    mkdir -p "$dir" && cp "$src" "$dir/ChartkarSessions.mq5" && cd "$T"
+    WINEPREFIX="$HOME/mt5/prefix" DISPLAY=:99 WINEDEBUG=-all timeout 120 \
+      "$HOME/mt5/wine-11.18-amd64-wow64/bin/wine" MetaEditor64.exe \
+      /compile:"MQL5\\Scripts\\Chartkar\\ChartkarSessions.mq5" \
+      /log:"MQL5\\Scripts\\Chartkar\\compile.log" || true
+    if iconv -f UTF-16LE -t UTF-8 "$dir/compile.log" 2>/dev/null | grep -q "Result: 0 errors"; then
+      echo "    compiled"
+    else
+      echo "    WARNING: ChartkarSessions.mq5 did not compile; see $dir/compile.log" >&2
+    fi
+  '
+
   # agent-ui-bridge is a git dependency declared under [tool.uv.sources], which
   # plain pip on the box cannot see. Install the commit uv.lock pins first, so
   # the package install below finds it already satisfied.
