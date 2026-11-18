@@ -290,6 +290,13 @@ def test_failing_retcode_is_rejected():
     assert r.status is OrderStatus.REJECTED and "No money" in r.reason
 
 
+def test_bare_retcode_gets_readable_text():
+    ex, _ = _exec({"trade_send_market_order": {"retcode": 10018}})
+    order = Order(epic="#SLV", side=Side.BUY, quantity=50.0, type=OrderType.MARKET, client_order_id="c5")
+    r = run(ex.place_order(order))
+    assert r.status is OrderStatus.REJECTED and r.reason == "Market is closed (retcode 10018)"
+
+
 def test_partial_close_is_refused_without_trading():
     ex, client = _exec({"trade_close_single_position": {"retcode": 10009}})
     r = run(ex.close_position("555", quantity=5000.0))

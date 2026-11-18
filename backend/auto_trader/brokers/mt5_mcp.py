@@ -124,6 +124,28 @@ _CATCHUP = timedelta(seconds=2 * _POLL_BACKOFF)
 # (DONE, PLACED, DONE_PARTIAL). Anything else with a retcode is a rejection.
 _RETCODE_OK = {10008, 10009, 10010}
 
+# Readable text for the refusals a user is likely to meet, used when the
+# terminal sends a bare retcode with no comment.
+_RETCODE_TEXT = {
+    10004: "Requote",
+    10006: "Request rejected",
+    10013: "Invalid request",
+    10014: "Invalid volume",
+    10015: "Invalid price",
+    10016: "Invalid stops",
+    10017: "Trading is disabled for this symbol",
+    10018: "Market is closed",
+    10019: "Not enough money",
+    10020: "Prices changed",
+    10021: "No quotes",
+    10024: "Too many requests",
+    10026: "Autotrading is disabled in the terminal",
+    10027: "Autotrading is disabled in the terminal",
+    10030: "Unsupported filling mode",
+    10031: "No connection to the trade server",
+    10040: "Too many open positions",
+}
+
 # Trailing company words dropped from the account's broker name for the
 # selector: "Ava Trade Markets Ltd." reads "Ava Trade".
 _NAME_SUFFIX = re.compile(r"(?:[\s,]+(?:markets?|ltd\.?|limited|llc|inc\.?|plc|corp\.?|group))+\s*$",
@@ -895,8 +917,10 @@ class MT5MCPExecutionBroker(ExecutionBroker):
         inner = payload.get("result") if isinstance(payload.get("result"), dict) else payload
         retcode = _first(inner, "retcode", "return_code")
         if retcode is not None and int(_f(retcode) or 0) not in _RETCODE_OK:
-            reason = _first(inner, "comment", "retcode_description", "description") or f"retcode {retcode}"
-            return self._result(cid, OrderStatus.REJECTED, f"{reason} ({retcode})"), inner
+            code = int(_f(retcode) or 0)
+            reason = (_first(inner, "comment", "retcode_description", "description")
+                      or _RETCODE_TEXT.get(code) or "Refused")
+            return self._result(cid, OrderStatus.REJECTED, f"{reason} (retcode {code})"), inner
         return None, inner
 
     async def _raw_positions(self) -> dict:
