@@ -198,7 +198,9 @@ if [ "$DO_BACKEND" = 1 ]; then
     if cmp -s "$src" "$dir/ChartkarSessions.mq5" && [ -f "$dir/ChartkarSessions.ex5" ]; then
       echo "    unchanged"; exit 0
     fi
-    mkdir -p "$dir" && cp "$src" "$dir/ChartkarSessions.mq5" && cd "$T"
+    # Drop the old .ex5 first: a failed compile then leaves none, so the next
+    # deploy retries instead of reading "unchanged".
+    mkdir -p "$dir" && cp "$src" "$dir/ChartkarSessions.mq5" && rm -f "$dir/ChartkarSessions.ex5" && cd "$T"
     WINEPREFIX="$HOME/mt5/prefix" DISPLAY=:99 WINEDEBUG=-all timeout 120 \
       "$HOME/mt5/wine-11.18-amd64-wow64/bin/wine" MetaEditor64.exe \
       /compile:"MQL5\\Scripts\\Chartkar\\ChartkarSessions.mq5" \

@@ -123,7 +123,9 @@ class MT5Sessions:
         try:
             data = await self._run_script()
             symbols = data.get("symbols")
-            offset = int(data.get("serverOffset") or 0)
+            # Two clock reads in the script: round off the jitter (7201 s would
+            # turn a 22:00 open into 21:59). Server offsets are whole quarters.
+            offset = round(int(data.get("serverOffset") or 0) / 900) * 900
             if not isinstance(symbols, dict):
                 raise ValueError("no symbols in the sessions file")
             hours = {}
