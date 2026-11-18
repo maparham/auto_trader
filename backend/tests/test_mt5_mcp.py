@@ -707,3 +707,27 @@ def test_other_select_errors_stay_plain_tool_errors():
     with pytest.raises(MCPToolError) as e:
         run(b._select("EURUSD"))
     assert not isinstance(e.value, UnknownEpic)
+
+
+def test_empty_or_reversed_window_never_reaches_the_terminal():
+    # The terminal refuses these ("invalid datetime range"); each refusal
+    # counted against the breaker and 503'd every other mt5-self call.
+    def refuse(_a):
+        raise AssertionError("get_chart_history must not be called")
+
+    b = _broker({"get_chart_history": refuse})
+    t = datetime(2026, 11, 18, 10, tzinfo=timezone.utc)
+    assert run(b.get_candles("SILVER", Resolution.MINUTE_15, t, t - timedelta(hours=1))) == []
+
+
+def test_pre_1970_start_is_clamped():
+    seen = []
+
+    def history(a):
+        seen.append(a["datetime_from"])
+        return {"history": []}
+
+    b = _broker({"get_chart_history": history})
+    run(b.get_candles("SILVER", Resolution.DAY, datetime(1960, 1, 1, tzinfo=timezone.utc),
+                      datetime(1980, 1, 1, tzinfo=timezone.utc)))
+    assert seen and all(s >= "1970-01-02" for s in seen)

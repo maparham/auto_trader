@@ -126,6 +126,10 @@ _CATCHUP = timedelta(seconds=2 * _POLL_BACKOFF)
 # (DONE, PLACED, DONE_PARTIAL). Anything else with a retcode is a rejection.
 _RETCODE_OK = {10008, 10009, 10010}
 
+# The earliest time get_chart_history accepts (server time, so one day of
+# margin for any offset).
+_EPOCH_FLOOR = datetime(1970, 1, 2, tzinfo=timezone.utc)
+
 # Readable text for the refusals a user is likely to meet, used when the
 # terminal sends a bare retcode with no comment.
 _RETCODE_TEXT = {
@@ -340,6 +344,7 @@ class MT5MCPBroker(MarketDataBroker):
         self._poll_task: asyncio.Task | None = None
         self._last_tick: dict[str, datetime] = {}
         self.sessions = MT5Sessions(self.call)
+        self._empty_range_logged: set[tuple[str, str]] = set()
 
     async def aclose(self) -> None:
         for task in (self._label_task, self._poll_task):
@@ -488,6 +493,18 @@ class MT5MCPBroker(MarketDataBroker):
 
     async def _history_once(self, epic: str, period: str, start: datetime, end: datetime,
                             limit: int) -> tuple[list[Candle], datetime | None]:
+        # The terminal refuses ("invalid datetime range") an empty or reversed
+        # window and any time before 1970. Each refusal counted as a broker
+        # failure, so one bad caller in a loop kept the circuit breaker open
+        # and every other mt5-self call (details, quotes) got 503. An empty
+        # window has no bars, so answer it here without asking.
+        start = max(start, _EPOCH_FLOOR)
+        if start >= end:
+            if (epic, period) not in self._empty_range_logged:
+                self._empty_range_logged.add((epic, period))
+                log.warning("%s: empty history window for %s %s (%s to %s), answered empty",
+                            BROKER_ID, epic, period, start.isoformat(), end.isoformat())
+            return [], None
         available_from: datetime | None = None
         out: dict[datetime, Candle] = {}
         to = end
