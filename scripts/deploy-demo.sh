@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # Deploy the authenticated hosted app (https://chartkar.app) in one go:
-#   backend  -> Lightsail box (systemd auto-trader-demo, uvicorn on 127.0.0.1:8010,
-#               reached via the aws-vps Cloudflare Tunnel as api.chartkar.app)
+#   backend  -> Iran VPS 95.38.187.63 (systemd auto-trader-demo as user chartkar,
+#               uvicorn on 127.0.0.1:8010, Caddy serves api.chartkar.app with a
+#               DNS-only A record). Moved off the AWS Lightsail box 2026-11-18
+#               (CPU credits exhausted). The box cannot reach Capital/Telegram
+#               directly (Capital geo-blocks Iran), so demo.env sets HTTP(S)_PROXY
+#               to Xray on 127.0.0.1:18483, which exits on the claude-gateway
+#               Lightsail box through a domain allowlist in ITS Xray config. A new
+#               external host the backend calls must be added to that allowlist.
 #   frontend -> Cloudflare Pages project auto-trader-demo (chartkar.app,
 #               www.chartkar.app + auto-trader-demo.pages.dev; the old
 #               trader.rahkar.pro 301s to chartkar.app via a Cloudflare
@@ -55,7 +61,7 @@
 
 set -euo pipefail
 
-HOST="ec2-user@3.139.146.5"
+HOST="root@95.38.187.63"
 SSH_KEY="$HOME/.ssh/id_ed25519"
 SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes)
 PAGES_PROJECT="auto-trader-demo"
@@ -147,6 +153,7 @@ if [ "$DO_BACKEND" = 1 ]; then
   echo "==> backend: rsync -> $HOST:/opt/auto-trader/backend"
   rsync -az --delete \
     --exclude '__pycache__' --exclude '*.db' --exclude '.pytest_cache' \
+    --chown=chartkar:chartkar \
     -e "ssh -i $SSH_KEY -o BatchMode=yes" \
     "$WT/backend/" "$HOST:/opt/auto-trader/backend/"
 
@@ -229,6 +236,11 @@ if [ "$DO_BACKEND" = 1 ]; then
   # for why (2026-10-20 incident: a dying in-API Playwright driver froze the
   # whole API). Install or update the unit before the API restart below, and
   # migrate off the old CDP-split sidecar unit it replaces.
+  # Skipped while the box runs with SNAPSHOT_DISABLED (the Iran box has no
+  # Chromium installed, and alert photos fall back to matplotlib).
+  if "${SSH[@]}" "$HOST" 'sudo grep -Eq "^SNAPSHOT_DISABLED=.+" /etc/auto-trader/demo.env'; then
+  echo "==> backend: snapshot renderer skipped (SNAPSHOT_DISABLED on the box)"
+  else
   echo "==> backend: snapshot renderer unit"
   "${SSH[@]}" "$HOST" 'cat > /tmp/chartkar-snapshot-renderer.service' \
     < "$WT/deploy/demo/chartkar-snapshot-renderer.service"
@@ -258,6 +270,7 @@ if [ "$DO_BACKEND" = 1 ]; then
     echo "snapshot renderer failed to come up; see journalctl -u chartkar-snapshot-renderer" >&2
     exit 1
   '
+  fi
 
   # Liveness watchdog for auto-trader-demo itself: Restart=always only
   # catches the process exiting, not an internal hang (2026-10-20, the
@@ -281,8 +294,8 @@ if [ "$DO_BACKEND" = 1 ]; then
   echo "==> backend: pip install (agent-ui-bridge@${bridge_rev:0:7}) + restart auto-trader-demo"
   "${SSH[@]}" "$HOST" "
     set -e
-    /opt/auto-trader/venv/bin/pip install -q --no-cache-dir 'agent-ui-bridge @ git+https://github.com/maparham/agent-ui-bridge@$bridge_rev#subdirectory=python'
-    /opt/auto-trader/venv/bin/pip install -q --no-cache-dir /opt/auto-trader/backend
+    sudo -u chartkar /opt/auto-trader/venv/bin/pip install -q --no-cache-dir 'agent-ui-bridge @ https://github.com/maparham/agent-ui-bridge/archive/$bridge_rev.tar.gz#subdirectory=python'
+    sudo -u chartkar /opt/auto-trader/venv/bin/pip install -q --no-cache-dir /opt/auto-trader/backend
     sudo systemctl restart auto-trader-demo
     # A restart takes ~35s on the box (old process drains ~10s, imports ~20s),
     # so give it 90s rather than failing the deploy on a healthy start.

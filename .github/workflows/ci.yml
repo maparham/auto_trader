@@ -126,7 +126,7 @@ jobs:
       # deploy-demo.sh builds in a worktree that symlinks these node_modules.
       - run: npm ci
         working-directory: frontend
-      - name: SSH key for the Lightsail box
+      - name: SSH key for the API box (Iran VPS)
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
@@ -134,7 +134,7 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           # Pinned host key, never ssh-keyscan at run time.
-          echo '3.139.146.5 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBrrJqP/X1mJVNwNK+ZUjsQgXUb0GkyMl6cNkk1I5EA9' >> ~/.ssh/known_hosts
+          echo '95.38.187.63 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOv88pbcyciWB1SJ7cYCBHa/n+uJVeYXaVS8bff4OFQl' >> ~/.ssh/known_hosts
       # A backend restart drops every live WebSocket, so skip it when nothing
       # the box runs changed since the sha it last deployed (not the push's
       # `before`: a queued deploy can be superseded, and its changes with it).
@@ -142,7 +142,7 @@ jobs:
       - name: Pick deploy scope
         id: scope
         run: |
-          deployed=$(ssh -o BatchMode=yes ec2-user@3.139.146.5 'cat /opt/auto-trader/.deployed-backend-sha' 2>/dev/null || true)
+          deployed=$(ssh -o BatchMode=yes root@95.38.187.63 'cat /opt/auto-trader/.deployed-backend-sha' 2>/dev/null || true)
           if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] \
              && [ -n "$deployed" ] && git cat-file -e "$deployed^{commit}" 2>/dev/null \
              && git diff --quiet "$deployed" HEAD -- backend scripts/deploy-demo.sh deploy/demo; then
