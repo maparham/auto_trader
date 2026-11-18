@@ -355,6 +355,45 @@ async def clear_triggered(request: Request) -> None:
     await ALERT_STORE.clear_triggered(user)
 
 
+@router.post("/api/alerts/{alert_id}/rearm")
+async def rearm_alert(request: Request, alert_id: str, origin: str = Query("")) -> dict[str, Any]:
+    """Re-create a fired `once` alert from its newest History entry, same id
+    and settings, through the checks create runs (the chart's gray bell)."""
+    user = current_user(request)
+    row = await ALERT_STORE.latest_triggered_alert(user, alert_id)
+    if row is None:
+        raise HTTPException(404, "not_in_history")
+    kind = row.get("kind", "price_level")
+    params = row.get("params")
+    if kind not in ("price_level", "indicator", "line") or not isinstance(params, dict) \
+            or params.get("trigger") != "once":
+        raise HTTPException(422, "not_rearmable")
+    expires_at = row.get("expires_at")
+    if expires_at is not None and expires_at <= int(time.time() * 1000):
+        raise HTTPException(422, "expired: the alert's expiry has passed")
+    if kind == "indicator":
+        try:
+            params = upgrade_params(params)
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(422, "cannot_upgrade") from None
+    broker, epic = row["broker"], row["epic"]
+    _validate_params(kind, params, broker)
+    await _check_duplicate(user, broker, epic, kind, params)
+    if kind == "line":
+        await _check_line_ref(broker, epic, params)
+    now = int(time.time() * 1000)
+    new_row = {**row, "id": alert_id, "kind": kind, "params": params, "active": 1,
+               "created_at": now, "updated_at": now}
+    for k in ("status", "label", "current"):
+        new_row.pop(k, None)
+    try:
+        saved = await ALERT_STORE.create(user, new_row)
+    except ValueError:
+        raise HTTPException(409, f"alert id already exists: {alert_id}") from None
+    await _notify(request, saved, saved["id"], broker, epic, origin, kind)
+    return _decorate(saved)
+
+
 @router.post("/api/alerts/telegram/link")
 async def telegram_link(request: Request) -> dict[str, Any]:
     if not TELEGRAM.enabled:

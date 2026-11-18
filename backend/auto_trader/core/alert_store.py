@@ -306,6 +306,29 @@ class AlertStore:
         finally:
             conn.close()
 
+    async def latest_triggered_alert(self, user_id: str, alert_id: str) -> dict | None:
+        """The fired row (`alert_json`, parsed) of the user's newest firing of
+        `alert_id`, or None when History has none (or it predates alert_json)."""
+        return await asyncio.to_thread(self._latest_triggered_alert_sync, user_id, alert_id)
+
+    def _latest_triggered_alert_sync(self, user_id: str, alert_id: str) -> dict | None:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT alert_json FROM triggered WHERE user_id = ? AND alert_id = ? "
+                "ORDER BY time DESC, rowid DESC LIMIT 1",
+                (user_id, alert_id),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None or not row[0]:
+            return None
+        try:
+            parsed = json.loads(row[0])
+        except (TypeError, ValueError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
     async def get_triggered_row(self, rowid: int) -> dict | None:
         """One triggered entry by rowid — includes `user_id` and `alert_json`
         (unlike `list_triggered`, whose rows go to the frontend). Used by the

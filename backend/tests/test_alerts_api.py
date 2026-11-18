@@ -808,3 +808,68 @@ def test_telegram_hooks_route_account_rows_to_the_monitor(monkeypatch, clerk, ac
         ("monitor", "alice", "al-hook", True),
         ("engine", "alice", "al-price", True),
     ]
+
+
+# ---- re-arm a fired once alert from history ----
+
+def _fire_from_history(user: str, **overrides) -> dict:
+    """Create an alert, delete it as the engine does on a once fire, and log
+    the firing with its row, as `AlertEngine._fire` does."""
+    import asyncio
+    import json
+
+    from auto_trader.api.routers import alerts as alerts_router
+    r = client.post("/api/alerts", json=_body(**overrides), headers=_auth(user))
+    assert r.status_code == 200, r.text
+    row = r.json()
+    assert client.delete(f"/api/alerts/{row['id']}", headers=_auth(user)).status_code == 204
+    asyncio.run(alerts_router.ALERT_STORE.add_triggered(user, {
+        "time": 5, "alert_id": row["id"], "broker": row["broker"], "epic": row["epic"],
+        "kind": row["kind"], "price": 100.0, "level": 100.0, "condition": "crossing",
+        "message": "", "precision": 2, "alert_json": json.dumps(row),
+    }))
+    return row
+
+
+def test_rearm_recreates_with_same_id(clerk):
+    fired = _fire_from_history("alice")
+    r = client.post("/api/alerts/al-1/rearm", headers=_auth("alice"))
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == "al-1"
+    rows = {a["id"]: a for a in client.get("/api/alerts", headers=_auth("alice")).json()["alerts"]}
+    assert rows["al-1"]["params"] == fired["params"]
+
+
+def test_rearm_live_id_409(clerk):
+    _fire_from_history("alice")
+    assert client.post("/api/alerts/al-1/rearm", headers=_auth("alice")).status_code == 200
+    assert client.post("/api/alerts/al-1/rearm", headers=_auth("alice")).status_code == 409
+
+
+def test_rearm_duplicate_signature_409(clerk):
+    _fire_from_history("alice")
+    assert client.post("/api/alerts", json=_body(id="al-2"), headers=_auth("alice")).status_code == 200
+    assert client.post("/api/alerts/al-1/rearm", headers=_auth("alice")).status_code == 409
+
+
+def test_rearm_unknown_404(clerk):
+    assert client.post("/api/alerts/al-9/rearm", headers=_auth("alice")).status_code == 404
+
+
+def test_rearm_expired_422(clerk):
+    import time as _time
+    _fire_from_history("alice", expires_at=int(_time.time() * 1000) + 2000)
+    _time.sleep(2.1)
+    r = client.post("/api/alerts/al-1/rearm", headers=_auth("alice"))
+    assert r.status_code == 422 and "expired" in r.text
+
+
+def test_rearm_every_trigger_422(clerk):
+    _fire_from_history("alice", params={"level": 100.0, "condition": "crossing", "trigger": "every"})
+    r = client.post("/api/alerts/al-1/rearm", headers=_auth("alice"))
+    assert r.status_code == 422 and "not_rearmable" in r.text
+
+
+def test_rearm_other_user_404(clerk):
+    _fire_from_history("alice")
+    assert client.post("/api/alerts/al-1/rearm", headers=_auth("bob")).status_code == 404
