@@ -41,7 +41,10 @@ import { insetBandBox, type InsetBandBox } from "../lib/indicators/inset";
 import { slopeMaLines } from "../lib/indicators/slope";
 import { getTrendlineTags } from "../lib/indicators/trendlines";
 import { getIndicatorById, getIndicatorsByPane } from "../lib/indicators";
-import { loadIndicatorAlerts, loadLineAlerts } from "../lib/alertsApi";
+import {
+  firedIndicatorAlerts, firedLineAlerts, firedPriceAlerts, loadIndicatorAlerts, loadLineAlerts,
+  type IndicatorAlert, type LineAlert,
+} from "../lib/alertsApi";
 import { alertTimeframeOf, chartValueOf } from "../lib/indicatorAlertInstance";
 import type { AlertCurveBellTag } from "./AlertCurveBells";
 import { bellPastCurveEnd, gapAlongLine, lineEndX, stepPastTags } from "./lineAlertBellPlace";
@@ -90,6 +93,7 @@ type AlertTag = {
   hovered: boolean;
   active: boolean;
   selected: boolean;
+  firedAt?: number;
 };
 
 // The trade-pill element type (mirrors ChartCore's setTradePills state element).
@@ -797,6 +801,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       hovered: boolean;
       active: boolean;
       selected: boolean;
+      firedAt?: number;
     }> = [];
     // Eye menu "Hide alert lines": the DOM axis tags drop with the lines.
     for (const a of overlays.getAlertsHidden() ? [] : overlays.getAlerts()) {
@@ -812,6 +817,15 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
           hovered: a.hovered,
           active: a.active,
           selected: a.selected,
+        });
+    }
+    // Fired "once" price alerts still in History: a gray axis tag, no line.
+    for (const a of overlays.getAlertsHidden() ? [] : firedPriceAlerts(epicRef.current, brokerIdRef.current)) {
+      const y = yOf(a.level);
+      if (y != null)
+        tags.push({
+          id: a.id, y, level: a.level, condition: a.condition, trigger: a.trigger,
+          expiresAt: a.expiresAt ?? null, hovered: false, active: false, selected: false, firedAt: a.firedAt,
         });
     }
     // When a click-SELECTED alert sits ON the live-price row, the live price line and
@@ -844,7 +858,11 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     const lineBells: AlertCurveBellTag[] = [];
     const candleRight = chart.getSize("candle_pane", "main")?.width ?? Infinity;
     const candleTags = getTrendlineTags(chart, "candle_pane");
-    for (const a of overlays.getAlertsHidden() ? [] : loadIndicatorAlerts(epicRef.current, brokerIdRef.current)) {
+    // Live first, then fired "once" alerts still in History (gray bells).
+    const indBellAlerts: Array<IndicatorAlert & { firedAt?: number }> = overlays.getAlertsHidden()
+      ? []
+      : [...loadIndicatorAlerts(epicRef.current, brokerIdRef.current), ...firedIndicatorAlerts(epicRef.current, brokerIdRef.current)];
+    for (const a of indBellAlerts) {
       const p = a.params;
       if (p.target !== "price" || !p.link || p.link.scope !== scope) continue;
       const ind = getIndicatorById(chart, p.link.instanceId);
@@ -871,7 +889,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       // Culled at the price axis, as a trendline alert's bell is.
       if (x + LINE_BELL_SIZE / 2 > candleRight) continue;
       if (Number.isFinite(x) && Number.isFinite(y))
-        lineBells.push({ id: a.id, x: Math.round(x), y: Math.round(y), kind: "indicator" });
+        lineBells.push({ id: a.id, x: Math.round(x), y: Math.round(y), kind: "indicator", ...(a.firedAt != null ? { firedAt: a.firedAt } : {}) });
     }
 
     // Line alerts (a frozen trendline): a bell on the alert's own line just
@@ -888,7 +906,12 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       // refreshes rayPoints() for a pinned stroke moving with new bars and
       // history.
       controller.indicatorAlerts.refreshRays();
-      for (const a of loadLineAlerts(epicRef.current, brokerIdRef.current)) {
+      // Fired "once" line alerts drew a gray ray too (refreshRays): same bell, gray.
+      const lineBellAlerts: Array<LineAlert & { firedAt?: number }> = [
+        ...loadLineAlerts(epicRef.current, brokerIdRef.current),
+        ...firedLineAlerts(epicRef.current, brokerIdRef.current),
+      ];
+      for (const a of lineBellAlerts) {
         // Wherever refreshRays drew the alert's line (any cell of this
         // symbol, on its timeframe or under a pin to it), the bell follows.
         const pts = controller.indicatorAlerts.rayPoints(a.id);
@@ -922,7 +945,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // Culled rather than clamped once it would sit on the price axis (the
         // last bar flush against it): a bell pulled left would leave the line.
         if (x + LINE_BELL_SIZE / 2 > plotRight) continue;
-        if (Number.isFinite(y)) lineBells.push({ id: a.id, x: Math.round(x), y: Math.round(y), kind: "line" });
+        if (Number.isFinite(y)) lineBells.push({ id: a.id, x: Math.round(x), y: Math.round(y), kind: "line", ...(a.firedAt != null ? { firedAt: a.firedAt } : {}) });
       }
     }
     // Converging lines and curves put bells on top of each other: step each one down

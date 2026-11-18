@@ -3422,6 +3422,12 @@
   filter: drop-shadow(0 0 1px var(--bg)) drop-shadow(0 0 1px var(--bg));
 }
 .tl-alert-bell svg { display: block; }
+/* A fired "once" alert still in History: gray, and only its bell takes the
+   mouse (double click re-arms, right click Re-arm / Hide), so the tag never
+   blocks a drag on the price axis. */
+.alert-tag.fired { border-color: var(--text-dim); color: var(--text-dim); opacity: .7; }
+.alert-tag.fired .at-bell { color: var(--text-dim); pointer-events: auto; cursor: pointer; }
+.tl-alert-bell.fired { color: var(--text-dim); opacity: .7; }
 .tl-alert-bell:hover { z-index: 51; color: #d4880f; }
 
 /* TV-style descriptive pill on the alert line (hover/selected). Unlike the

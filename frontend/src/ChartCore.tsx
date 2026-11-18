@@ -75,7 +75,7 @@ import {
 import BacktestAggMarkers, { type BacktestAggMarkersHandle } from "./BacktestAggMarkers";
 import BacktestTradeDashes, { type BacktestTradeDashesHandle } from "./BacktestTradeDashes";
 import { requestAlertEdit } from "./lib/alertEdit";
-import { deleteIndicatorAlert } from "./lib/alertsApi";
+import { deleteIndicatorAlert, hideFiredAlert, rearmAlert } from "./lib/alertsApi";
 import {
   Signal,
   alertEditRequest,
@@ -1224,6 +1224,7 @@ export default function ChartCore({
       hovered: boolean;
       active: boolean;
       selected: boolean;
+      firedAt?: number;
     }>
   >([]);
   // The ACTIVE line's pill for the selected trade (at most one): the entry, SL, or TP
@@ -5346,13 +5347,19 @@ export default function ChartCore({
   }, [tabId, cellId]);
 
   const precision = effPrecision;
+  // A fired "once" alert's gray bell: re-create it from History, toast a refusal.
+  const rearmFired = (id: string) => {
+    void rearmAlert(id).then((err) => {
+      if (err) toast(`Re-arm failed: ${err}`);
+    });
+  };
   // Hovering an alert line swaps the crosshair for a drag cursor (TV-style).
   const alertHovered = alertTags.some((t) => t.hovered);
 
   // Pills currently on screen: the descriptive pill shows while the line is
   // hovered/selected (or the pill itself is hovered), and never over the y-axis.
   const visibleTags = alertTags.filter(
-    (t) => !onAxis && (t.active || pillHoverId === t.id),
+    (t) => t.firedAt == null && !onAxis && (t.active || pillHoverId === t.id),
   );
   // Drive the remaining-time chip: tick once a minute, but ONLY while a visible
   // pill actually carries an expiry (otherwise stay idle — no wasted re-renders).
@@ -6219,6 +6226,8 @@ export default function ChartCore({
             tags={alertTags}
             priceTag={priceTag}
             precision={precision}
+            onRearm={rearmFired}
+            onHide={hideFiredAlert}
           />
         )}
       </WithPriceTag>
@@ -6232,6 +6241,8 @@ export default function ChartCore({
             onConfirm: () => deleteIndicatorAlert(id),
           })
         }
+        onRearm={rearmFired}
+        onHide={hideFiredAlert}
       />
 
       {/* TV-style descriptive pill on the line itself — shown while the line is

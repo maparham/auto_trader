@@ -122,3 +122,49 @@ describe("bellPastCurveEnd", () => {
     expect(out).toEqual({ x: 115 + 20 + 8 + 2, y: 50 });
   });
 });
+
+describe("AlertCurveBells: fired bells", () => {
+  afterEach(cleanup);
+  const bell = { id: "al-f", x: 10, y: 10, kind: "line" as const, firedAt: Date.now() - 2 * 3600_000 };
+
+  it("a fired bell is gray and re-arms on double click, not edit", () => {
+    const onEdit = vi.fn();
+    const onRearm = vi.fn();
+    const { container } = render(
+      <AlertCurveBells bells={[bell]} onEdit={onEdit} onDelete={vi.fn()} onRearm={onRearm} onHide={vi.fn()} />,
+    );
+    const el = container.querySelector(".tl-alert-bell") as HTMLElement;
+    expect(el.classList.contains("fired")).toBe(true);
+    fireEvent.doubleClick(el);
+    expect(onRearm).toHaveBeenCalledWith("al-f");
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
+  it("Enter on a focused fired bell re-arms", () => {
+    const onRearm = vi.fn();
+    const { container } = render(
+      <AlertCurveBells bells={[bell]} onEdit={vi.fn()} onDelete={vi.fn()} onRearm={onRearm} onHide={vi.fn()} />,
+    );
+    fireEvent.click(container.querySelector(".tl-alert-bell")!, { detail: 0 });
+    expect(onRearm).toHaveBeenCalledWith("al-f");
+  });
+
+  it("right click offers Re-arm and Hide; Hide hides", () => {
+    const onHide = vi.fn();
+    const { container, getByText, queryByText } = render(
+      <AlertCurveBells bells={[bell]} onEdit={vi.fn()} onDelete={vi.fn()} onRearm={vi.fn()} onHide={onHide} />,
+    );
+    fireEvent.contextMenu(container.querySelector(".tl-alert-bell")!);
+    expect(getByText("Re-arm")).not.toBeNull();
+    expect(queryByText("Delete")).toBeNull();
+    fireEvent.click(getByText("Hide"));
+    expect(onHide).toHaveBeenCalledWith("al-f");
+  });
+
+  it("names a fired bell in its label", () => {
+    const { getByLabelText } = render(
+      <AlertCurveBells bells={[bell]} onEdit={vi.fn()} onDelete={vi.fn()} onRearm={vi.fn()} onHide={vi.fn()} />,
+    );
+    expect(getByLabelText("Trendline alert, fired 2h ago")).not.toBeNull();
+  });
+});

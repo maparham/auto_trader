@@ -11,6 +11,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Tooltip from "./components/Tooltip";
+import { ago } from "./lib/timeFormat";
 import type { ChartController } from "./lib/chartController";
 import type { ChartTab, AlertCondition } from "./lib/persist";
 import type { OverlayManager } from "./lib/overlays";
@@ -361,17 +362,6 @@ interface Props {
 
 // The panel always opens on History (the first tab).
 type Tab = "live" | "history";
-
-// Compact "2m ago" / "3h ago" / date for older — keeps rows scannable.
-function ago(ms: number, now: number): string {
-  const s = Math.max(0, Math.round((now - ms) / 1000));
-  if (s < 60) return `${s}s ago`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return new Date(ms).toLocaleDateString();
-}
 
 export default function AlertsSidebar({
   controller,
