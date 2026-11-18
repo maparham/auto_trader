@@ -278,6 +278,20 @@ Chromium; `SNAPSHOT_DISABLED=1` turns it off. Probe:
 `cd backend && python3 -m scripts.snapshot_probe --epic EPIC`.
 `SNAPSHOT_DISABLED` with any non-empty value disables the feature.
 
+### Fired alert bells
+
+A fired `once` alert deletes itself, but while its History entry exists the
+chart keeps a gray bell for it: an axis tag for `price_level`, a bell on the
+curve for `indicator`, a bell plus a faint gray dashed line for `line`
+(`firedPriceAlerts`/`firedIndicatorAlerts`/`firedLineAlerts` in
+`lib/alertsApi.ts`, built from the History rows' `alert` with the live row
+mappers; newest entry per id, never when the id is live again). Double click
+re-arms through `POST /api/alerts/{id}/rearm` (same id and settings, create's
+own checks, 422 `expired`/`not_rearmable`, 409 on a duplicate); right click
+offers Re-arm and Hide. Hide is per browser (`<PREFIX>.alerts.hiddenFired`,
+pruned to ids still in History). Spec:
+docs/superpowers/specs/2026-11-18-fired-alert-bells-design.md.
+
 ### Account alerts
 
 `kind: "account"` rows (`broker` = exec key such as `capital-live:live`,
