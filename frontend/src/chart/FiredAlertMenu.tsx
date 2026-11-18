@@ -1,7 +1,6 @@
 import { createPortal } from "react-dom";
 import ContextMenu from "../ContextMenu";
 import { MenuIcons } from "../lib/menuIcons";
-import { ago } from "../lib/timeFormat";
 
 interface Props {
   x: number;
@@ -30,7 +29,3 @@ export default function FiredAlertMenu({ x, y, onRearm, onHide, onClose }: Props
   );
 }
 
-/** "Fired 2h ago", for a gray bell's tooltip and label. */
-export function firedText(firedAt: number, now = Date.now()): string {
-  return `Fired ${ago(firedAt, now)}`;
-}

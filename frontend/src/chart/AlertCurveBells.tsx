@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import ContextMenu from "../ContextMenu";
 import Tooltip from "../components/Tooltip";
 import { BellIcon, MenuIcons } from "../lib/menuIcons";
-import FiredAlertMenu, { firedText } from "./FiredAlertMenu";
+import FiredAlertMenu from "./FiredAlertMenu";
+import { firedText } from "../lib/timeFormat";
 
 // An alert's bell on the curve it watches, just past the last bar, not on the
 // axis: a frozen-trendline (`line`) alert's dashed line, or the indicator line

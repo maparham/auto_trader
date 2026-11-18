@@ -269,3 +269,8 @@ export function ago(ms: number, now: number): string {
   if (h < 24) return `${h}h ago`;
   return new Date(ms).toLocaleDateString();
 }
+
+/** "Fired 2h ago", for a fired alert's gray bell. */
+export function firedText(firedAt: number, now = Date.now()): string {
+  return `Fired ${ago(firedAt, now)}`;
+}

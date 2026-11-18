@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Tooltip from "../components/Tooltip";
-import FiredAlertMenu, { firedText } from "./FiredAlertMenu";
+import FiredAlertMenu from "./FiredAlertMenu";
+import { firedText } from "../lib/timeFormat";
 import { BellIcon } from "../lib/menuIcons";
 import { fmtPrice } from "../lib/priceFormat";
 import type { AlertCondition, AlertTrigger } from "../lib/persist";

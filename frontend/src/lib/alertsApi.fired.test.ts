@@ -148,7 +148,7 @@ describe("rearmAlert", () => {
   });
 
   it("sends origin=CLIENT_ID and returns null on success", async () => {
-    const f = vi.fn((input: RequestInfo | URL) =>
+    const f = vi.fn((input: RequestInfo | URL, _init?: RequestInit) =>
       Promise.resolve(String(input).includes("/rearm")
         ? jsonResponse(row())
         : String(input).includes("triggered") ? jsonResponse({ entries: [], seen: 0 }) : jsonResponse({ alerts: [] })));
@@ -156,6 +156,6 @@ describe("rearmAlert", () => {
     expect(await rearmAlert("al-1")).toBeNull();
     const call = f.mock.calls.find((c) => String(c[0]).includes("/rearm"))!;
     expect(String(call[0])).toMatch(/\/api\/alerts\/al-1\/rearm\?origin=/);
-    expect((call[1] as RequestInit).method).toBe("POST");
+    expect(call[1]?.method).toBe("POST");
   });
 });
