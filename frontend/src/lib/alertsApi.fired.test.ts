@@ -12,6 +12,7 @@ import {
   firedIndicatorAlerts,
   firedLineAlerts,
   hideFiredAlert,
+  deleteStoredAlert,
   rearmAlert,
 } from "./alertsApi";
 import { PREFIX } from "./workspaceKeys";
@@ -106,13 +107,27 @@ describe("fired alerts from history", () => {
     await hydrate([entry(row())]);
     hideFiredAlert("al-1");
     expect(firedPriceAlerts("US100", B)).toEqual([]);
-    expect(JSON.parse(localStorage.getItem(HIDDEN_KEY)!)).toEqual(["al-1"]);
+    expect(Object.keys(JSON.parse(localStorage.getItem(HIDDEN_KEY)!))).toEqual(["al-1"]);
   });
 
   it("hidden set is pruned to ids still in history", async () => {
-    localStorage.setItem(HIDDEN_KEY, JSON.stringify(["gone", "al-1"]));
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify({ gone: 5, "al-1": 5 }));
     await hydrate([entry(row())]);
-    expect(JSON.parse(localStorage.getItem(HIDDEN_KEY)!)).toEqual(["al-1"]);
+    expect(Object.keys(JSON.parse(localStorage.getItem(HIDDEN_KEY)!))).toEqual(["al-1"]);
+  });
+
+  it("a fire after hide shows again", async () => {
+    await hydrate([entry(row(), 10)]);
+    hideFiredAlert("al-1");
+    await hydrate([entry(row(), Date.now() + 60_000), entry(row(), 10)]);
+    expect(firedPriceAlerts("US100", B)).toHaveLength(1);
+  });
+
+  it("deleting a re-armed alert does not bring back its gray bell", async () => {
+    await hydrate([entry(row(), 10)], [row()]);
+    expect(firedPriceAlerts("US100", B)).toEqual([]);
+    deleteStoredAlert("US100", "al-1", B);
+    expect(firedPriceAlerts("US100", B)).toEqual([]);
   });
 
   it("line and indicator map through their row mappers", async () => {
@@ -129,7 +144,7 @@ describe("fired alerts from history", () => {
 describe("rearmAlert", () => {
   it("returns server detail on 422", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(jsonResponse({ detail: "expired: gone" }, false, 422))));
-    expect(await rearmAlert("al-1")).toBe("expired: gone");
+    expect(await rearmAlert("al-1")).toBe("its expiry has passed");
   });
 
   it("sends origin=CLIENT_ID and returns null on success", async () => {

@@ -289,7 +289,9 @@ mappers; newest entry per id, never when the id is live again). Double click
 re-arms through `POST /api/alerts/{id}/rearm` (same id and settings, create's
 own checks, 422 `expired`/`not_rearmable`, 409 on a duplicate); right click
 offers Re-arm and Hide. Hide is per browser (`<PREFIX>.alerts.hiddenFired`,
-pruned to ids still in History). Spec:
+`{id: hiddenAt}`, pruned to ids still in History): it covers entries up to
+that time, so a later fire shows again. Deleting an alert hides it the same
+way, so a re-armed alert the user deletes does not come back gray. Spec:
 docs/superpowers/specs/2026-11-18-fired-alert-bells-design.md.
 
 ### Account alerts

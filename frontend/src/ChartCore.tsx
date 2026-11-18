@@ -5350,7 +5350,7 @@ export default function ChartCore({
   // A fired "once" alert's gray bell: re-create it from History, toast a refusal.
   const rearmFired = (id: string) => {
     void rearmAlert(id).then((err) => {
-      if (err) toast(`Re-arm failed: ${err}`);
+      if (err) toast(`Could not re-arm the alert: ${err}`);
     });
   };
   // Hovering an alert line swaps the crosshair for a drag cursor (TV-style).

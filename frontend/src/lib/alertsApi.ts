@@ -709,29 +709,54 @@ export function loadTriggered(): TriggeredAlert[] {
 const HIDDEN_FIRED_KEY = `${PREFIX}.alerts.hiddenFired`;
 const FIRED_KINDS = new Set(["price_level", "indicator", "line"]);
 
-function readHiddenFired(): string[] {
+// Hidden bells as { alertId: hiddenAt }: an entry at or before hiddenAt stays
+// hidden, a later fire shows again. Deleting an alert hides it the same way, so
+// a re-armed alert the user deletes does not come back gray. Kept in memory;
+// the paint loop reads it on every frame.
+let hiddenFiredCache: Record<string, number> | null = null;
+
+function readHiddenFired(): Record<string, number> {
+  if (hiddenFiredCache) return hiddenFiredCache;
+  let v: unknown = {};
   try {
-    const v = JSON.parse(localStorage.getItem(HIDDEN_FIRED_KEY) ?? "[]");
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
+    v = JSON.parse(localStorage.getItem(HIDDEN_FIRED_KEY) ?? "{}");
+  } catch { /* corrupt: start empty */ }
+  const out: Record<string, number> = {};
+  if (v && typeof v === "object" && !Array.isArray(v))
+    for (const [id, t] of Object.entries(v)) if (typeof t === "number") out[id] = t;
+  hiddenFiredCache = out;
+  return out;
 }
 
-function writeHiddenFired(ids: string[]): void {
+function writeHiddenFired(next: Record<string, number>): void {
+  hiddenFiredCache = next;
   try {
-    if (ids.length === 0) localStorage.removeItem(HIDDEN_FIRED_KEY);
-    else localStorage.setItem(HIDDEN_FIRED_KEY, JSON.stringify(ids));
+    if (Object.keys(next).length === 0) localStorage.removeItem(HIDDEN_FIRED_KEY);
+    else localStorage.setItem(HIDDEN_FIRED_KEY, JSON.stringify(next));
   } catch { /* storage full or blocked: hiding is cosmetic */ }
 }
 
 // Hidden ids whose History entries are gone can never show again: drop them.
 function pruneHiddenFired(): void {
+  hiddenFiredCache = null; // another tab may have written it
   const hidden = readHiddenFired();
-  if (hidden.length === 0) return;
+  const ids = Object.keys(hidden);
+  if (ids.length === 0) return;
   const inHistory = new Set(triggeredCache.map((t) => t.alertId));
-  const kept = hidden.filter((id) => inHistory.has(id));
-  if (kept.length !== hidden.length) writeHiddenFired(kept);
+  if (ids.every((id) => inHistory.has(id))) return;
+  writeHiddenFired(Object.fromEntries(ids.filter((id) => inHistory.has(id)).map((id) => [id, hidden[id]])));
+}
+
+function markHiddenFired(id: string): void {
+  writeHiddenFired({ ...readHiddenFired(), [id]: Date.now() });
+}
+
+function unhideFired(id: string): void {
+  const hidden = readHiddenFired();
+  if (!(id in hidden)) return;
+  const next = { ...hidden };
+  delete next[id];
+  writeHiddenFired(next);
 }
 
 function isLiveId(id: string): boolean {
@@ -744,7 +769,7 @@ function isLiveId(id: string): boolean {
 // The newest History row per alert id of `kind` on (broker, epic) that is a
 // fired "once" alert, not live again and not hidden. The cache is newest first.
 function firedRows(kind: string, epic: string, broker: string): Array<{ row: AlertRow; time: number }> {
-  const hidden = new Set(readHiddenFired());
+  const hidden = readHiddenFired();
   const seen = new Set<string>();
   const out: Array<{ row: AlertRow; time: number }> = [];
   for (const t of triggeredCache) {
@@ -755,7 +780,7 @@ function firedRows(kind: string, epic: string, broker: string): Array<{ row: Ale
     if (!FIRED_KINDS.has(k) || k !== kind) continue;
     if (a.broker !== broker || a.epic !== epic) continue;
     if ((a.params as { trigger?: string } | undefined)?.trigger !== "once") continue;
-    if (hidden.has(a.id) || isLiveId(a.id)) continue;
+    if ((hidden[a.id] ?? -Infinity) >= t.time || isLiveId(a.id)) continue;
     out.push({ row: a, time: t.time });
   }
   return out;
@@ -775,10 +800,17 @@ export function firedLineAlerts(epic: string, broker: string = getPersistBroker(
 
 /** Hide a fired alert's gray bell in this browser (its History entry stays). */
 export function hideFiredAlert(id: string): void {
-  const hidden = readHiddenFired();
-  if (!hidden.includes(id)) writeHiddenFired([...hidden, id]);
+  markHiddenFired(id);
   bumpAlerts();
 }
+
+// The re-arm route's refusal codes, in words.
+const REARM_REASONS: Record<string, string> = {
+  not_in_history: "it is no longer in History",
+  not_rearmable: "only a once alert can be re-armed",
+  expired: "its expiry has passed",
+  cannot_upgrade: "its indicator settings are out of date",
+};
 
 /** Re-create a fired once alert from History (same id and settings). Null on
  * success, else the reason to show. */
@@ -792,11 +824,14 @@ export async function rearmAlert(id: string): Promise<string | null> {
   if (!res.ok) {
     try {
       const detail = ((await res.json()) as { detail?: unknown }).detail;
-      if (typeof detail === "string" && detail) return detail;
+      if (typeof detail === "string" && detail) {
+        const code = detail.split(":")[0].trim();
+        return REARM_REASONS[code] ?? detail;
+      }
     } catch { /* non-JSON error body */ }
     return `Re-arm failed (${res.status})`;
   }
-  writeHiddenFired(readHiddenFired().filter((h) => h !== id));
+  unhideFired(id);
   await resyncAlerts();
   return null;
 }
@@ -1003,6 +1038,7 @@ export function deleteStoredAlert(
   const raw = loadAlerts(epic, broker);
   const survivors = raw.filter((a) => a.id !== id);
   if (survivors.length === raw.length) return;
+  markHiddenFired(id); // a deleted alert never comes back as a gray bell
   setAlerts(epic, broker, survivors);
   bumpAlerts();
 
@@ -1223,6 +1259,7 @@ export async function patchLineAlert(
 /** Deletes an indicator or a line alert (both live in the server cache). */
 export function deleteIndicatorAlert(id: string): void {
   if (!indicatorCache.delete(id)) return;
+  markHiddenFired(id); // a deleted alert never comes back as a gray bell
   bumpAlerts();
   indWriteStart();
   void apiFetch(url(`/api/alerts/${encodeURIComponent(id)}`, true), { method: "DELETE" })
