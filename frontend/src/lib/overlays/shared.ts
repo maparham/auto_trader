@@ -158,7 +158,9 @@ export function sameAlertCfg(cfg: AlertConfig, a: SavedAlert): boolean {
 
 
 
-const ALERT_LINE_COLOR = "#f5a623";
+export const ALERT_LINE_COLOR = "#f5a623";
+// A fired "once" alert still shown from History (its gray bell): --text-dim.
+export const ALERT_LINE_FIRED_COLOR = "#8a93a0";
 export const ALERT_LINE_SIZE = 1;
 export const ALERT_LINE_SELECTED_SIZE = 2; // slightly thicker while click-selected
 // Dashed alert line (distinct from the dotted last-price line). We render our

@@ -2,13 +2,16 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("klinecharts", () => ({ registerOverlay: () => {}, registerIndicator: () => {}, registerYAxis: () => {}, getSupportedIndicators: () => [] }));
 const alerts: unknown[] = [];
 const lineAlerts: unknown[] = [];
+const firedLines: unknown[] = [];
 vi.mock("../alertsApi", async (orig) => ({
   ...(await orig<typeof import("../alertsApi")>()),
   loadIndicatorAlerts: () => alerts,
   loadLineAlerts: () => lineAlerts,
+  firedLineAlerts: () => firedLines,
   patchIndicatorAlert: vi.fn(() => Promise.resolve(true)),
 }));
 import { alertStepPoints, IndicatorAlertLines, loadedLinePoints } from "./indicatorAlerts";
+import { ALERT_LINE_COLOR, ALERT_LINE_FIRED_COLOR } from "./shared";
 import { patchIndicatorAlert } from "../alertsApi";
 import { ChartController } from "../chartController";
 
@@ -356,5 +359,55 @@ describe("alertStepPoints", () => {
       { timestamp: T0 + 30 * H4, value: 110 },
       { timestamp: T0 + 31 * H4, value: 110 },
     ]);
+  });
+});
+
+describe("IndicatorAlertLines: fired line alerts", () => {
+  const color = (o: unknown) => (o as { styles: { line: { color: string } } }).styles.line.color;
+
+  it("fired line alert draws a muted ray", () => {
+    alerts.splice(0, alerts.length);
+    lineAlerts.splice(0, lineAlerts.length);
+    firedLines.splice(0, firedLines.length, { ...lineAlert("s1"), firedAt: 5 });
+    const { chart, created } = fakeChart();
+    const lines = new IndicatorAlertLines();
+    lines.attach(chart as never, "s1", "b", "US100", "HOUR");
+    lines.reconcile();
+    expect(created.map((o) => o.id)).toEqual(["lnalert:al-l"]);
+    expect(color(created[0])).toBe(ALERT_LINE_FIRED_COLOR);
+    expect(lines.rayFired("al-l")).toBe(true);
+    expect(lines.rayPoints("al-l")).not.toBeNull();
+    firedLines.splice(0, firedLines.length);
+  });
+
+  it("fired to live restyles", () => {
+    alerts.splice(0, alerts.length);
+    lineAlerts.splice(0, lineAlerts.length);
+    firedLines.splice(0, firedLines.length, { ...lineAlert("s1"), firedAt: 5 });
+    const { chart, created } = fakeChart();
+    const lines = new IndicatorAlertLines();
+    lines.attach(chart as never, "s1", "b", "US100", "HOUR");
+    lines.reconcile();
+    firedLines.splice(0, firedLines.length);
+    lineAlerts.splice(0, lineAlerts.length, lineAlert("s1"));
+    lines.reconcile();
+    expect(created).toHaveLength(1);
+    const restyle = chart.overrideOverlay.mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((o) => o.id === "lnalert:al-l" && o.styles);
+    expect(restyle && color(restyle)).toBe(ALERT_LINE_COLOR);
+    expect(lines.rayFired("al-l")).toBe(false);
+    lineAlerts.splice(0, lineAlerts.length);
+  });
+
+  it("hidden alert lines hide fired rays too", () => {
+    alerts.splice(0, alerts.length);
+    lineAlerts.splice(0, lineAlerts.length);
+    firedLines.splice(0, firedLines.length, { ...lineAlert("s1"), firedAt: 5 });
+    const { chart, created } = fakeChart();
+    const lines = new IndicatorAlertLines(() => true);
+    lines.attach(chart as never, "s1", "b", "US100", "HOUR");
+    lines.reconcile();
+    expect(created[0]).toMatchObject({ visible: false });
+    firedLines.splice(0, firedLines.length);
   });
 });

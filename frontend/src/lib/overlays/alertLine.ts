@@ -2,14 +2,18 @@
 // indicator value alerts (IndicatorAlertLines): same overlay template, same
 // dashed amber style, same selected weight.
 import type { Chart } from "klinecharts";
-import { ALERT_LINE_STYLE, ALERT_LINE_SELECTED_SIZE, ALERT_LINE_SIZE } from "./shared";
+import { ALERT_LINE_STYLE, ALERT_LINE_SELECTED_SIZE, ALERT_LINE_SIZE, ALERT_LINE_FIRED_COLOR } from "./shared";
 
 export const ALERT_OVERLAY = "alertPriceLine";
 
-export function alertLineStyles(selected: boolean) {
+export function alertLineStyles(selected: boolean, fired = false) {
   return {
     ...ALERT_LINE_STYLE,
-    line: { ...ALERT_LINE_STYLE.line, size: selected ? ALERT_LINE_SELECTED_SIZE : ALERT_LINE_SIZE },
+    line: {
+      ...ALERT_LINE_STYLE.line,
+      size: selected ? ALERT_LINE_SELECTED_SIZE : ALERT_LINE_SIZE,
+      ...(fired ? { color: ALERT_LINE_FIRED_COLOR } : {}),
+    },
   };
 }
 

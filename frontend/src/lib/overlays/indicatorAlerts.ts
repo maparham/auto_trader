@@ -15,7 +15,7 @@
 // AlertCurveBells) marks it.
 import type { Chart, KLineData } from "klinecharts";
 import { alertTimeframeOf } from "../indicatorAlertInstance";
-import { loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert, type LineAlertParams } from "../alertsApi";
+import { firedLineAlerts, loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert, type LineAlertParams } from "../alertsApi";
 import { getIndicatorsByPane } from "../indicators";
 import { indTypeOf } from "../indicators/shared";
 import { isInsetInstance } from "../indicators/inset";
@@ -33,12 +33,19 @@ export type RayPoints = [{ timestamp: number; value: number }, { timestamp: numb
 // the segment actually drawn, from the first point to the last bar.
 // `name` is the overlay drawing it: a two-point "segment", or "alertSteps"
 // under a coarser pin, whose `steps` are its points.
+// A fired ray's key ends in "|F", so firing or re-arming re-styles it.
+function withFired(r: Ray, fired: boolean): Ray {
+  return fired ? { ...r, key: `${r.key}|F`, fired } : r;
+}
+
 type Ray = {
   points: RayPoints;
   drawn: RayPoints;
   key: string;
   name: "segment" | "alertSteps" | "alertRamp";
   steps?: Array<{ timestamp: number; value: number }>;
+  /** A fired "once" alert shown from History: drawn gray. */
+  fired?: boolean;
 };
 
 /**
@@ -184,6 +191,7 @@ export class IndicatorAlertLines {
   private lastPoints = new Map<string, RayPoints>();
   // Alert ids whose ray draws as steps or a ramp, for rayStepped().
   private stepped = new Set<string>();
+  private fired = new Set<string>();
   // The visibility the drawn lines currently carry (the sidebar eye).
   private shownHidden = false;
 
@@ -276,7 +284,13 @@ export class IndicatorAlertLines {
   private wantedRays(): Map<string, Ray> {
     const out = new Map<string, Ray>();
     if (!this.chart) return out;
-    const alerts = loadLineAlerts(this.epic, this.broker);
+    // Live first; a fired alert (History) whose id is live again is skipped.
+    const live = loadLineAlerts(this.epic, this.broker);
+    const liveIds = new Set(live.map((a) => a.id));
+    const alerts: Array<(typeof live)[number] & { firedAt?: number }> = [
+      ...live,
+      ...firedLineAlerts(this.epic, this.broker).filter((a) => !liveIds.has(a.id)),
+    ];
     if (alerts.length === 0) return out;
     // The chart's coarser-pinned Trendlines panes, by the timeframe they alert on.
     const pinnedExt = new Map<string, { mtf?: TrendlinesMtf; pinnedStyle?: string }>();
@@ -305,7 +319,7 @@ export class IndicatorAlertLines {
           // first letter is the overlay kind, so a style change re-creates it.
           const flat = ext.pinnedStyle === "steps";
           const key = `${flat ? "S" : "R"}|${sp.steps.map((q) => `${q.timestamp}:${q.value}`).join("|")}`;
-          out.set(a.id, { points: sp.bell, drawn: sp.bell, key, name: flat ? "alertSteps" : "alertRamp", steps: sp.steps });
+          out.set(a.id, withFired({ points: sp.bell, drawn: sp.bell, key, name: flat ? "alertSteps" : "alertRamp", steps: sp.steps }, a.firedAt != null));
           continue;
         }
       }
@@ -316,10 +330,10 @@ export class IndicatorAlertLines {
       ];
       const drawn = this.toLastBar(points, dataList);
       if (drawn)
-        out.set(a.id, {
+        out.set(a.id, withFired({
           points, drawn, name: "segment",
           key: `L|${drawn.map((q) => `${q.timestamp}:${q.value}`).join("|")}`,
-        });
+        }, a.firedAt != null));
     }
     return out;
   }
@@ -345,6 +359,7 @@ export class IndicatorAlertLines {
     const want = this.wantedRays();
     this.lastPoints = new Map([...want].map(([id, w]) => [id, w.points]));
     this.stepped = new Set([...want].filter(([, w]) => w.name !== "segment").map(([id]) => id));
+    this.fired = new Set([...want].filter(([, w]) => w.fired).map(([id]) => id));
     for (const [id, geo] of this.rays) {
       const w = want.get(id);
       if (!w) {
@@ -361,6 +376,9 @@ export class IndicatorAlertLines {
           continue;
         }
         c.overrideOverlay({ id: rayId(id), points: w.steps ?? w.drawn });
+        // Fired <-> live (re-armed, or fired while drawn) changes the color.
+        if (geo.endsWith("|F") !== !!w.fired)
+          c.overrideOverlay({ id: rayId(id), styles: alertLineStyles(false, !!w.fired) });
         this.rays.set(id, w.key);
       }
       if (hiddenChanged) c.overrideOverlay({ id: rayId(id), visible: !hidden });
@@ -371,7 +389,7 @@ export class IndicatorAlertLines {
         id: rayId(id),
         name: w.name,
         points: w.steps ?? w.drawn,
-        styles: alertLineStyles(false),
+        styles: alertLineStyles(false, !!w.fired),
         visible: !hidden,
         mode: "normal",
         needDefaultXAxisFigure: false,
@@ -404,6 +422,11 @@ export class IndicatorAlertLines {
    * last bar; independent of the live TRENDLINES detection moving on. */
   rayPoints(alertId: string): RayPoints | null {
     return this.lastPoints.get(alertId) ?? null;
+  }
+
+  /** Whether the ray belongs to a fired alert shown from History. */
+  rayFired(alertId: string): boolean {
+    return this.fired.has(alertId);
   }
 
   /** Whether the alert's line draws as steps: it then runs on to the newest
