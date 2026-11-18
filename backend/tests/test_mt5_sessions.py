@@ -58,7 +58,8 @@ class FakeTerminal:
         if tool == "chart_open":
             return {"chart_id": "77"}
         if tool == "chart_add_script":
-            self.file = {"generated": 1_000_000, "serverOffset": 0, "symbols": {"#SLV": SLV}}
+            self.file = {"generated": 1_000_000, "serverOffset": 0, "symbols": {"#SLV": SLV},
+                         "leverage": {"#SLV": 4.9999, "SILVER": 9.98, "EURUSD": 30.0002, "BAD": -1}}
             return {"ok": True}
         if tool == "read_file":
             assert args["path"] == OUTPUT_PATH
@@ -82,6 +83,9 @@ def test_runs_the_script_on_an_open_chart_and_reads_hours():
     s = asyncio.run(_load(term))
     assert s.opening_hours("#SLV")["mon"] == ["13:30 - 20:00"]
     assert "chart_open" not in term.calls
+    assert s.leverage("#SLV") == 5.0 and s.leverage("SILVER") == 10.0
+    assert s.leverage("EURUSD") == 30.0
+    assert s.leverage("BAD") is None and s.leverage("NOPE") is None
 
 
 def test_opens_and_closes_a_chart_when_none_is_open():

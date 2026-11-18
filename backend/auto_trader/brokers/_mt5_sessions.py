@@ -1,4 +1,4 @@
-"""Weekly trade sessions for the mt5-self broker.
+"""Weekly trade sessions (and effective leverage) for the mt5-self broker.
 
 The terminal's MCP server has no sessions tool, so the sessions come from an
 MQL5 script (`mql5/ChartkarSessions.mq5`, compiled on the box by
@@ -95,6 +95,7 @@ class MT5Sessions:
         self._wall = wall
         self._sleep = sleep
         self._hours: dict[str, dict] | None = None
+        self._leverage: dict[str, float] = {}
         self._next_at = 0.0
         self._task: asyncio.Task | None = None
         self._warned = False
@@ -105,6 +106,16 @@ class MT5Sessions:
         the script takes seconds), and this answers from the last good load."""
         self.ensure_fresh()
         return (self._hours or {}).get(epic)
+
+    def leverage(self, epic: str) -> float | None:
+        """The account's effective leverage on the symbol (5.0 = 5:1), rounded
+        as a broker states it, or None when unknown. Same background load as
+        the hours."""
+        self.ensure_fresh()
+        v = self._leverage.get(epic)
+        if v is None:
+            return None
+        return float(round(v)) if v >= 10 else round(v, 1)
 
     def ensure_fresh(self) -> None:
         if self._clock() < self._next_at or (self._task is not None and not self._task.done()):
@@ -134,6 +145,11 @@ class MT5Sessions:
                 if oh is not None:
                     hours[name] = oh
             self._hours = hours
+            lev = data.get("leverage")
+            self._leverage = {
+                k: float(v) for k, v in (lev.items() if isinstance(lev, dict) else ())
+                if isinstance(v, (int, float)) and v > 0
+            }
             self._next_at = self._clock() + REFRESH_S
             self._warned = False
             log.info("mt5-self: trade sessions loaded for %d symbols", len(hours))

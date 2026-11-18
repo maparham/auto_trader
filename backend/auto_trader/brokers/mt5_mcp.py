@@ -813,7 +813,9 @@ class MT5MCPBroker(MarketDataBroker):
 
     async def get_market_detail(self, epic: str) -> dict | None:
         """Details popover: the raw Market Watch row verbatim plus the curated
-        keys the header reads. No margin tool, so no leverage figure."""
+        keys the header reads. `accountLeverage` (the popover's Margin and
+        Leverage rows) comes from the sessions script, as Capital's does from
+        its account preferences."""
         try:
             row = await self._market_row(epic, fresh=True)
         except Exception:
@@ -842,7 +844,10 @@ class MT5MCPBroker(MarketDataBroker):
                                  ("dealSizeStep", "volume_step"))
             if (v := _f(row.get(key))) is not None
         }
-        return {"instrument": instrument, "dealingRules": dealing, "snapshot": snapshot}
+        out = {"instrument": instrument, "dealingRules": dealing, "snapshot": snapshot}
+        if (lev := self.sessions.leverage(epic)) is not None:
+            out["accountLeverage"] = lev
+        return out
 
     # --- account label --------------------------------------------------------
 
