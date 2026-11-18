@@ -12,6 +12,7 @@
 import { API_BASE, apiFetch, apiFetchPatient } from "./http";
 import { getPersistBroker, registerAlertsRouter } from "./persist/core";
 import { bumpAlerts } from "./signals";
+import { PREFIX } from "./workspaceKeys";
 import { toast } from "./notify";
 import { loadAlertableTypes, type AlertInstance } from "./indicatorAlertInstance";
 import { fmtPrice } from "./priceFormat";
@@ -301,6 +302,9 @@ export interface TriggeredAlert {
   /** Present on an account-alert history row (`kind: "account"`). */
   kind?: string;
   headline?: string;
+  /** The fired alert's row (History's `alert_json`); absent on an entry the
+   * live `fired` event added until the resync refetches History. */
+  alert?: AlertRow | null;
 }
 
 export interface FiredPayload {
@@ -371,7 +375,7 @@ interface TriggeredRow {
   condition: AlertCondition;
   message: string;
   precision?: number;
-  alert?: { params?: Record<string, unknown>; label?: string; headline?: string } | null;
+  alert?: (Partial<AlertRow> & { headline?: string }) | null;
 }
 
 function rowToSavedAlert(row: AlertRow): SavedAlert {
@@ -467,6 +471,7 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
     kind: row.kind,
     headline: row.kind === "account" ? accountTriggeredHeadline(row)
       : row.kind === "position" ? row.alert?.headline : undefined,
+    alert: (row.alert as AlertRow | null | undefined) ?? null,
   };
 }
 
@@ -656,6 +661,7 @@ export function hydrateAlerts(): Promise<void> {
         const body = (await triggeredRes.json()) as { entries: TriggeredRow[]; seen: number };
         triggeredCache = body.entries.map(triggeredRowToClient);
         triggeredSeenCache = body.seen;
+        pruneHiddenFired();
       }
     } catch {
       // Offline / backend down: keep whatever the cache already holds, same
@@ -694,6 +700,105 @@ export function loadStoredAlert(
 
 export function loadTriggered(): TriggeredAlert[] {
   return triggeredCache;
+}
+
+// --- fired "once" alerts (the chart's gray bells) ----------------------------
+// A once alert deletes itself when it fires; its History entry keeps the row,
+// so the chart can still show where it was until History is cleared.
+
+const HIDDEN_FIRED_KEY = `${PREFIX}.alerts.hiddenFired`;
+const FIRED_KINDS = new Set(["price_level", "indicator", "line"]);
+
+function readHiddenFired(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(HIDDEN_FIRED_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeHiddenFired(ids: string[]): void {
+  try {
+    if (ids.length === 0) localStorage.removeItem(HIDDEN_FIRED_KEY);
+    else localStorage.setItem(HIDDEN_FIRED_KEY, JSON.stringify(ids));
+  } catch { /* storage full or blocked: hiding is cosmetic */ }
+}
+
+// Hidden ids whose History entries are gone can never show again: drop them.
+function pruneHiddenFired(): void {
+  const hidden = readHiddenFired();
+  if (hidden.length === 0) return;
+  const inHistory = new Set(triggeredCache.map((t) => t.alertId));
+  const kept = hidden.filter((id) => inHistory.has(id));
+  if (kept.length !== hidden.length) writeHiddenFired(kept);
+}
+
+function isLiveId(id: string): boolean {
+  if (indicatorCache.has(id)) return true;
+  for (const epics of alertsCache.values())
+    for (const list of epics.values()) if (list.some((a) => a.id === id)) return true;
+  return false;
+}
+
+// The newest History row per alert id of `kind` on (broker, epic) that is a
+// fired "once" alert, not live again and not hidden. The cache is newest first.
+function firedRows(kind: string, epic: string, broker: string): Array<{ row: AlertRow; time: number }> {
+  const hidden = new Set(readHiddenFired());
+  const seen = new Set<string>();
+  const out: Array<{ row: AlertRow; time: number }> = [];
+  for (const t of triggeredCache) {
+    const a = t.alert;
+    if (!a || typeof a !== "object" || !a.id || seen.has(a.id)) continue;
+    seen.add(a.id);
+    const k = a.kind ?? "price_level";
+    if (!FIRED_KINDS.has(k) || k !== kind) continue;
+    if (a.broker !== broker || a.epic !== epic) continue;
+    if ((a.params as { trigger?: string } | undefined)?.trigger !== "once") continue;
+    if (hidden.has(a.id) || isLiveId(a.id)) continue;
+    out.push({ row: a, time: t.time });
+  }
+  return out;
+}
+
+export function firedPriceAlerts(epic: string, broker: string = getPersistBroker()): Array<SavedAlert & { firedAt: number }> {
+  return firedRows("price_level", epic, broker).map(({ row, time }) => ({ ...rowToSavedAlert(row), firedAt: time }));
+}
+
+export function firedIndicatorAlerts(epic: string, broker: string = getPersistBroker()): Array<IndicatorAlert & { firedAt: number }> {
+  return firedRows("indicator", epic, broker).map(({ row, time }) => ({ ...rowToIndicatorAlert(row), firedAt: time }));
+}
+
+export function firedLineAlerts(epic: string, broker: string = getPersistBroker()): Array<LineAlert & { firedAt: number }> {
+  return firedRows("line", epic, broker).map(({ row, time }) => ({ ...rowToLineAlert(row), firedAt: time }));
+}
+
+/** Hide a fired alert's gray bell in this browser (its History entry stays). */
+export function hideFiredAlert(id: string): void {
+  const hidden = readHiddenFired();
+  if (!hidden.includes(id)) writeHiddenFired([...hidden, id]);
+  bumpAlerts();
+}
+
+/** Re-create a fired once alert from History (same id and settings). Null on
+ * success, else the reason to show. */
+export async function rearmAlert(id: string): Promise<string | null> {
+  let res: Response;
+  try {
+    res = await apiFetch(url(`/api/alerts/${encodeURIComponent(id)}/rearm`, true), { method: "POST" });
+  } catch {
+    return "Network error";
+  }
+  if (!res.ok) {
+    try {
+      const detail = ((await res.json()) as { detail?: unknown }).detail;
+      if (typeof detail === "string" && detail) return detail;
+    } catch { /* non-JSON error body */ }
+    return `Re-arm failed (${res.status})`;
+  }
+  writeHiddenFired(readHiddenFired().filter((h) => h !== id));
+  await resyncAlerts();
+  return null;
 }
 
 export function loadTriggeredSeen(): number {
