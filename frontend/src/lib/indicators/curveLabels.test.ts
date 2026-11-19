@@ -9,18 +9,18 @@ vi.mock("klinecharts", () => ({
   getSupportedIndicators: () => [],
 }));
 
-const { curveLabel } = await import("./curveLabels");
+const { curveLabel, formatCurveLabel } = await import("./curveLabels");
 
 describe("curveLabel: EMA/MA pill follows the type", () => {
   it("labels an untouched instance by its template kind", () => {
-    expect(curveLabel("EMA", "ma", {}, [20])).toBe("EMA 20");
-    expect(curveLabel("MA", "ma", {}, [50])).toBe("MA 50");
-    expect(curveLabel("EMA", "smoothingMa", {}, [20])).toBe("EMA 20 MA");
+    expect(curveLabel("EMA", "ma", {}, [20])).toBe("EMA(20)");
+    expect(curveLabel("MA", "ma", {}, [50])).toBe("MA(50)");
+    expect(curveLabel("EMA", "smoothingMa", {}, [20])).toBe("EMA(20) MA");
   });
   it("labels a flipped instance by its chosen kind", () => {
-    expect(curveLabel("EMA", "ma", { maType: "vwma" }, [20])).toBe("VWMA 20");
-    expect(curveLabel("MA", "ma", { maType: "evwma" }, [50])).toBe("EVWMA 50");
-    expect(curveLabel("MA", "smoothingMa", { maType: "vwma" }, [50])).toBe("VWMA 50 MA");
+    expect(curveLabel("EMA", "ma", { maType: "vwma" }, [20])).toBe("VWMA(20)");
+    expect(curveLabel("MA", "ma", { maType: "evwma" }, [50])).toBe("EVWMA(50)");
+    expect(curveLabel("MA", "smoothingMa", { maType: "vwma" }, [50])).toBe("VWMA(50) MA");
   });
 });
 
@@ -66,5 +66,25 @@ describe("curveLabel — PREV_HL anchor pill and blind replay", () => {
     } finally {
       maskedReplaySignal.set({});
     }
+  });
+});
+
+describe("curveLabel: pinned timeframe, written like the legend", () => {
+  const w = { mtf: { timeframe: "WEEK" } };
+  it("puts the timeframe after the params for every indicator", () => {
+    expect(curveLabel("EMA", "ma", w, [50])).toBe("EMA(50,1W)");
+    expect(curveLabel("EMA", "smoothingMa", { mtf: { timeframe: "HOUR_4" } }, [20])).toBe("EMA(20,4H) MA");
+    expect(curveLabel("BOLL", "up", w, [20])).toBe("BOLL(20,1W) upper");
+    expect(curveLabel("PIVOT_BANDS", "pivotHigh", w, [5])).toBe("Pivot High(1W)");
+  });
+  it("adds nothing when unpinned or pinned to the chart", () => {
+    expect(curveLabel("EMA", "ma", { mtf: { timeframe: "chart" } }, [50])).toBe("EMA(50)");
+    expect(curveLabel("BOLL", "mid", {}, [20])).toBe("BOLL(20)");
+    expect(curveLabel("LR", "dn", {}, [100])).toBe("LR(100) lower");
+  });
+  it("formats name, params, timeframe and suffix", () => {
+    expect(formatCurveLabel("VWAP", [], "")).toBe("VWAP");
+    expect(formatCurveLabel("VWAP", [], "1D")).toBe("VWAP(1D)");
+    expect(formatCurveLabel("AVWAP", [], "", "+1σ")).toBe("AVWAP +1σ");
   });
 });

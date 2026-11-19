@@ -4,6 +4,7 @@
 // selection-marker constants from chartGeometry.
 import { minPositiveGap } from "../lib/barInterval";
 import { curveLabel, curveLabelConfig, curveLabelPosFor, indTypeOf } from "../lib/customIndicators";
+import { formatCurveLabel, pinnedTfLabel } from "../lib/indicators/curveLabels";
 import { slopeMaLines, slopeLengths, type SlopeMaSource } from "../lib/indicators/slope";
 import { getIndicatorsByPane } from "../lib/indicators";
 import { MA_KIND_LABEL } from "../lib/indicators/ma";
@@ -166,7 +167,7 @@ export function buildCurveLabelPills(
 
 // Curve-end pills for a Slope's ON-CHART MA curves (self-drawn, so not in the figure
 // LineCache that buildCurveLabelPills reads). One pill per MA line, text = MA type + length
-// ("EMA 21"), colored to match the curve, placed at the chosen visible end. Gated by the same
+// ("EMA(21)", "EMA(21,1W)" when pinned), colored to match the curve, placed at the chosen visible end. Gated by the same
 // generic curve-label config (curveLabelConfig) as every other indicator, plus the on-chart
 // MA being shown. `targets` are the selected/hovered indicators; a Slope is "active" when its
 // instance name is among them (its selection lives in its own sub-pane, so match by name).
@@ -226,7 +227,7 @@ export function buildSlopeMaPills(
         if (px.x == null || px.y == null) return;
         pills.push({
           key: `${ind.name}:ma${li}`,
-          text: `${maType} ${lengths[li]}`,
+          text: formatCurveLabel(maType, [lengths[li]], pinnedTfLabel(ext)),
           x: px.x,
           y: px.y,
           color: line.color,

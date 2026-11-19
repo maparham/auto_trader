@@ -70,7 +70,7 @@ describe("buildSlopeMaPills", () => {
       maxX,
     );
     expect(pills.length).toBe(1);
-    expect(pills[0].text).toBe("EMA 21");
+    expect(pills[0].text).toBe("EMA(21)");
     expect(pills[0].side).toBe("right");
     expect(pills[0].align).toBe("center");
     expect(pills[0].maxX).toBe(maxX);
@@ -84,7 +84,7 @@ describe("buildSlopeMaPills", () => {
       maxX,
     );
     expect(pills.length).toBe(1);
-    expect(pills[0].text).toBe("EMA 21");
+    expect(pills[0].text).toBe("EMA(21)");
   });
 
   it("returns [] when curve labels are disabled, even for an active target", () => {

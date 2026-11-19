@@ -15,6 +15,7 @@ import {
 } from "./prevHl";
 import { AVWAP_DEFAULT_BANDS, type AvwapExtend } from "./vwap";
 import { maLegendLabel, templateMaKind } from "./ma";
+import { periodByResolution } from "../feed/periods";
 
 export type CurveLabelSide = "right" | "left";
 export type CurveLabelAlign = "above" | "center" | "below";
@@ -72,6 +73,27 @@ export function curveLabelPosFor(cfg: ResolvedCurveLabels, figKey: string): Requ
   return /low$/i.test(figKey) ? cfg.low : cfg.high;
 }
 
+// The pinned timeframe's short label ("1W"), or "" when the indicator is not
+// pinned or is pinned to the chart's own timeframe. Same rule as the legend.
+export function pinnedTfLabel(extendData: unknown): string {
+  const res = (extendData as { mtf?: { timeframe?: unknown } } | undefined)?.mtf?.timeframe;
+  if (typeof res !== "string" || !res || res === "chart") return "";
+  return periodByResolution(res)?.label ?? res;
+}
+
+// Every curve label is written like its legend label: the name, then the params
+// and the pinned timeframe in one parenthesis, then the curve's own suffix.
+// "EMA(50)", "EMA(50,1W)", "BOLL(20) upper", "Pivot High(1W)", "VWAP".
+export function formatCurveLabel(
+  name: string,
+  params: Array<string | number>,
+  tf: string,
+  suffix = "",
+): string {
+  const inner = [...params, ...(tf ? [tf] : [])];
+  return `${name}${inner.length ? `(${inner.join(",")})` : ""}${suffix ? ` ${suffix}` : ""}`;
+}
+
 // Abbreviate a rolling unit, matching the chart's own interval buttons (1m / 4H /
 // 3D / 1W — lowercase minute, uppercase H/D/W). "bars" has no interval button, so
 // "bar" reads clearest.
@@ -83,7 +105,7 @@ const ROLLING_UNIT_ABBR: Record<PrevHlRollingUnit, string> = {
   bars: "bar",
 };
 
-// Per-FIGURE key parameter, as a readable tag (e.g. "3D range low", "EMA 20",
+// Per-FIGURE key parameter, as a readable tag (e.g. "3D range low", "EMA(20)",
 // "AVWAP +1σ"). Returns null for figures/indicators that have no meaningful
 // per-curve parameter (no pill drawn). This is the one generic seam: a switch on
 // indType, each indicator contributing its own mapping. `calcParams` carries the
@@ -94,55 +116,55 @@ export function curveLabel(
   extendData: unknown,
   calcParams?: unknown[],
 ): string | null {
+  const tf = pinnedTfLabel(extendData);
   switch (indType) {
     case "PREV_HL":
-      return prevHlCurveLabel(figKey, extendData as PrevHlExtend);
+      return prevHlCurveLabel(figKey, extendData as PrevHlExtend, tf);
     case "EMA":
-      return maCurveLabel("EMA", figKey, extendData, calcParams);
+      return maCurveLabel("EMA", figKey, extendData, calcParams, tf);
     case "MA":
-      return maCurveLabel("MA", figKey, extendData, calcParams);
+      return maCurveLabel("MA", figKey, extendData, calcParams, tf);
     case "LR":
-      return lrCurveLabel(figKey, calcParams);
+      return bandCurveLabel("LR", figKey, "lr", maLen(calcParams, 100), tf);
     case "VWAP":
-      return figKey === "vwap" ? "VWAP" : null;
+      return figKey === "vwap" ? formatCurveLabel("VWAP", [], tf) : null;
     case "AVWAP":
-      return avwapCurveLabel(figKey, extendData as AvwapExtend);
+      return avwapCurveLabel(figKey, extendData as AvwapExtend, tf);
     case "RSI":
-      return figKey === "rsi" ? `RSI ${maLen(calcParams, 14)}` : null;
+      return figKey === "rsi" ? formatCurveLabel("RSI", [maLen(calcParams, 14)], tf) : null;
     // klinecharts built-in overlays (no extendData beyond indType). Figure keys are
     // klinecharts' own; lengths in calcParams[0]. None end in "low" → high slot.
     case "SMA":
-      return figKey === "sma" ? `SMA ${maLen(calcParams, 12)}` : null;
+      return figKey === "sma" ? formatCurveLabel("SMA", [maLen(calcParams, 12)], tf) : null;
     case "BBI":
-      // BBI averages four periods (3/6/12/24) — too many to spell out, so just "BBI".
-      return figKey === "bbi" ? "BBI" : null;
+      // BBI averages four periods (3/6/12/24): too many to spell out, so just "BBI".
+      return figKey === "bbi" ? formatCurveLabel("BBI", [], tf) : null;
     case "BOLL":
-      return bollCurveLabel(figKey, calcParams);
+      return bandCurveLabel("BOLL", figKey, "mid", maLen(calcParams, 20), tf);
     case "PIVOT_BANDS":
     case "PIVOT_ANALYSIS":
       // Two curves, already distinguished by side; the pill just names each. The
       // Δ%/Δt figures are operand-only (no plotted curve) → no pill.
-      if (figKey === "pivotHigh") return "Pivot High";
-      if (figKey === "pivotLow") return "Pivot Low";
+      if (figKey === "pivotHigh") return formatCurveLabel("Pivot High", [], tf);
+      if (figKey === "pivotLow") return formatCurveLabel("Pivot Low", [], tf);
       return null;
     default:
       return null;
   }
 }
 
-// BOLL (Bollinger Bands): basis "BOLL 20"; the ±mult·σ bands as "BOLL 20 upper"/"lower".
-function bollCurveLabel(figKey: string, calcParams?: unknown[]): string | null {
-  const base = `BOLL ${maLen(calcParams, 20)}`;
-  switch (figKey) {
-    case "mid":
-      return base;
-    case "up":
-      return `${base} upper`;
-    case "dn":
-      return `${base} lower`;
-    default:
-      return null;
-  }
+// A basis line with an upper/lower channel (BOLL, LR): "BOLL(20)", "BOLL(20) upper".
+function bandCurveLabel(
+  name: string,
+  figKey: string,
+  baseKey: string,
+  len: number,
+  tf: string,
+): string | null {
+  if (figKey === baseKey) return formatCurveLabel(name, [len], tf);
+  if (figKey === "up") return formatCurveLabel(name, [len], tf, "upper");
+  if (figKey === "dn") return formatCurveLabel(name, [len], tf, "lower");
+  return null;
 }
 
 // Pull a positive integer length/param from calcParams[i], falling back to `def`.
@@ -151,7 +173,7 @@ function maLen(calcParams: unknown[] | undefined, def: number, i = 0): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : def;
 }
 
-// EMA/MA: base line gets "EMA 20"; the separate smoothing MA gets "EMA 20 MA".
+// EMA/MA: base line gets "EMA(20)"; the separate smoothing MA gets "EMA(20) MA".
 // (The smoothing line only produces coords when smoothing is on, so a "none"
 // smoothing never reaches here.) The pill follows the legend rule: a flipped
 // instance (Type set to VWMA/EVWMA/…) shows that kind's label, an untouched one
@@ -160,50 +182,36 @@ function maCurveLabel(
   type: "EMA" | "MA",
   figKey: string,
   extendData: unknown,
-  calcParams?: unknown[],
+  calcParams: unknown[] | undefined,
+  tf: string,
 ): string | null {
   const templateKind = templateMaKind(type);
   const maType = (extendData as { maType?: unknown } | undefined)?.maType;
   const label = maLegendLabel(maType, templateKind);
-  const base = `${label} ${maLen(calcParams, type === "EMA" ? 9 : 20)}`;
-  if (figKey === "ma") return base;
-  if (figKey === "smoothingMa") return `${base} MA`;
+  const params = [maLen(calcParams, type === "EMA" ? 9 : 20)];
+  if (figKey === "ma") return formatCurveLabel(label, params, tf);
+  if (figKey === "smoothingMa") return formatCurveLabel(label, params, tf, "MA");
   return null;
-}
-
-// LR: regression line "LR 100"; the ±mult·σ channel lines as "LR 100 upper"/"lower".
-function lrCurveLabel(figKey: string, calcParams?: unknown[]): string | null {
-  const base = `LR ${maLen(calcParams, 100)}`;
-  switch (figKey) {
-    case "lr":
-      return base;
-    case "up":
-      return `${base} upper`;
-    case "dn":
-      return `${base} lower`;
-    default:
-      return null;
-  }
 }
 
 // AVWAP: value line "AVWAP"; each band line "AVWAP ±Nσ" (or "±N%" in percentage
 // mode), N being that band's multiplier from extendData.bands.
-function avwapCurveLabel(figKey: string, ext: AvwapExtend): string | null {
-  if (figKey === "vwap") return "AVWAP";
+function avwapCurveLabel(figKey: string, ext: AvwapExtend, tf: string): string | null {
+  if (figKey === "vwap") return formatCurveLabel("AVWAP", [], tf);
   const m = /^(up|dn)([123])$/.exec(figKey);
   if (!m) return null;
   const bands = ext.bands ?? AVWAP_DEFAULT_BANDS;
   const band = bands[Number(m[2]) - 1];
   const mult = band?.mult ?? Number(m[2]);
   const unit = ext.bandMode === "percentage" ? "%" : "σ";
-  return `AVWAP ${m[1] === "up" ? "+" : "−"}${mult}${unit}`;
+  return formatCurveLabel("AVWAP", [], tf, `${m[1] === "up" ? "+" : "−"}${mult}${unit}`);
 }
 
 // Prev HL: each curve's tag spells out its kind + lookback + which extreme — e.g.
 // "3D range low" (low of a 3-day rolling window), "prev 1D high" (previous day's
 // high), "prev 2W low", "since 02-01 high" (anchored). The kind/length is shared by
 // the boundary's High/Low pair; the trailing "high"/"low" comes from the figure key.
-function prevHlCurveLabel(figKey: string, ext: PrevHlExtend): string | null {
+function prevHlCurveLabel(figKey: string, ext: PrevHlExtend, tf: string): string | null {
   const lengths = ext.lengths ?? {};
   const rollingUnit: PrevHlRollingUnit = ext.rollingUnit ?? "hour";
   const count = (k: PeriodKind) => Math.max(1, Math.floor(lengths[k] ?? 1));
@@ -232,5 +240,5 @@ function prevHlCurveLabel(figKey: string, ext: PrevHlExtend): string | null {
     default:
       return null;
   }
-  return `${base} ${side}`;
+  return formatCurveLabel(`${base} ${side}`, [], tf);
 }
