@@ -125,4 +125,27 @@ describe("AllAccountsPane", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh now" }));
     expect(d.refresh).toHaveBeenCalled();
   });
+
+  it("shows prices with the most decimals among entry, mark and levels", () => {
+    mount(
+      data({
+        snaps: {
+          "ig-live:live": snap("ig-live:live", {
+            positions: [pos("D1", { priceLevel: 18000, mark: 18001.37, stop: 17950 })],
+          }),
+        },
+      }),
+    );
+    const row = within(section("ig-live:live")).getByText("US100").closest("tr")!;
+    expect(row.textContent).toContain("18001.37");
+    expect(row.textContent).toContain("18000.00");
+  });
+
+  it("says not loaded, not empty, for an account that never loaded", () => {
+    mount(data({ snaps: { "ig-live:live": snap("ig-live:live", { error: "down" }) } }));
+    const s = section("ig-live:live");
+    fireEvent.click(within(s).getByRole("button", { expanded: false }));
+    expect(within(s).queryByText("No open positions")).toBeNull();
+    expect(within(s).getByText("Not loaded yet")).toBeTruthy();
+  });
 });

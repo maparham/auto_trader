@@ -16,7 +16,8 @@ interface Props {
   onOpen: (account: TradeAccount, epic: string, dealId: string) => void;
 }
 
-const decimalsOf = (n: number) => Math.min(6, (String(n).split(".")[1] ?? "").length);
+const decimalsOf = (n: number | null | undefined) =>
+  n == null ? 0 : Math.min(6, (String(n).split(".")[1] ?? "").length);
 const price = (n: number | null | undefined, d: number) => (n == null ? "-" : n.toFixed(d));
 const money = (n: number | null) =>
   n == null ? "-" : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -146,7 +147,9 @@ function AccountSection({
       </div>
       {snap?.error && <div className="pp-error">{snap.error}</div>}
       {open &&
-        (positions.length === 0 ? (
+        (snap?.positions == null ? (
+          <div className="pp-empty">Not loaded yet</div>
+        ) : positions.length === 0 ? (
           <div className="pp-empty">No open positions</div>
         ) : (
           <table className="pp-table aa-table">
@@ -176,7 +179,9 @@ function AccountSection({
 }
 
 function Row({ t, onClick }: { t: TradeView; onClick: () => void }) {
-  const d = decimalsOf(t.priceLevel);
+  // The other broker's market precision is unknown here: use the most decimals
+  // any of the row's prices carries.
+  const d = Math.max(decimalsOf(t.priceLevel), decimalsOf(t.mark), decimalsOf(t.stop), decimalsOf(t.takeProfit));
   const dist = slTpDistancePct(t);
   return (
     <tr className={`pp-row pp-dir-${t.side === "buy" ? "long" : "short"}`} onClick={onClick}>

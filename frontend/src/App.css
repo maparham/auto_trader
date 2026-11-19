@@ -5523,6 +5523,7 @@ body.pp-resizing { cursor: row-resize; user-select: none; }
 
 /* All accounts tab: one section per dealing account, view-only rows. */
 .aa-pane { overflow: auto; min-height: 0; max-height: min(260px, 40vh); padding-bottom: 8px; }
+.pp-sized .aa-pane, .trading-dock.maximized .aa-pane { max-height: none; flex: 1; }
 .aa-top { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 4px 10px 0; }
 .aa-updated { color: var(--text-faint); font-size: 11px; }
 .aa-acct { border-top: 1px solid var(--border); }

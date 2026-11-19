@@ -145,4 +145,32 @@ describe("useAllAccounts", () => {
     );
     expect(result.current.hasAccounts).toBe(false);
   });
+
+  it("fetches nothing when disabled", async () => {
+    renderHook(() => useAllAccounts({ ...base, open: true, enabled: false }));
+    await flush();
+    await act(async () => { vi.advanceTimersByTime(ALL_ACCOUNTS_CLOSED_MS); });
+    expect(fetched()).toEqual([]);
+  });
+
+  it("fetches the summary after a positions-only fetch still running when the tab opens", async () => {
+    let release!: () => void;
+    vi.mocked(fetchSnapshot).mockImplementation((_prev, account) => {
+      const s = { account, positions: [], summary: null, error: null, fetchedAt: Date.now() };
+      return account === "ig-live:live" && vi.mocked(fetchSnapshot).mock.calls.length <= 2
+        ? new Promise((r) => { release = () => r(s); })
+        : Promise.resolve(s);
+    });
+    const { rerender } = renderHook((p) => useAllAccounts(p), { initialProps: base });
+    await flush();
+    rerender({ ...base, open: true });
+    await flush();
+    expect(fetched().filter((c) => c[0] === "ig-live:live")).toEqual([["ig-live:live", false]]);
+    await act(async () => { release(); });
+    await flush();
+    expect(fetched().filter((c) => c[0] === "ig-live:live")).toEqual([
+      ["ig-live:live", false],
+      ["ig-live:live", true],
+    ]);
+  });
 });

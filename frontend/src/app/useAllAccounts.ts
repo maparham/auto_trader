@@ -35,13 +35,17 @@ export function useAllAccounts(opts: {
   activePositions: TradeView[];
   activeSummary: AccountSummary | null;
   open: boolean;
+  /** false: fetch nothing (a data-only active broker shows no tab). */
+  enabled?: boolean;
 }): AllAccountsData {
-  const { accounts, active, activePositions, activeSummary, open } = opts;
+  const { accounts, active, activePositions, activeSummary, open, enabled = true } = opts;
   const [hiddenIds, setHiddenIds] = useState<string[]>(loadHiddenAccounts);
   const [fetchedSnaps, setFetchedSnaps] = useState<Record<string, AccountSnapshot>>({});
   const snapsRef = useRef(fetchedSnaps);
   snapsRef.current = fetchedSnaps;
   const inFlight = useRef(new Set<TradeAccount>());
+  // Accounts that wanted a summary while a positions-only fetch was running.
+  const wantSummary = useRef(new Set<TradeAccount>());
 
   const dealing = useMemo(() => dealingAccounts(accounts), [accounts]);
   const { visible, hidden } = useMemo(() => visibleAndHidden(dealing, hiddenIds), [dealing, hiddenIds]);
@@ -53,17 +57,31 @@ export function useAllAccounts(opts: {
   const targetsRef = useRef(targets);
   targetsRef.current = targets;
 
-  const fetchAll = useCallback((withSummary: boolean) => {
-    for (const key of targetsRef.current) {
-      if (inFlight.current.has(key)) continue;
-      inFlight.current.add(key);
-      void fetchSnapshot(snapsRef.current[key], key, withSummary)
-        .then((s) => setFetchedSnaps((prev) => ({ ...prev, [key]: s })))
-        .finally(() => inFlight.current.delete(key));
+  const fetchOne = useCallback((key: TradeAccount, withSummary: boolean) => {
+    if (inFlight.current.has(key)) {
+      if (withSummary) wantSummary.current.add(key);
+      return;
     }
+    inFlight.current.add(key);
+    void fetchSnapshot(snapsRef.current[key], key, withSummary)
+      .then((s) => {
+        snapsRef.current = { ...snapsRef.current, [key]: s };
+        setFetchedSnaps((prev) => ({ ...prev, [key]: s }));
+      })
+      .finally(() => {
+        inFlight.current.delete(key);
+        if (wantSummary.current.delete(key) && targetsRef.current.includes(key)) fetchOne(key, true);
+      });
   }, []);
+  const fetchAll = useCallback(
+    (withSummary: boolean) => {
+      for (const key of targetsRef.current) fetchOne(key, withSummary);
+    },
+    [fetchOne],
+  );
 
   useEffect(() => {
+    if (!enabled) return;
     const tick = () => {
       if (!document.hidden) fetchAll(open);
     };
@@ -77,7 +95,7 @@ export function useAllAccounts(opts: {
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [open, targetsKey, fetchAll]);
+  }, [open, targetsKey, fetchAll, enabled]);
 
   const isDealingActive = dealing.some((a) => a.key === active);
   const snaps = useMemo(() => {

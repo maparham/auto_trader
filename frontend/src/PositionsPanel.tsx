@@ -295,6 +295,7 @@ export default function PositionsPanel({
     activePositions: positions,
     activeSummary: accountSummary ?? null,
     open: tab === "accounts" && !collapsed,
+    enabled: !dataOnly,
   });
   // Switching to an account without history (or losing every dealing account)
   // while its tab is open falls back.
