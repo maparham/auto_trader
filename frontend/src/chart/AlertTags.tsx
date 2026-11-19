@@ -22,10 +22,16 @@ export interface AlertTagItem {
 
 interface AlertTagsProps {
   tags: AlertTagItem[];
-  priceTag: { y: number; countdown: string | null } | null;
+  priceTag: { y: number; countdown: string | null; w?: number } | null;
   precision: number;
   onRearm?: (id: string) => void;
   onHide?: (id: string) => void;
+}
+
+/** True when a tag at `y` would overlap the live price pill: half the pill
+ *  (20px with countdown, else 10) plus half an alert tag (10). */
+function overlapsPrice(y: number, priceTag: { y: number; countdown: string | null }): boolean {
+  return Math.abs(y - priceTag.y) <= (priceTag.countdown ? 20 : 10) + 10;
 }
 
 /**
@@ -38,10 +44,16 @@ export default function AlertTags({ tags, priceTag, precision, onRearm, onHide }
     <>
       {tags.map((t) => {
         // A fired tag sits where the price crossed it, which is usually the
-        // live-price row: it skips the rule below, under the price pill (z 45 < 50).
+        // live-price row. There it would hide under the price pill, so it docks
+        // left of the pill as a bell alone (the pill already shows the price).
         if (t.firedAt != null) {
+          const docked = priceTag != null && overlapsPrice(t.y, priceTag);
           return (
-            <div key={t.id} className="alert-tag fired" style={{ top: t.y }}>
+            <div
+              key={t.id}
+              className={`alert-tag fired${docked ? " docked" : ""}`}
+              style={{ top: t.y, right: docked ? (priceTag.w ?? 0) + 2 : undefined }}
+            >
               {/* Only the bell takes the mouse, so the rest of the tag never
                   blocks a drag on the price axis. */}
               <Tooltip asChild content={["Price alert", firedText(t.firedAt), "Double click to re-arm"]}>
@@ -69,7 +81,7 @@ export default function AlertTags({ tags, priceTag, precision, onRearm, onHide }
                   <BellIcon size={11} />
                 </span>
               </Tooltip>
-              <span className="at-price">{fmtPrice(t.level, precision)}</span>
+              {!docked && <span className="at-price">{fmtPrice(t.level, precision)}</span>}
             </div>
           );
         }
@@ -83,11 +95,7 @@ export default function AlertTags({ tags, priceTag, precision, onRearm, onHide }
         // priceTag is already null, so the band test below is moot.) The band matches
         // redraw's priceObscured: half the price pill (40px with countdown, else 20)
         // plus half an alert tag (10).
-        if (
-          !t.selected &&
-          priceTag &&
-          Math.abs(t.y - priceTag.y) <= (priceTag.countdown ? 20 : 10) + 10
-        ) {
+        if (!t.selected && priceTag && overlapsPrice(t.y, priceTag)) {
           return null;
         }
         return (
