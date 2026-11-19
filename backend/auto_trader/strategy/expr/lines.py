@@ -146,9 +146,12 @@ def line_instances(lines: dict[str, PickedLine], *, epic: str, broker: str,
     rule_s = resolution_seconds(resolution)
     out: dict[str, LineInstance] = {}
     for lid, line in lines.items():
-        if resolution_seconds(line.timeframe) < rule_s:
+        active = line_active(line, epic=epic, broker=broker)
+        # A line of another symbol is absent on every bar, so its timeframe
+        # cannot make this rule wrong.
+        if active and resolution_seconds(line.timeframe) < rule_s:
             raise LineSpecError(
                 "line_tf_finer",
                 f"{lid} was picked on {line.timeframe}; run this rule on {line.timeframe} or a finer timeframe.")
-        out[line_key(lid)] = LineInstance(line, active=line_active(line, epic=epic, broker=broker))
+        out[line_key(lid)] = LineInstance(line, active=active)
     return out

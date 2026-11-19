@@ -20,7 +20,23 @@ const OFFLOAD_MIN_BARS = 1500;
 let worker: Worker | null = null;
 let broken = false;
 let nextId = 1;
-const pending = new Map<number, { resolve: (r: Result) => void; bars: KLineData[]; cfg: TrendlinesConfig }>();
+type Pending = {
+  resolve: (r: Result) => void;
+  reject: (e: unknown) => void;
+  bars: KLineData[];
+  cfg: TrendlinesConfig;
+};
+const pending = new Map<number, Pending>();
+
+/** Finish a request inline. A compute that throws rejects the request, so
+ *  the caller's cleanup still runs instead of waiting forever. */
+function settleInline(p: Pending): void {
+  try {
+    p.resolve(computeTrendlines(p.bars, p.cfg));
+  } catch (e) {
+    p.reject(e);
+  }
+}
 
 function fail(): void {
   broken = true;
@@ -29,7 +45,7 @@ function fail(): void {
   // Finish whatever was in flight inline rather than dropping it.
   for (const [id, p] of pending) {
     pending.delete(id);
-    p.resolve(computeTrendlines(p.bars, p.cfg));
+    settleInline(p);
   }
 }
 
@@ -50,7 +66,7 @@ function getWorker(): Worker | null {
     if (e.data.result) p.resolve(e.data.result);
     else {
       console.error("Trendlines worker compute failed", e.data.error);
-      p.resolve(computeTrendlines(p.bars, p.cfg));
+      settleInline(p);
     }
   };
   worker.onerror = (e) => {
@@ -63,9 +79,9 @@ function getWorker(): Worker | null {
 export function computeTrendlinesAsync(bars: KLineData[], cfg: TrendlinesConfig): Promise<Result> {
   const w = bars.length >= OFFLOAD_MIN_BARS ? getWorker() : null;
   if (!w) return Promise.resolve(computeTrendlines(bars, cfg));
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const id = nextId++;
-    pending.set(id, { resolve, bars, cfg });
+    pending.set(id, { resolve, reject, bars, cfg });
     w.postMessage({ id, bars, cfg });
   });
 }

@@ -384,8 +384,35 @@ def test_gap_reseed_failure_marks_series_not_ready_and_recovers_on_retry():
         loader.bars = bars + [c(11 * H, 11.0), c(12 * H, 12.0)]
         t[0] = 10.0  # past _RETRY_SECONDS
         now[0] = 13 * H + 100  # same bar period as the failed GAP: no new roll, just a retry
-        await hub.on_sample("capital", "US100", Sample(now[0], 13.0, None, None))
+        closed = await hub.on_sample("capital", "US100", Sample(now[0], 13.0, None, None))
         assert hub.ready(KEY, SMA3)  # recovered once the retry landed
+        # The bar that closed into the gap is still reported, once.
+        assert closed == {KEY} and hub.last_closed(KEY).close == 12.0
+        t[0] = 20.0
+        closed = await hub.on_sample("capital", "US100", Sample(now[0] + 1, 13.0, None, None))
+        assert closed == set()
+    asyncio.run(main())
+
+
+def test_gap_reseed_without_the_closing_bar_reports_it_once_served():
+    # The reseed lands but the loader does not hold the bar that closed into
+    # the gap yet: the refresh retry reports it once the loader serves it.
+    async def main():
+        now = [10 * H + 5]
+        bars = [c(i * H, float(i)) for i in range(5, 11)]
+        hub, loader, t = make(bars, now)
+        hub.set_needs({KEY: {SMA3}})
+        await hub.on_sample("capital", "US100", Sample(now[0], 10.0, None, None))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        loader.bars = bars[:-1]  # stale: not even the 10h bar
+        now[0] = 13 * H + 5
+        closed = await hub.on_sample("capital", "US100", Sample(now[0], 13.0, None, None))
+        assert closed == set()
+        loader.bars = bars + [c(11 * H, 11.0), c(12 * H, 12.0)]
+        t[0] = 10.0
+        closed = await hub.on_sample("capital", "US100", Sample(now[0] + 1, 13.0, None, None))
+        assert closed == {KEY} and hub.last_closed(KEY).close == 12.0
     asyncio.run(main())
 
 
@@ -762,6 +789,51 @@ def test_trendlines_not_ready_on_the_new_bar_until_its_result_lands(monkeypatch)
         assert hub.values(KEY, TL, intrabar=False)["value"] == 61.0
         await hub.on_sample("capital", "US100", Sample(now[0] + 2, 1.0, None, None))
         assert not hub.closed_now(KEY, TL, set())  # delivered once
+    asyncio.run(main())
+
+
+def test_landed_trendlines_close_survives_a_newer_close_on_the_same_sample(monkeypatch):
+    # A quiet symbol: bar 60 closes and its result lands, but the next tick
+    # is already past bar 61. That sample must still deliver bar 60's close,
+    # with bar 60's own bars and values, while bar 61's compute starts.
+    real = alert_indicators_mod.compute
+
+    def fake(ind, bars):
+        if ind.indicator != "TRENDLINES":
+            return real(ind, bars)
+        out = _fake_tl(len(bars))
+        out["value"][-1] = float(len(bars))
+        return out
+
+    monkeypatch.setattr(alert_indicators_mod, "compute", fake)
+
+    async def main():
+        now = [60 * H + 5]
+        bars = [c(i * H, 1.0) for i in range(0, 60)]
+        hub, loader, t = make(bars, now)
+        hub.set_needs({KEY: {TL}})
+        await hub.on_sample("capital", "US100", Sample(now[0], 1.0, None, None))
+        await asyncio.sleep(0)
+        await hub.settle()
+        loader.bars = bars + [c(60 * H, 2.0)]
+        now[0] = 61 * H + 5
+        t[0] += 10
+        closed = await hub.on_sample("capital", "US100", Sample(now[0], 1.0, None, None))
+        await hub.settle()  # bar 60's result lands before the next tick
+        loader.bars = loader.bars + [c(61 * H, 3.0)]
+        now[0] = 62 * H + 5
+        t[0] += 10
+        closed = await hub.on_sample("capital", "US100", Sample(now[0], 1.0, None, None))
+        assert closed == {KEY}
+        assert hub.closed_now(KEY, TL, closed)
+        last, before, vals, _ = hub.close_inputs(KEY, TL)
+        assert last.close == 2.0 and before.close == 1.0  # bar 60, not 61
+        assert vals["value"] == 61.0
+        await hub.settle()
+        await hub.on_sample("capital", "US100", Sample(now[0] + 1, 1.0, None, None))
+        assert hub.closed_now(KEY, TL, set())  # then bar 61's own close
+        last, _, vals, _ = hub.close_inputs(KEY, TL)
+        assert last.close == 3.0 and vals["value"] == 62.0
     asyncio.run(main())
 
 

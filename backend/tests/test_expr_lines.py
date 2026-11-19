@@ -95,6 +95,12 @@ def test_rule_coarser_than_line_refused():
     assert e.value.code == "line_tf_finer"
 
 
+def test_other_symbol_line_finer_than_the_rule_is_not_refused():
+    # The line is absent on another symbol, so its timeframe is no error.
+    inst = line_instances({"L1": _line(timeframe="MINUTE_15")}, epic="GOLD", broker="capital", resolution="HOUR")
+    assert inst[line_key("L1")].active is False
+
+
 def test_coarser_line_is_aligned_from_htf_candles():
     line = _line(timeframe="HOUR_4", t1=_ms(0), t2=_ms(4), p2=10.0, slope=1.0, tRef=_ms(8), pRef=11.0)
     inst = line_instances({"L1": line}, epic="US100", broker="capital", resolution="HOUR")

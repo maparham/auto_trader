@@ -75,6 +75,10 @@ class _State:
     seed_attempted_for: int = -1  # warm-up target the last seed attempt (success or fail) targeted
     ok: bool = False             # last load/refresh succeeded
     pending_close: bool = False  # a close whose refresh failed, retry pending
+    # A GAP whose reseed has not yet reported the bar that closed into it,
+    # and the tail we held before that gap.
+    gap_owed: bool = False
+    gap_from: int | None = None
     last_try: float = -1e9
     logged_failure: bool = False  # a load failure was already logged; quiet until it next succeeds
     closed_vals: dict[IndicatorKey, dict[str, float | None]] = field(default_factory=dict)
@@ -88,8 +92,19 @@ class _State:
     close_due: dict[IndicatorKey, tuple] = field(default_factory=dict)
     off_stamp: dict[IndicatorKey, tuple] = field(default_factory=dict)
     off_tasks: dict[IndicatorKey, asyncio.Task] = field(default_factory=dict)
-    landed: set[IndicatorKey] = field(default_factory=set)
-    delivering: set[IndicatorKey] = field(default_factory=set)
+    # A landed close keeps its own bars and values, so a newer close
+    # recomputing the series before the next sample cannot wipe it.
+    landed: dict[IndicatorKey, "_Close"] = field(default_factory=dict)
+    delivering: dict[IndicatorKey, "_Close"] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _Close:
+    """What close mode reads for one delivered off-loop close."""
+    last: Candle
+    before: Candle | None
+    vals: dict[str, float | None]
+    pvals: dict[str, float | None]
 
 
 class IndicatorHub:
@@ -125,6 +140,8 @@ class IndicatorHub:
                 st.off_tasks.pop(k).cancel()
             st.off_stamp = {k: v for k, v in st.off_stamp.items() if k in inds}
             st.close_due = {k: v for k, v in st.close_due.items() if k in inds}
+            st.landed = {k: v for k, v in st.landed.items() if k in inds}
+            st.delivering = {k: v for k, v in st.delivering.items() if k in inds}
             if st.ok and any(k not in st.closed_vals and k not in st.off_tasks for k in st.needs):
                 # A newly needed indicator on an already-warm series: its
                 # closed values come from the bars we already hold (cheap),
@@ -270,7 +287,8 @@ class IndicatorHub:
             st.pending_close = True
             return False
         st.series.replace_tail(bars, self._now_ms())
-        st.ok, st.pending_close = True, False
+        # This close supersedes any close a GAP still owed.
+        st.ok, st.pending_close, st.gap_owed = True, False, False
         self._recompute(key, st)
         return st.ok  # _recompute may have flipped this back to False
 
@@ -309,8 +327,8 @@ class IndicatorHub:
             task = st.off_tasks.pop(ind, None)
             if task is not None:
                 task.cancel()
-            st.landed.discard(ind)
-            st.delivering.discard(ind)
+            # A landed close of an older bar stays in `landed`/`delivering`:
+            # it holds its own values and is still owed to close mode.
             st.close_due.pop(ind, None)
             st.off_stamp[ind] = stamp
             task = asyncio.ensure_future(self._compute_off_loop(key, st, ind, list(bars), stamp))
@@ -357,7 +375,9 @@ class IndicatorHub:
         st.closed_vals[ind], st.prev_vals[ind] = _at(out, 0), _at(out, 1)
         if st.close_due.get(ind) == stamp:
             del st.close_due[ind]
-            st.landed.add(ind)
+            st.landed[ind] = _Close(
+                bars[-1], bars[-2] if len(bars) >= 2 else None,
+                st.closed_vals[ind], st.prev_vals[ind])
 
     @staticmethod
     def _cancel_off_loop(st: _State) -> None:
@@ -386,7 +406,7 @@ class IndicatorHub:
             # Off-loop results that landed since the last sample are this
             # sample's close for their indicator (see `closed_now`). A
             # pre-pass, so an exception further down cannot deliver twice.
-            st.delivering, st.landed = st.landed, set()
+            st.delivering, st.landed = st.landed, {}
         for key, st in mine:
             roll = st.series.on_sample(s)
             retry_due = self._clock() - st.last_try >= _RETRY_SECONDS
@@ -401,6 +421,10 @@ class IndicatorHub:
                 # rest of this series's handling until the seed lands.
                 if self._should_spawn_seed(key, st, target):
                     self._spawn_first_seed(key, st, growth=False)
+                # The background seed cannot report a close, so an owed GAP
+                # close is dropped here rather than reported later against a
+                # stale `gap_from`.
+                st.gap_owed = False
                 continue
             if needs_seed and st.ok:
                 # Growing an already-working series's warm-up (a newly added
@@ -420,23 +444,34 @@ class IndicatorHub:
                 # failed refresh): bounded the same way a refresh is in
                 # practice, and GAP needs this awaited inline so the
                 # closed-bar check below can run in the SAME call.
-                had = candle_ms(st.series.closed[-1]) if st.series.closed else None
+                if roll is Roll.GAP:
+                    st.gap_owed = True
+                    st.gap_from = candle_ms(st.series.closed[-1]) if st.series.closed else None
                 await self._seed(key, st)
-                if (
-                    roll is Roll.GAP and st.ok and st.series.closed
-                    and (had is None or candle_ms(st.series.closed[-1]) > had)
-                ):
-                    # The reseed brought a closed bar newer than the one we
-                    # held before the gap, so a bar closed across it. For the
-                    # commonest gap, a market closure with no bars inside it,
-                    # that newest bar is the one that was forming right
-                    # before the gap, and it still needs to be reported.
-                    # Compared against our own previous tail, never the grid
-                    # timestamp of the forming bar, so brokers whose bars sit
-                    # off our UTC grid (FX dailies opening 22:00) still
-                    # report; `_refresh` uses the same rule.
-                    closed.add(key)
-                    self._mark_close(st)
+                if st.gap_owed and st.ok:
+                    # A failed GAP reseed keeps `gap_owed` and goes offline,
+                    # so the retry reseed above still reports the close.
+                    st.gap_owed = False
+                    if st.series.closed and (
+                        st.gap_from is None or candle_ms(st.series.closed[-1]) > st.gap_from
+                    ):
+                        # The reseed brought a closed bar newer than the one
+                        # we held before the gap, so a bar closed across it.
+                        # For the commonest gap, a market closure with no
+                        # bars inside it, that newest bar is the one that was
+                        # forming right before the gap, and it still needs to
+                        # be reported. Compared against our own previous
+                        # tail, never the grid timestamp of the forming bar,
+                        # so brokers whose bars sit off our UTC grid (FX
+                        # dailies opening 22:00) still report; `_refresh`
+                        # uses the same rule.
+                        closed.add(key)
+                        self._mark_close(st)
+                    else:
+                        # The loader does not serve the closing bar yet (a
+                        # stale cache, or an off-grid broker): the refresh
+                        # retry reports it once it does.
+                        st.pending_close = True
             elif roll is Roll.CLOSED or (st.pending_close and retry_due):
                 if await self._refresh(key, st):
                     closed.add(key)
@@ -451,8 +486,26 @@ class IndicatorHub:
         newest close landed since the previous sample."""
         if ind is not None and _off_loop(ind):
             st = self._states.get(key)
-            return st is not None and ind in st.delivering and ind in st.closed_vals
+            return st is not None and ind in st.delivering and ind in st.needs
         return key in closed
+
+    def close_inputs(
+        self, key: SeriesKey, ind: IndicatorKey | None,
+    ) -> tuple[Candle | None, Candle | None, dict | None, dict | None]:
+        """(last, before, vals, prev vals) for a close `closed_now` reported.
+        An off-loop close reads the bars and values it was computed from,
+        which may be older than the series' tail when a newer bar closed
+        before the result was delivered."""
+        st = self._states.get(key)
+        got = st.delivering.get(ind) if st is not None and ind is not None and _off_loop(ind) else None
+        if got is not None:
+            vals = got.vals if sparse(ind) or all(v is not None for v in got.vals.values()) else None
+            return got.last, got.before, vals, got.pvals
+        return (
+            self.last_closed(key), self.prev_closed(key),
+            self.values(key, ind, intrabar=False) if ind is not None else None,
+            self.prev_values(key, ind) if ind is not None else None,
+        )
 
     def ready(self, key: SeriesKey, ind: IndicatorKey) -> bool:
         st = self._states.get(key)
