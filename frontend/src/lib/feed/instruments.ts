@@ -4,6 +4,7 @@
 import type { PriceSide } from "../../theme";
 import { API_BASE as BASE, apiFetch } from "../http";
 import { DEFAULT_BROKER, META_TIMEOUT_MS, fetchWithTimeout } from "./common";
+import type { WeekSessions } from "../sessionBarEnd";
 
 export interface Instrument {
   epic: string;
@@ -203,6 +204,10 @@ export interface MarketMeta {
   // When closed, the next opening time as an ISO-8601 UTC string (else null) —
   // shown in the closed-badge tooltip.
   nextOpen: string | null;
+  // The weekly opening hours as [start, end) minutes of the UTC week (Monday
+  // 00:00 = 0), or null when the broker has none. The bar countdown ends at
+  // the last open moment of the bar (lib/sessionBarEnd.ts).
+  sessions?: WeekSessions | null;
 }
 
 // The full broker instrument detail, passed through verbatim. Three sections of
@@ -328,6 +333,18 @@ export async function fetchCandleCacheGlobalStats(): Promise<CandleCacheGlobalSt
   }
 }
 
+function parseSessions(raw: unknown): WeekSessions | null {
+  if (!Array.isArray(raw)) return null;
+  const out: WeekSessions = [];
+  for (const row of raw) {
+    if (!Array.isArray(row) || row.length !== 2) return null;
+    const [s, e] = row as unknown[];
+    if (typeof s !== "number" || typeof e !== "number" || !(s < e)) return null;
+    out.push([s, e]);
+  }
+  return out;
+}
+
 /** Display precision + open/closed status for an epic, from one snapshot call.
  * Returns nulls (never throws) so callers can keep their existing fallbacks.
  * The chart fetches this on load and polls it so the tab badge / price label
@@ -349,11 +366,13 @@ export async function fetchMarketMeta(
       pricePrecision?: number | null;
       closed?: boolean | null;
       nextOpen?: string | null;
+      sessions?: unknown;
     };
     return {
       pricePrecision: typeof d.pricePrecision === "number" ? d.pricePrecision : null,
       closed: typeof d.closed === "boolean" ? d.closed : null,
       nextOpen: typeof d.nextOpen === "string" ? d.nextOpen : null,
+      sessions: parseSessions(d.sessions),
     };
   } catch {
     return { pricePrecision: null, closed: null, nextOpen: null };

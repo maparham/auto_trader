@@ -26,6 +26,7 @@ import {
   oneTfLower,
   declaredIntervalMs,
 } from "./lib/feed";
+import type { WeekSessions } from "./lib/sessionBarEnd";
 import ChartRangeBar from "./ChartRangeBar";
 import { type RangeKey } from "./lib/rangeWindow";
 import { pageHistoryBack, coverHistoryRangeParallel, scrollbackLoadOlder, PAGE_BARS, type PageResult } from "./lib/historyPaging";
@@ -1658,6 +1659,9 @@ export default function ChartCore({
   const [marketClosed, setMarketClosed] = useState(false);
   const marketClosedRef = useRef(marketClosed);
   marketClosedRef.current = marketClosed;
+  // The epic's weekly opening hours (null until fetched, or when the broker
+  // has none): the bar countdown ends at the last open moment of the bar.
+  const sessionsRef = useRef<WeekSessions | null>(null);
   // When the live stream last delivered a candle. Lets the open/closed check be
   // event-driven: a ticking stream means the market is open (no server call), so
   // we only re-check status when the stream falls silent (see the effect below).
@@ -4187,10 +4191,12 @@ export default function ChartCore({
     let timer: ReturnType<typeof setTimeout> | undefined;
     // Only consulted while the stream is silent; an active stream never triggers it.
     const FALLBACK_MS = 180_000;
+    let sessionRetries = 0;
     setFetchedPrecision(null); // drop the previous epic's value while we re-resolve
     // Default to open on an in-cell symbol switch so a now-open symbol doesn't flash
     // "closed" until the first fetch resolves a round-trip later.
     setMarketClosed(false);
+    sessionsRef.current = null; // the previous epic's hours
     if (isSynthetic(symbol.epic)) return; // synthetic: no market-status poll, never "closed"
 
     const schedule = (closed: boolean, nextOpen: string | null): void => {
@@ -4208,6 +4214,15 @@ export default function ChartCore({
         if (cancelled) return;
         if (Date.now() - lastCandleAtRef.current < FALLBACK_MS) {
           if (marketClosedRef.current) setMarketClosed(false); // ticks ⇒ open
+          // A ticking market is never re-checked, so opening hours missing from
+          // the first answer (a failed lookup, MT5 sessions not loaded yet)
+          // would leave the bar countdown on the nominal end for the whole
+          // mount. Ask again a few times; a broker without hours stops there.
+          if (sessionsRef.current == null && sessionRetries < 5) {
+            sessionRetries += 1;
+            void recheck(false);
+            return;
+          }
           timer = setTimeout(fallback, FALLBACK_MS);
         } else {
           void recheck(false); // silent for a while → confirm open/closed
@@ -4232,6 +4247,7 @@ export default function ChartCore({
       // null `closed` (failed lookup) is treated as open, so it never shows a live
       // market closed.
       const closed = meta.closed === true;
+      if (meta.sessions) sessionsRef.current = meta.sessions;
       setMarketClosed(closed);
       schedule(closed, meta.nextOpen);
     };
@@ -5004,6 +5020,7 @@ export default function ChartCore({
     draggingTradeRef,
     hoveredFieldRef,
     marketClosedRef,
+    sessionsRef,
     replayRef,
     statusRef,
     bidAskRef,

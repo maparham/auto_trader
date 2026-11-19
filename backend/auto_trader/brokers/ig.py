@@ -38,7 +38,7 @@ from auto_trader.brokers._ig_dealing import (
     _first_affected,
     _market_open_body,
 )
-from auto_trader.brokers._market_hours import _market_hours_state
+from auto_trader.brokers._market_hours import _market_hours_state, week_sessions
 from auto_trader.brokers._session import SessionAuthBroker, raise_if_waf_blocked
 from auto_trader.brokers.yahoo_listing import listing_ticker
 from auto_trader.brokers._prices import (
@@ -441,6 +441,7 @@ class IGBroker(SessionAuthBroker, MarketDataBroker):
             "pricePrecision": precision,
             "closed": closed,
             "nextOpen": next_open,
+            "sessions": week_sessions(opening_hours, datetime.now(timezone.utc)),
             "status": status,
             "type": kind,
             # For the split markers: the epic is no ticker (Booking is still

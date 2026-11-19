@@ -32,7 +32,7 @@ from auto_trader.brokers._dealing import (
     clean as _clean,
     to_float as _f,
 )
-from auto_trader.brokers._market_hours import _market_hours_state
+from auto_trader.brokers._market_hours import _market_hours_state, week_sessions
 from auto_trader.brokers._prices import (
     PriceSide,
     _RateLimiter,
@@ -295,6 +295,7 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
             "pricePrecision": precision,
             "closed": closed,
             "nextOpen": next_open,
+            "sessions": week_sessions(opening_hours, datetime.now(timezone.utc)),
             "status": status,
             # instrumentType ("SHARES", "CURRENCIES", ...): gates split markers.
             "type": (d.get("instrument") or {}).get("type"),

@@ -292,8 +292,8 @@ def test_get_market_meta_falls_back_to_marketstatus_without_hours():
     )
     meta = _run_meta(broker, "EURUSD")
     assert meta == {
-        "pricePrecision": 5, "closed": False, "nextOpen": None, "status": "TRADEABLE",
-        "type": None,
+        "pricePrecision": 5, "closed": False, "nextOpen": None, "sessions": None,
+        "status": "TRADEABLE", "type": None,
     }
 
     broker = _broker_returning(
@@ -467,3 +467,23 @@ def test_get_candles_never_requests_more_than_max_inclusive_points():
         assert inclusive_points <= MAX_BARS_PER_REQUEST, (
             f"window {frm}->{to} asks for {inclusive_points} points > max {MAX_BARS_PER_REQUEST}"
         )
+
+
+def test_week_sessions_merges_and_splits_at_the_week_edge():
+    from auto_trader.brokers._market_hours import week_sessions
+
+    got = week_sessions(_OIL_HOURS, _at(2026, 6, 22, 12, 0))
+    assert got is not None
+    assert all(0 <= s < e <= 7 * 1440 for s, e in got)
+    assert got == sorted(got)
+    # Nothing on Saturday (5 * 1440 .. 6 * 1440).
+    assert not any(s < 6 * 1440 and e > 5 * 1440 for s, e in got)
+    assert week_sessions(None, _at(2026, 6, 22, 12, 0)) is None
+    assert week_sessions({"zone": "UTC"}, _at(2026, 6, 22, 12, 0)) is None
+
+
+def test_week_sessions_rounds_an_end_with_seconds_up():
+    from auto_trader.brokers._market_hours import week_sessions
+
+    hours = {"mon": ["00:00 - 21:59:50"], "zone": "UTC"}
+    assert week_sessions(hours, _at(2026, 6, 22, 12, 0)) == [[0, 22 * 60]]

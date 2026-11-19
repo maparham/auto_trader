@@ -195,6 +195,10 @@ async def market_meta(
         # both demo and live); `status` is the raw marketStatus, kept for reference.
         "closed": meta.get("closed"),
         "nextOpen": meta.get("nextOpen"),
+        # The weekly opening hours as [start, end) minutes of the UTC week
+        # (Monday 00:00 = 0), or None: the chart's bar countdown ends at the
+        # last open moment of the bar instead of its nominal end.
+        "sessions": meta.get("sessions"),
         "status": meta.get("status"),
     }
 

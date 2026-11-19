@@ -48,7 +48,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from auto_trader.brokers._market_hours import _market_hours_state
+from auto_trader.brokers._market_hours import _market_hours_state, week_sessions
 from auto_trader.brokers._mt5_sessions import MT5Sessions
 from auto_trader.brokers._mt5_symbols import MT5_CATEGORIES, _classify_symbol, avatrade_ticker
 from auto_trader.brokers._prices import pick_side
@@ -801,6 +801,7 @@ class MT5MCPBroker(MarketDataBroker):
             "contractSize": cs,
             "closed": closed,
             "nextOpen": next_open,
+            "sessions": week_sessions(self.sessions.opening_hours(epic), datetime.now(timezone.utc)),
             "status": "CLOSED" if closed else "TRADEABLE",
             "type": _classify_symbol(epic),
             "yahooTicker": avatrade_ticker(epic, row.get("description"), row.get("isin")),

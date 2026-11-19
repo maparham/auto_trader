@@ -65,6 +65,7 @@ import { RESOLUTION_SECONDS, type LiveStatus } from "../lib/feed";
 import { maxBarMs, projectSplitMarkers, type SplitMarker } from "../lib/splits";
 import { EARNINGS_CHIP, projectEarningsMarkers } from "../lib/earnings";
 import { barEndMs } from "../lib/timeframe";
+import { sessionBarEnd, type WeekSessions } from "../lib/sessionBarEnd";
 import { type AlertCondition, type AlertTrigger } from "../lib/persist";
 import { type ExitCluster } from "../lib/tradeMarkers";
 import type { CurveLabelsHandle } from "../CurveLabels";
@@ -155,6 +156,7 @@ export interface ChartPaintDeps {
   draggingTradeRef: React.MutableRefObject<string | null>;
   hoveredFieldRef: React.MutableRefObject<TradeLineField | null>;
   marketClosedRef: React.MutableRefObject<boolean>;
+  sessionsRef: React.MutableRefObject<WeekSessions | null>;
   // The cell's replay handle (null when it has never replayed). Read live: a
   // replaying cell has no stream, so the bar countdown and the bid/ask pills
   // would otherwise paint from stale live state.
@@ -220,6 +222,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     draggingTradeRef,
     hoveredFieldRef,
     marketClosedRef,
+    sessionsRef,
     replayRef,
     statusRef,
     bidAskRef,
@@ -736,10 +739,14 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
           countdown = "closed";
         } else if (statusRef.current === "live") {
           // barEndMs: a custom intraday bar that ends the day is short.
-          const endMs =
+          const nominalEndMs =
             barEndMs(resRef.current, last.timestamp) ??
             last.timestamp + (RESOLUTION_SECONDS[resRef.current] ?? 60) * 1000;
-          const rem = Math.max(0, Math.floor((endMs - Date.now()) / 1000));
+          // The broker's hours: Friday's daily bar stops at the close, not at
+          // midnight, and a weekly bar at the weekend close.
+          const now = Date.now();
+          const endMs = sessionBarEnd(sessionsRef.current, now, last.timestamp, nominalEndMs);
+          const rem = Math.max(0, Math.floor((endMs - now) / 1000));
           countdown = fmtCountdown(rem);
         }
         // Width of the price-axis column, so the pill fills it exactly (its left
