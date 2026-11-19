@@ -102,9 +102,12 @@ export default function CurveLabels({ handleRef }: { handleRef?: Ref<CurveLabels
             font: "11px -apple-system, system-ui, sans-serif",
             lineHeight: "14px",
             padding: "1px 4px",
-            borderRadius: 3,
-            color: "#fff",
-            background: p.color,
+            fontWeight: 600,
+            // No fill: the text takes the curve's color, with a halo in the chart
+            // background so it stays readable over candles and grid lines.
+            color: p.color,
+            textShadow:
+              "0 0 2px var(--bg), 0 0 2px var(--bg), 0 0 3px var(--bg)",
           }}
         >
           {p.text}
