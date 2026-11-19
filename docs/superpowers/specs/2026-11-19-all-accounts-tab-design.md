@@ -35,9 +35,11 @@ they choose to.
 
 **When the tab exists.** Only when at least one dealing (non-paper,
 non-data) account is registered; hosted non-admin users and demo mode have
-none, so they see no tab. When the active account is paper or data-only,
-there is no "current" section and every row click goes through the switch
-confirm.
+none, so they see no tab. A data-only active broker (Dukascopy, Yahoo) keeps
+its read-only dock with no tab. When the active account is paper, there is no
+"current" section and every row click goes through the switch confirm. The
+current section reads the dock's own trades feed and summary; it is never
+polled by this tab.
 
 **Tab label.** "All accounts (N)", N = open positions in accounts other than
 the active one, not counting hidden accounts. To keep N current while the tab
