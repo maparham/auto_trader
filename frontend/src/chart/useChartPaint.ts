@@ -21,6 +21,7 @@ import {
   paintSelectionDots,
   paintCrossingDots,
   buildCurveLabelPills,
+  pillsClearOfBells,
   buildSlopeMaPills,
   paintAnchorHandle,
   paintPivotDeltaLabels,
@@ -251,6 +252,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     period,
     scope,
   } = deps;
+  // The latest alert curve bells (chart-absolute), so curve-end labels can step past them.
+  const lineBellsRef = useRef<AlertCurveBellTag[]>([]);
 
   const {
     chartRef,
@@ -678,6 +681,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       // object/array is built per redraw: the redraw runs on every pan frame,
       // and a fresh-but-equal identity would re-render the whole cell tree.
       setAlertTags((prev) => stableArray(prev, []));
+      lineBellsRef.current = [];
       setLineAlertBells((prev) => stableArray(prev, []));
       handle.paintSeparatorRef.current();
       return;
@@ -964,6 +968,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       if (Math.abs(cur.x - prev.x) < LINE_BELL_SIZE && cur.y - prev.y < LINE_BELL_SIZE)
         lineBells[i] = { ...cur, y: prev.y + LINE_BELL_SIZE };
     }
+    lineBellsRef.current = lineBells;
     setLineAlertBells((prev) => stableArray(prev, lineBells));
     const act = tags.find((t) => t.active);
     if (act) lastActivePillIdRef.current = act.id;
@@ -1263,10 +1268,16 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // indicator) or for the selected/hovered targets. buildCurveLabelPills
         // returns [] when nothing qualifies, clearing the overlay.
         const maxX = chart.getSize("candle_pane", 'main')?.width ?? w;
-        curveLabelsRef.current?.setPills([
-          ...buildCurveLabelPills(lineCacheRef.current, labelTargets, maxX),
-          ...buildSlopeMaPills(chart, labelTargets, maxX),
-        ]);
+        // A label starts past any alert bell at its curve's end.
+        curveLabelsRef.current?.setPills(
+          pillsClearOfBells(
+            [
+              ...buildCurveLabelPills(lineCacheRef.current, labelTargets, maxX),
+              ...buildSlopeMaPills(chart, labelTargets, maxX),
+            ],
+            lineBellsRef.current,
+          ),
+        );
         // Draw every Pivots-High/Low Δ%/Δt label here (the indicator no longer draws
         // them itself), each small at rest, enlarging in place the one the cursor is
         // genuinely over — a real pixel hit-test, so it works at any zoom. Re-hit-tested

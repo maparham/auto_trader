@@ -311,3 +311,31 @@ export function fmtCountdown(totalSec: number): string {
   const ss = String(s).padStart(2, "0");
   return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
 }
+
+// Alert bells (AlertCurveBells, 14px, centered on x,y) sit just past a curve's
+// end, where its right-side label starts too. A label that would cover a bell
+// starts past the bell's right edge instead. Left-side labels end before the
+// curve starts, so they never meet a bell.
+export function pillsClearOfBells(
+  pills: CurveLabelPill[],
+  bells: ReadonlyArray<{ x: number; y: number }>,
+): CurveLabelPill[] {
+  if (!bells.length) return pills;
+  const BELL_HALF = 7;
+  const GAP = 5; // pillTransform's gap between the curve end and the pill
+  const PILL_H = 16;
+  return pills.map((p) => {
+    if (p.side !== "right") return p;
+    const top = p.align === "center" ? p.y - PILL_H / 2 : p.align === "above" ? p.y - PILL_H - 2 : p.y + 2;
+    // Rough width (11px semibold text plus padding): only to tell if a bell is in reach.
+    const w = p.text.length * 7 + 8;
+    let x = p.x;
+    for (const b of [...bells].sort((a, c) => a.x - c.x)) {
+      const start = x + GAP;
+      if (b.y + BELL_HALF <= top || b.y - BELL_HALF >= top + PILL_H) continue;
+      if (b.x + BELL_HALF <= start || b.x - BELL_HALF >= start + w) continue;
+      x = b.x + BELL_HALF + 2 - GAP;
+    }
+    return x === p.x ? p : { ...p, x };
+  });
+}
