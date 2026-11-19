@@ -69,6 +69,14 @@ The MT5 Wine terminal stays on the AWS box (3.139.146.5). The box-only unit
 that one port. The API on AWS is disabled by the drop-in `moved-to-iran.conf`.
 Delete it to roll back.
 
+The AWS box stays up. Besides MT5 it runs a WireGuard VPN exit outside Iran
+(`wg-noniran-exit` over `wstunnel-wg`, plus `wg-intranet`/`wg-aws-iran`) with
+live peers, and the `aws-vps` Cloudflare tunnel (ssh, vnc, wgeasy, grafana and
+`iran-vps.rahkar.pro`, which reaches the Iran box through the reverse SSH
+relay). The stopped API and its 2.2 GB data dir are the rollback copy. To
+retire the box, MT5 and the VPN exit need a non-Iran host with about 1 GB of
+RAM (the claude-gateway box is too small).
+
 ## Agent UI Bridge
 
 MCP agents can drive the running UI: connect to `http://localhost:8000/mcp`
