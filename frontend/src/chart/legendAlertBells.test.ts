@@ -60,4 +60,16 @@ describe("indicatorAlertBells", () => {
     expect(bellsSig(a)).toBe(bellsSig(b));
     expect(bellsSig(a)).not.toBe(bellsSig(fired));
   });
+
+  it("names a curve or level alert by its condition, an event by its name", () => {
+    const chart = chartWith({ name: "EMA" });
+    const ema = (id: string, condition: IndicatorAlert["condition"]) =>
+      alert({ id, condition, whole: false, label: "EMA 50 (1D)", instanceId: "EMA", timeframe: "DAY",
+        params: { ...alert({}).params, type: "EMA", output: "ma", timeframe: "DAY", target: "price", value: null,
+          link: { scope: "cell-1", instanceId: "EMA" } } });
+    const got = indicatorAlertBells(chart, [ema("up", "crossing_up"), ema("down", "crossing_down")], "cell-1", "DAY");
+    expect(got.get("EMA")?.map((b) => b.label)).toEqual(["Crossing Up EMA 50 (1D)", "Crossing Down EMA 50 (1D)"]);
+    const ev = indicatorAlertBells(chartWith({ name: "RSI" }), [alert({})], "cell-1", "HOUR");
+    expect(ev.get("RSI")?.[0].label).toBe("RSI 14 bull div (1H)");
+  });
 });

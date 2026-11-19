@@ -3988,25 +3988,73 @@
 }
 .cl-warn svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
 /* Bell on a legend row: the indicator has an alert (any kind; one on the
-   indicator as a whole, such as a divergence, has no other mark). A FILLED
-   amber bell means armed (the on-chart bells' amber); a fired "once" alert
-   still in History is the same bell as a gray outline. The halo is the
+   indicator as a whole, such as a divergence, has no other mark). Drawn like
+   the row's other icons (.cl-icon, Material Symbols Outlined): an unfilled
+   line glyph, ~1.3px lines, the same gray. A fired "once" alert
+   still in History is the same bell in the fainter gray. The halo is the
    chart bells' own, so the mark reads over candles when the row has no card. */
 .cl-alert-bell {
-  display: inline-flex; align-items: center; gap: 2px; color: #f5a623; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 2px; color: var(--text-dim); cursor: pointer;
   /* No margin here: the row's `.cl-row > * + *` gives it the same 6px gap as
      every other legend item. */
   background: none; border: none; padding: 0; line-height: 1; font: inherit;
   border-radius: 3px;
   filter: drop-shadow(0 0 1px var(--bg)) drop-shadow(0 0 1px var(--bg));
 }
-.cl-alert-bell svg { display: block; fill: currentColor; stroke-width: 1.6; }
-.cl-alert-bell:hover { color: #d4880f; }
+/* 14px, not the glyphs' 16px: the bell's outline fills more of its box than
+   the eye/gear/trash do, so at 16px it reads a size larger. stroke-width 2.3
+   keeps the line at the glyphs' ~1.3px. */
+.cl-alert-bell svg { display: block; width: 14px; height: 14px; stroke-width: 2.3; }
+/* The same 18px cell as a .cl-icon, so the bell keeps their rhythm; directly
+   before the action icons it joins their strip with no extra gap (the strip's
+   8px margin is for figures, not for the bell). */
+.cl-alert-bell { min-width: 18px; height: 18px; justify-content: center; }
+.cl-alert-bell + .cl-icons,
+.cl-alert-bell + .cl-alert-bell { margin-left: 0; }
+.cl-alert-bell:hover { color: var(--text); }
 .cl-alert-bell:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
-.cl-alert-bell.fired { color: var(--text-dim); }
-.cl-alert-bell.fired svg { fill: none; }
-.cl-alert-bell.fired:hover { color: var(--text); }
-.cl-alert-count { font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cl-alert-bell.fired { color: var(--text-faint); }
+/* The count is a superscript at the bell's top right. The cell grows by the
+   digit (bell left in it) so the number has its own room and never touches
+   the eye that follows. */
+.cl-alert-bell { position: relative; }
+.cl-alert-bell.has-count { width: 23px; justify-content: flex-start; padding-left: 2px; }
+.cl-alert-count {
+  position: absolute; top: 0; right: 1px;
+  font-size: 9px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums;
+}
+.cl-alert-bell.open { color: var(--text); }
+/* The bell's alert list (chart/AlertBellList): the menus' surface, one row per
+   alert. A live row is the Edit action (hover tints it); its icon buttons sit
+   at the right in the legend icons' gray. A fired row is dimmed, with when it
+   fired under the name, and only its buttons act. */
+.alert-bell-list {
+  position: fixed; z-index: 1000; min-width: 220px; max-width: 360px; padding: 4px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 28px var(--shadow); font-size: 13px; color: var(--text);
+}
+.abl-row {
+  display: flex; align-items: center; gap: 2px; padding: 3px 3px 3px 8px;
+  border-radius: 5px; min-height: 30px;
+}
+.abl-row[role="button"] { cursor: pointer; }
+.abl-row[role="button"]:hover { background: var(--hover); }
+.abl-row[role="button"]:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.abl-label {
+  flex: 1 1 auto; min-width: 0; margin-right: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.abl-row.fired .abl-label { color: var(--text-dim); }
+.abl-when { display: block; font-size: 11px; color: var(--text-faint); }
+.abl-btn {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 24px; height: 24px; padding: 0; border: none; border-radius: 4px;
+  background: transparent; color: var(--text-dim); cursor: pointer;
+}
+.abl-btn svg { width: 15px; height: 15px; }
+.abl-btn:hover { color: var(--text); background: var(--surface); }
+.abl-btn.danger:hover { color: var(--danger); }
+.abl-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* Busy spinner on a legend row while the indicator computes (lib/indicatorBusy).
    A transform animation, so the compositor keeps it turning even while a
    synchronous compute holds the main thread. */

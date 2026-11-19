@@ -7,7 +7,7 @@
 // the indicator alerts on the chart's timeframe here (its pin's, when
 // pinned), as the curve bells do.
 import type { Chart } from "klinecharts";
-import type { IndicatorAlert } from "../lib/alertsApi";
+import { alertLabel, type IndicatorAlert } from "../lib/alertsApi";
 import { alertTimeframeOf } from "../lib/indicatorAlertInstance";
 import { getIndicatorById } from "../lib/indicators";
 
@@ -30,7 +30,14 @@ export function indicatorAlertBells(
     const ext = ind.extendData as Record<string, unknown> | undefined;
     if (a.params.timeframe !== alertTimeframeOf(ext, resolution)) continue;
     const list = out.get(link.instanceId) ?? [];
-    list.push({ id: a.id, label: a.label ?? a.params.output, ...(a.firedAt != null ? { firedAt: a.firedAt } : {}) });
+    // The alerts panel's own phrase (condition + indicator + level), so two
+    // alerts on one indicator ("Crossing Up EMA 50", "Crossing Down EMA 50")
+    // read apart in the tooltip and the menu. An event (a divergence, a
+    // pattern) is stored as a cross up through 0.5, which says nothing to
+    // the user: its name alone is what fires.
+    const event = a.whole && a.params.target === "value";
+    const label = event ? (a.label ?? a.params.output) : alertLabel(a, a.precision);
+    list.push({ id: a.id, label, ...(a.firedAt != null ? { firedAt: a.firedAt } : {}) });
     out.set(link.instanceId, list);
   }
   return out;
