@@ -8,6 +8,7 @@ import { cellTradeBook } from "../lib/replayLedger";
 import { useMaskedReplayFor, type MaskedReplay } from "../lib/useMaskedReplay";
 import { maskedTimeLabel } from "../lib/timeFormat";
 import Tooltip from "../components/Tooltip";
+import { PILL_H, ROW } from "./pillHit";
 
 export interface TradePillItem {
   tradeId: string;
@@ -63,9 +64,6 @@ interface TradePillsProps {
     cancel(t: TradeView): Promise<void>;
   };
 }
-
-const PILL_H = 22; // .trade-pill height (App.css)
-const ROW = 24; // vertical pitch inside a spread column
 
 // Transitive collision chaining over y-sorted pills: each pill within a pill
 // height of the previous one joins the cluster. Used twice — at render time to
@@ -303,7 +301,9 @@ export default function TradePills({
     <>
       {visible.map((v) => {
         if (v.kind === "summary") {
-          const withPl = v.members.filter((m) => m.pl != null);
+          // Live P/L only: an SL/TP pill's `pl` is what it WOULD book if hit, so
+          // adding it to the entry's uPnL gives a number that means nothing.
+          const withPl = v.members.filter((m) => m.field === "price" && m.pl != null);
           const net = withPl.length ? withPl.reduce((s2, m) => s2 + (m.pl as number), 0) : null;
           // Selection no longer expands the cluster, so the aggregate itself wears
           // the selected style when it holds the selected trade's pill — the bracket

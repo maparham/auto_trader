@@ -277,6 +277,7 @@ import AxisPriceTags, { WithPriceTag, type BaTag, type PriceTag } from "./chart/
 import { signalSetter } from "./lib/signalHooks";
 import { bellsSig, indicatorAlertBells, type LegendAlertBell } from "./chart/legendAlertBells";
 import TradePills from "./chart/TradePills";
+import { pillKeyAt } from "./chart/pillHit";
 
 // klinecharts' own initial bar spacing (its DEFAULT_BAR_SPACE, not exported) — used to
 // restore the time axis on double-click, matching what a freshly loaded chart starts at.
@@ -1297,14 +1298,12 @@ export default function ChartCore({
     clientX: number,
     clientY: number,
   ): { id: string; field: TradeLineField } | null => {
-    for (const [key, node] of tradePillNodesRef.current) {
-      const r = node.getBoundingClientRect();
-      if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-        const i = key.lastIndexOf(":");
-        return { id: key.slice(0, i), field: key.slice(i + 1) as TradeLineField };
-      }
-    }
-    return null;
+    const rects = new Map<string, DOMRect>();
+    for (const [key, node] of tradePillNodesRef.current) rects.set(key, node.getBoundingClientRect());
+    const key = pillKeyAt(rects, clientX, clientY);
+    if (key == null) return null;
+    const i = key.lastIndexOf(":");
+    return { id: key.slice(0, i), field: key.slice(i + 1) as TradeLineField };
   };
   // The hovered trade id — drives the pill hover-lift (soft shadow + red close). Kept
   // as light state so a hover only toggles a CSS class, not a full pill rebuild.

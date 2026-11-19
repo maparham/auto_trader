@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import TradePills, { type TradePillItem } from "./TradePills";
+import { pillKeyAt } from "./pillHit";
 import type { TradeView } from "../lib/trading";
 import { setTradeSelected, tradePanelOpen, type PendingEdit } from "../lib/signals";
 import { armMaskedReplay, disarmMaskedReplay, maskedReplaySignal } from "../lib/maskedReplay";
@@ -410,6 +411,20 @@ describe("TradePills cluster collapse", () => {
     expect(summary.style.right).toBe("60px");
   });
 
+  it("sums only live entry P/L, never the SL/TP if-hit figures", () => {
+    // SILVER: long at a loss with SL and TP collapsed onto the entry.
+    const container = cascadeRender([
+      { ...pill("A", "price"), y: 100, pl: -26.74 },
+      { ...pill("A", "stop"), y: 105, pl: -2.48 },
+      { ...pill("A", "tp"), y: 110, pl: 108.7 },
+    ]);
+    const summary = container.querySelector<HTMLElement>(".tp-cluster")!;
+    expect(summary.textContent).toContain("3×");
+    expect(summary.textContent).toContain("26.74");
+    expect(summary.textContent).not.toContain("79.48");
+    expect(summary.style.getPropertyValue("--pnl")).toBe("#f23645");
+  });
+
   it("omits the net P/L when no member carries one", () => {
     const container = cascadeRender([
       { ...pill("A", "price"), y: 100 },
@@ -770,5 +785,38 @@ describe("TradePills date masking", () => {
     const text = container.querySelector<HTMLElement>(".trade-pill")!.textContent ?? "";
     expect(text).not.toContain("Day 4");
     maskedReplaySignal.set(disarmMaskedReplay(maskedReplaySignal.value, "other-cell"));
+  });
+});
+
+describe("pillKeyAt: an open column holds the hover", () => {
+  // A spread 3-row column at 24px pitch; the middle pill is hovered (wide face).
+  const rects = new Map([
+    ["A:price", { left: 200, right: 260, top: 100, bottom: 122 }],
+    ["A:stop", { left: 120, right: 260, top: 124, bottom: 146 }],
+    ["A:tp", { left: 210, right: 260, top: 148, bottom: 170 }],
+  ]);
+
+  it("hits a face directly", () => {
+    expect(pillKeyAt(rects, 230, 110)).toBe("A:price");
+  });
+
+  it("splits the 2px gap between rows instead of dropping the hover", () => {
+    expect(pillKeyAt(rects, 230, 122.8)).toBe("A:price");
+    expect(pillKeyAt(rects, 230, 123.2)).toBe("A:stop");
+  });
+
+  it("counts a narrow row from the column's left edge", () => {
+    expect(pillKeyAt(rects, 150, 160)).toBe("A:tp");
+  });
+
+  it("misses outside the column", () => {
+    expect(pillKeyAt(rects, 100, 160)).toBeNull();
+    expect(pillKeyAt(rects, 230, 180)).toBeNull();
+  });
+
+  it("does not stretch a lone pill", () => {
+    const one = new Map([["B:price", { left: 200, right: 260, top: 100, bottom: 122 }]]);
+    expect(pillKeyAt(one, 230, 123)).toBeNull();
+    expect(pillKeyAt(one, 150, 110)).toBeNull();
   });
 });
