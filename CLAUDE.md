@@ -71,9 +71,10 @@ Delete it to roll back.
 
 The AWS box stays up. Besides MT5 it runs a WireGuard VPN exit outside Iran
 (`wg-noniran-exit` over `wstunnel-wg`, plus `wg-intranet`/`wg-aws-iran`) with
-live peers, and the `aws-vps` Cloudflare tunnel (ssh, vnc, wgeasy, grafana and
-`iran-vps.rahkar.pro`, which reaches the Iran box through the reverse SSH
-relay). The stopped API and its 2.2 GB data dir are the rollback copy. To
+live peers, and the `aws-vps` Cloudflare tunnel (ssh, vnc, wgeasy, grafana).
+`iran-vps.rahkar.pro` is a DNS-only A record to the Iran box (since
+2026-11-19); the box's `aws-relay` reverse SSH to AWS still runs as a backup
+way in. The stopped API and its 2.2 GB data dir are the rollback copy. To
 retire the box, MT5 and the VPN exit need a non-Iran host with about 1 GB of
 RAM (the claude-gateway box is too small).
 
