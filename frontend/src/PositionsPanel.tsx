@@ -109,8 +109,9 @@ const COLLAPSE_KEY = "tradeDockCollapsed";
 // User-dragged dock height in px; absent means content-sized (the default).
 const HEIGHT_KEY = "tradeDockHeight";
 const MIN_DOCK_H = 90;
-// Always leave this much of the window for the chart above the dock.
-const CHART_RESERVE_H = 160;
+// Always leave this much of the window above the dock (toolbar, tab strip and
+// a usable chart).
+const CHART_RESERVE_H = 220;
 const clampDockHeight = (h: number) =>
   Math.round(Math.max(MIN_DOCK_H, Math.min(h, window.innerHeight - CHART_RESERVE_H)));
 
@@ -179,6 +180,15 @@ export default function PositionsPanel({
   // Ends an in-flight drag; also run on unmount so no window listener leaks.
   const endResizeRef = useRef<(() => void) | null>(null);
   useEffect(() => () => endResizeRef.current?.(), []);
+  // Re-clamp a dragged height when the window shrinks; the dock may not
+  // re-render on its own while no prices stream.
+  const [, setWinTick] = useState(0);
+  useEffect(() => {
+    if (dockHeight == null) return;
+    const onResize = () => setWinTick((n) => n + 1);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [dockHeight]);
   function saveDockHeight(h: number | null) {
     try {
       if (h == null) localStorage.removeItem(HEIGHT_KEY);
@@ -196,11 +206,20 @@ export default function PositionsPanel({
     // Null until the pointer moves, so a plain click (or the first half of the
     // reset double-click) never pins the content-sized dock to a fixed height.
     let last: number | null = null;
+    // One render per frame, not per pointer event: the whole book re-renders.
+    let frame = 0;
     const move = (ev: PointerEvent) => {
       last = clampDockHeight(startH + (startY - ev.clientY));
-      setDockHeight(last);
+      if (!frame) {
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          setDockHeight(last);
+        });
+      }
     };
     const end = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
@@ -209,7 +228,10 @@ export default function PositionsPanel({
     };
     const up = () => {
       end();
-      if (last != null) saveDockHeight(last);
+      if (last != null) {
+        setDockHeight(last);
+        saveDockHeight(last);
+      }
     };
     endResizeRef.current?.();
     endResizeRef.current = end;
