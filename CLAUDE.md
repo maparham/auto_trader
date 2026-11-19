@@ -337,6 +337,31 @@ that time, so a later fire shows again. Deleting an alert hides it the same
 way, so a re-armed alert the user deletes does not come back gray. Spec:
 docs/superpowers/specs/2026-11-18-fired-alert-bells-design.md.
 
+### Legend alert bell
+
+Every indicator alert linked to a cell also puts a bell on its indicator's
+legend row, on the alert's timeframe (the pin's, when pinned), live alerts
+and fired ones still in History alike (`indicatorAlertBells` in
+`chart/legendAlertBells.ts`; ChartCore reads it through
+`useSyncExternalStore` on `alertsChanged` and keeps the old map while
+`bellsSig` is unchanged, so an alert-line drag does not re-render every
+cell). The server stamps `whole: true` on indicator rows (live and History)
+whose output is an event or price-only (`IndicatorKind.whole`): divergences,
+candle patterns, sweeps, Trendlines' `tl_nearest`. Those have no curve bell
+and no dashed level line, so the legend bell is their only mark; other
+alerts keep their curve bell or dashed line as well.
+
+The bell (`chart/AlertBellList.tsx`) is drawn like the row's icons: an
+outline in `--text-dim`, an 18px cell that joins the action icons' strip,
+faint when every alert on it has fired, the count as a superscript. A click
+(or right click, or Enter) opens a list under it, one row per alert, named
+by `alertLabel` (an event by its name alone). Clicking a live row edits it,
+and its pencil and trash edit and delete; a fired row shows when it fired
+and has Re-arm and Hide. The list is portaled, so it stops its own events
+from bubbling up the React tree to the legend row (select, settings, an
+armed "Pick from chart"); it takes focus, and closes on an outside click,
+Escape (consumed in the window's capture phase), resize or scroll.
+
 ### Account alerts
 
 `kind: "account"` rows (`broker` = exec key such as `capital-live:live`,
