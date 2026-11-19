@@ -3425,8 +3425,14 @@
 /* A fired "once" alert still in History: gray, and only its bell takes the
    mouse (double click re-arms, right click Re-arm / Hide), so the tag never
    blocks a drag on the price axis. */
-.alert-tag.fired { border-color: var(--text-dim); color: var(--text-dim); opacity: .7; }
-.alert-tag.fired .at-bell { color: var(--text-dim); pointer-events: auto; cursor: pointer; }
+.alert-tag.fired { border-color: var(--text-dim); color: var(--text-dim); opacity: .7; justify-content: center; }
+/* The bell sits just left of the axis column, outside the price pill's reach,
+   with a halo (no disc) so it reads over candles. */
+.alert-tag.fired .at-bell {
+  position: absolute; right: calc(100% + 2px); top: 50%; transform: translateY(-50%);
+  color: var(--text-dim); pointer-events: auto; cursor: pointer;
+  filter: drop-shadow(0 0 1px var(--bg)) drop-shadow(0 0 1px var(--bg));
+}
 .tl-alert-bell.fired { color: var(--text-dim); opacity: .7; }
 .tl-alert-bell:hover { z-index: 51; color: #d4880f; }
 

@@ -26,29 +26,19 @@ describe("AlertTags", () => {
     expect(tags[0].classList.contains("fired")).toBe(true);
   });
 
-  it("a fired tag on the price row docks left of the pill as a bell alone", () => {
+  it("a fired tag fills the axis column and keeps its level, on the price row too", () => {
     const { container } = render(
       <AlertTags
         tags={[tag({ firedAt: Date.now() })]}
         priceTag={{ y: 110, countdown: "4:18", w: 60 }}
         precision={2}
+        axisW={60}
       />,
     );
     const el = container.querySelector(".alert-tag.fired") as HTMLElement;
-    expect(el.classList.contains("docked")).toBe(true);
-    expect(el.style.right).toBe("62px");
-    expect(el.querySelector(".at-price")).toBeNull();
-    expect(el.querySelector(".at-bell")).not.toBeNull();
-  });
-
-  it("a fired tag away from the price row keeps its level and axis spot", () => {
-    const { container } = render(
-      <AlertTags tags={[tag({ firedAt: Date.now() })]} priceTag={{ y: 300, countdown: null, w: 60 }} precision={2} />,
-    );
-    const el = container.querySelector(".alert-tag.fired") as HTMLElement;
-    expect(el.classList.contains("docked")).toBe(false);
-    expect(el.style.right).toBe("");
+    expect(el.style.width).toBe("60px");
     expect(el.querySelector(".at-price")?.textContent).toBe("50.00");
+    expect(el.querySelector(".at-bell")).not.toBeNull();
   });
 
   it("a fired tag re-arms on double click and its bell opens Re-arm / Hide", () => {

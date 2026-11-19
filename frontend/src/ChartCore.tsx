@@ -6257,6 +6257,7 @@ export default function ChartCore({
             tags={alertTags}
             priceTag={priceTag}
             precision={precision}
+            axisW={axisW}
             onRearm={rearmFired}
             onHide={hideFiredAlert}
           />

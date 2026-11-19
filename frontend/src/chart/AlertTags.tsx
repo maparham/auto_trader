@@ -24,6 +24,8 @@ interface AlertTagsProps {
   tags: AlertTagItem[];
   priceTag: { y: number; countdown: string | null; w?: number } | null;
   precision: number;
+  /** Price-axis column width: a fired tag fills it, its bell sits just outside. */
+  axisW?: number;
   onRearm?: (id: string) => void;
   onHide?: (id: string) => void;
 }
@@ -38,22 +40,18 @@ function overlapsPrice(y: number, priceTag: { y: number; countdown: string | nul
  * On-chart alert axis tags: a small bell + level pill anchored to each active
  * alert's y position. Pure props-in — no state, no side effects.
  */
-export default function AlertTags({ tags, priceTag, precision, onRearm, onHide }: AlertTagsProps) {
+export default function AlertTags({ tags, priceTag, precision, axisW, onRearm, onHide }: AlertTagsProps) {
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   return (
     <>
       {tags.map((t) => {
         // A fired tag sits where the price crossed it, which is usually the
-        // live-price row. There it would hide under the price pill, so it docks
-        // left of the pill as a bell alone (the pill already shows the price).
+        // live-price row. Its level fills the axis column (under the price pill
+        // there, which shows that price anyway) and its bell always sits just
+        // outside the axis, so the bell stays visible and never jumps.
         if (t.firedAt != null) {
-          const docked = priceTag != null && overlapsPrice(t.y, priceTag);
           return (
-            <div
-              key={t.id}
-              className={`alert-tag fired${docked ? " docked" : ""}`}
-              style={{ top: t.y, right: docked ? (priceTag.w ?? 0) + 2 : undefined }}
-            >
+            <div key={t.id} className="alert-tag fired" style={{ top: t.y, width: axisW || undefined }}>
               {/* Only the bell takes the mouse, so the rest of the tag never
                   blocks a drag on the price axis. */}
               <Tooltip asChild content={["Price alert", firedText(t.firedAt), "Double click to re-arm"]}>
@@ -81,7 +79,7 @@ export default function AlertTags({ tags, priceTag, precision, onRearm, onHide }
                   <BellIcon size={11} />
                 </span>
               </Tooltip>
-              {!docked && <span className="at-price">{fmtPrice(t.level, precision)}</span>}
+              <span className="at-price">{fmtPrice(t.level, precision)}</span>
             </div>
           );
         }
