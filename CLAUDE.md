@@ -74,7 +74,15 @@ The AWS box stays up. Besides MT5 it runs a WireGuard VPN exit outside Iran
 live peers, and the `aws-vps` Cloudflare tunnel (ssh, vnc, wgeasy, grafana).
 `iran-vps.rahkar.pro` is a DNS-only A record to the Iran box (since
 2026-11-19); the box's `aws-relay` reverse SSH to AWS still runs as a backup
-way in. The stopped API and its 2.2 GB data dir are the rollback copy. To
+way in. The stopped API and its 2.2 GB data dir are the rollback copy.
+
+Monitoring: the Iran box's `egress-check` timer (every 2 min) reaches Telegram
+and Capital through the proxy and writes the result, which Caddy serves at
+`https://api.chartkar.app/egress-status`. The AWS box's `chartkar-watch` timer
+(every 5 min, outside Iran so Telegram works when the gateway does not) reads
+`/health` and that status and messages the admin through @ChartkarBot after
+two failed runs, every 6 h while failing, and on recovery. Config:
+`/etc/chartkar-watch.env` (CHAT_ID, TELEGRAM_BOT_TOKEN). To
 retire the box, MT5 and the VPN exit need a non-Iran host with about 1 GB of
 RAM (the claude-gateway box is too small).
 
