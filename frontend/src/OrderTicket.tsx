@@ -64,6 +64,7 @@ import ProximityWarn from "./components/ProximityWarn";
 import { addPositionAlert } from "./lib/alertsApi";
 import { expiryToApi, isValidExpiry } from "./lib/expiry";
 import { useMarketClosed } from "./lib/useMarketClosed";
+import { useBrokerLeverage } from "./lib/useBrokerLeverage";
 import { fmtNextOpen } from "./lib/marketInfoFormat";
 
 interface Props {
@@ -219,6 +220,9 @@ export default function OrderTicket({
   // as before.
   const market = useMarketClosed(epic, brokerOf(account), !replaying);
   const closedBlocks = market.closed && !isLimit && !account.endsWith(":paper");
+  // A broker account margins at the leverage its broker states; the Settings
+  // figure is only the fallback (and what the paper sim uses).
+  const brokerLev = useBrokerLeverage(epic, brokerOf(account), !replaying && !account.endsWith(":paper"));
   // The sticky warning leaves on the user's next interaction with the form.
   const dropStickyMsg = () => setMsg((m) => (m?.startsWith(WARN_FAIL_PREFIX) ? null : m));
   const round = (n: number) => Number(n.toFixed(precision));
@@ -455,7 +459,7 @@ export default function OrderTicket({
   // A live account shows the broker's true figures; paper falls back to the
   // configured balance/currency (accountSummary is null for the paper sim).
   const cur = accountSummary?.currency ?? trading.accountCurrency;
-  const lev = leverageFor(trading, instrumentType ?? undefined);
+  const lev = brokerLev ?? leverageFor(trading, instrumentType ?? undefined);
   const openPositions = positions.filter((t) => t.kind === "position");
   const info = computeOrderInfo({
     quantity: Number(quantity) || 0,
