@@ -31,6 +31,36 @@ describe("useIsAdmin", () => {
     expect(screen.getByTestId("flag").textContent).toBe("false");
   });
 
+  it("retries after a transient failure", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.spyOn(api, "fetchWhoami")
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockRejectedValueOnce(new api.AdminHttpError(401, "token not ready"))
+        .mockResolvedValue({ userId: "u", email: null, isAdmin: true, hostedMode: true });
+      render(<Probe />);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await waitFor(() => expect(screen.getByTestId("flag").textContent).toBe("true"));
+      expect(api.fetchWhoami).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry a 403", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.spyOn(api, "fetchWhoami").mockRejectedValue(
+        new api.AdminHttpError(403, "admin access required"),
+      );
+      render(<Probe />);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(api.fetchWhoami).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not probe at all when disabled", () => {
     const spy = vi.spyOn(api, "fetchWhoami");
     render(<Probe enabled={false} />);

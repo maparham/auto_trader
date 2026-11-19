@@ -935,9 +935,11 @@ export default function Toolbar({
 
       {CLERK_ENABLED && !isDemoMode() && (
         <div className="clerk-user" style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
-          <UserButton>
-            {/* Operator console. Only rendered for an account the backend
-                confirms as admin; the page itself is gated server-side too. */}
+          {/* Operator console. Only rendered for an account the backend
+              confirms as admin; the page itself is gated server-side too.
+              The key remounts the button when the probe answers: Clerk may
+              not pick up menu items added after it mounted. */}
+          <UserButton key={isAdmin ? "admin" : "user"}>
             {isAdmin && (
               <UserButton.MenuItems>
                 <UserButton.Link
