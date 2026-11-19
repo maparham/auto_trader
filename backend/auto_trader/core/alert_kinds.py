@@ -315,6 +315,16 @@ class IndicatorKind:
         cfg = config_of(p["type"], json.dumps(p["config"], sort_keys=True, allow_nan=False))
         return f"{ALERT_SPECS[p['type']].label(cfg, p['output'])} ({_tf.label(p['timeframe'])})"
 
+    def whole(self, params: dict) -> bool:
+        """True when the alert watches the indicator as a whole rather than one
+        of its drawn curves: a 0/1 event (a divergence, a candle pattern) or a
+        price-only output with no series of its own (Trendlines' nearest line).
+        The chart marks these with a bell on the indicator's legend row."""
+        p = upgrade_params(params)
+        cfg = config_of(p["type"], json.dumps(p["config"], sort_keys=True, allow_nan=False))
+        out = ALERT_SPECS[p["type"]].outputs(cfg).get(p["output"])
+        return out is not None and (out.kind == "event" or out.price_only)
+
     def sig(self, params: dict) -> str:
         p = upgrade_params(params)
         keys = ("type", "config", "output", "target", "value", "timeframe", "evalOn", "condition", "trigger")

@@ -238,7 +238,7 @@ export class IndicatorAlertLines {
     const out = new Map<string, Drawn>();
     for (const a of loadIndicatorAlerts(this.epic, this.broker)) {
       const p = a.params;
-      if (p.target !== "value" || p.value == null || !p.link) continue;
+      if (a.whole || p.target !== "value" || p.value == null || !p.link) continue;
       if (p.link.scope !== this.scope) continue;
       const paneId = this.paneOf(p.link.instanceId, p.timeframe);
       if (paneId) out.set(a.id, { paneId, value: p.value });

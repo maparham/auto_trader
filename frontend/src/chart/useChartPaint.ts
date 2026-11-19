@@ -864,7 +864,7 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
       : [...loadIndicatorAlerts(epicRef.current, brokerIdRef.current), ...firedIndicatorAlerts(epicRef.current, brokerIdRef.current)];
     for (const a of indBellAlerts) {
       const p = a.params;
-      if (p.target !== "price" || !p.link || p.link.scope !== scope) continue;
+      if (a.whole || p.target !== "price" || !p.link || p.link.scope !== scope) continue;
       const ind = getIndicatorById(chart, p.link.instanceId);
       if (!ind || ind.visible === false) continue;
       // A pinned line's alert sits on the pin's timeframe, drawn on any chart.

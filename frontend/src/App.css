@@ -3987,6 +3987,18 @@
   background: none; border: none; padding: 0; margin: 0; line-height: 0;
 }
 .cl-warn svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
+/* Bell on a legend row: an alert on the indicator as a whole (an event such
+   as a divergence), which has no curve or level to carry a bell. Same amber
+   as the on-chart bells. */
+.cl-alert-bell {
+  display: inline-flex; align-items: center; gap: 1px; color: #f5a623; cursor: pointer;
+  background: none; border: none; padding: 0; margin: 0; line-height: 0; font: inherit;
+}
+.cl-alert-bell:hover { color: #d4880f; }
+.cl-alert-bell.fired { color: var(--text-dim); opacity: .7; }
+.cl-alert-bell.fired:hover { opacity: 1; }
+.cl-alert-bell svg { display: block; }
+.cl-alert-count { font-size: 10px; line-height: 1; }
 /* Busy spinner on a legend row while the indicator computes (lib/indicatorBusy).
    A transform animation, so the compositor keeps it turning even while a
    synchronous compute holds the main thread. */

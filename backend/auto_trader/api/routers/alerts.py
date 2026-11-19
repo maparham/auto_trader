@@ -48,6 +48,7 @@ def _decorate(row: dict) -> dict:
     if row.get("kind") == "indicator":
         try:
             row["label"] = INDICATOR.label(row["params"])
+            row["whole"] = INDICATOR.whole(row["params"])
         except (KeyError, TypeError, ValueError):
             pass
     return row
@@ -324,6 +325,7 @@ async def get_triggered(request: Request) -> dict[str, Any]:
             try:
                 a["params"] = upgrade_params(a["params"])
                 a["label"] = INDICATOR.label(a["params"])
+                a["whole"] = INDICATOR.whole(a["params"])
             except (KeyError, TypeError, ValueError):
                 pass
     seen_raw = await ALERT_STORE.get_meta(user, "triggered_seen")

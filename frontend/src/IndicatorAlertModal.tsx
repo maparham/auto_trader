@@ -117,7 +117,7 @@ function Body({ base, existing, isEdit, defaults, now, onClose }: {
       ? await patchIndicatorAlert(existing!.id, { ...fields, params })
       : await addIndicatorAlert({
           kind: "indicator", id: newId(), epic: base.epic, broker: base.broker, precision: base.precision,
-          createdAt: Date.now(), label,
+          createdAt: Date.now(), label, whole: event || out.priceOnly,
           params: { ...params, type: desc.type, config: {}, instance: base.instance }, ...fields,
         });
     if (ok) onClose();

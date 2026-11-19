@@ -104,6 +104,21 @@ def test_list_and_create_carry_label(clerk):
     assert next(r for r in rows if r["id"] == saved["id"])["label"] == "RSI 14 (1H)"
 
 
+def test_rows_say_whether_they_watch_the_whole_indicator(clerk):
+    # A level on a curve is not "whole"; a 0/1 event (a divergence) is: the
+    # chart marks it on the legend row instead of on a curve or a level line.
+    level = client.post("/api/alerts", json=_rsi_body(), headers=_auth("alice")).json()
+    assert level["whole"] is False
+    ev = _rsi_body()
+    ev["id"] = "al-div"
+    ev["params"].update(output="bullDiv", value=0.5, condition="crossing_up")
+    saved = client.post("/api/alerts", json=ev, headers=_auth("alice"))
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["whole"] is True
+    rows = client.get("/api/alerts", headers=_auth("alice")).json()["alerts"]
+    assert {r["id"]: r["whole"] for r in rows} == {"al-rsi": False, "al-div": True}
+
+
 def test_patch_instance_replaces_the_pane(clerk):
     saved = client.post("/api/alerts", json=_rsi_body(ext={"source": "hl2"}), headers=_auth("alice")).json()
     r = client.patch(f"/api/alerts/{saved['id']}", json={"params": {"instance": {

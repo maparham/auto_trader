@@ -75,7 +75,7 @@ import {
 import BacktestAggMarkers, { type BacktestAggMarkersHandle } from "./BacktestAggMarkers";
 import BacktestTradeDashes, { type BacktestTradeDashesHandle } from "./BacktestTradeDashes";
 import { requestAlertEdit } from "./lib/alertEdit";
-import { deleteIndicatorAlert, hideFiredAlert, rearmAlert } from "./lib/alertsApi";
+import { deleteIndicatorAlert, firedIndicatorAlerts, hideFiredAlert, loadIndicatorAlerts, rearmAlert } from "./lib/alertsApi";
 import {
   Signal,
   alertEditRequest,
@@ -275,6 +275,7 @@ import AlertTags from "./chart/AlertTags";
 import AlertCurveBells, { type AlertCurveBellTag } from "./chart/AlertCurveBells";
 import AxisPriceTags, { WithPriceTag, type BaTag, type PriceTag } from "./chart/AxisPriceTags";
 import { signalSetter } from "./lib/signalHooks";
+import { bellsSig, wholeAlertBells, type LegendAlertBell } from "./chart/legendAlertBells";
 import TradePills from "./chart/TradePills";
 
 // klinecharts' own initial bar spacing (its DEFAULT_BAR_SPACE, not exported) — used to
@@ -1051,6 +1052,28 @@ export default function ChartCore({
   // The inset band's legend card (the same card a sub-pane gets, positioned at the
   // band's top edge) and the band's own geometry, which the resize handle sits on.
   const [insetLegend, setInsetLegend] = useState<SubPaneLegendData | null>(null);
+  // Bells on the legend rows of indicators that carry a whole-indicator alert
+  // (an event such as a divergence), live or fired. Read on every alerts bump
+  // and every render (an indicator added, removed or re-pinned re-renders
+  // through the legend rows), but the map only changes when its signature
+  // does: an alert-line drag bumps alertsChanged per move, and must not
+  // re-render every cell.
+  const legendBellsRef = useRef<{ sig: string; map: ReadonlyMap<string, LegendAlertBell[]> }>({ sig: "", map: new Map() });
+  const subscribeAlerts = useCallback((cb: () => void) => alertsChanged.subscribe(() => cb()), []);
+  const legendAlertBells = useSyncExternalStore(subscribeAlerts, () => {
+    const c = chartRef.current;
+    const map = c
+      ? wholeAlertBells(
+          c,
+          [...loadIndicatorAlerts(symbol.epic, brokerId), ...firedIndicatorAlerts(symbol.epic, brokerId)],
+          scope,
+          period.resolution,
+        )
+      : new Map<string, LegendAlertBell[]>();
+    const sig = bellsSig(map);
+    if (sig !== legendBellsRef.current.sig) legendBellsRef.current = { sig, map };
+    return legendBellsRef.current.map;
+  });
   const [insetBand, setInsetBand] = useState<InsetBandBox | null>(null);
   const insetLegendSigRef = useRef("");
   // Drop-indicator line's y-offset (relative to chart root) during a sub-pane drag;
@@ -6019,6 +6042,16 @@ export default function ChartCore({
         // wrap's onPointerDownCapture has already focused this cell, so the shared
         // symbol-search modal targets this cell's symbol.
         onChangeSymbol={requestSymbolSearch}
+        alertBells={legendAlertBells}
+        onEditAlert={(id) => requestAlertEdit(id)}
+        onDeleteAlert={(id) =>
+          requestConfirm({
+            message: `Delete this alert on ${symbol.epic}?`,
+            onConfirm: () => deleteIndicatorAlert(id),
+          })
+        }
+        onRearmAlert={rearmFired}
+        onHideAlert={hideFiredAlert}
       />
 
       {/* The inset band's resize handle, along its top edge. Rendered beside the

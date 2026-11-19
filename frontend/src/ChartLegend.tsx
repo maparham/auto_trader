@@ -28,7 +28,11 @@ import {
 // card — the user must not be able to remove/edit them via a card. Shared with the
 // reorder engine so the legend's card index and the engine's reorderable order stay
 // in lockstep (see isInternalIndicator in ./lib/indicators).
-import { WarnTriangleIcon } from "./lib/menuIcons";
+import { BellIcon, MenuIcons, WarnTriangleIcon } from "./lib/menuIcons";
+import ContextMenu from "./ContextMenu";
+import { createPortal } from "react-dom";
+import type { LegendAlertBell as LegendAlertBellData } from "./chart/legendAlertBells";
+import { firedText } from "./lib/timeFormat";
 import { isInternalIndicator, getIndicatorsByPane } from "./lib/indicators";
 // An inset instance carries an empty `figures` and a neutralised `precision` on
 // purpose (that is what keeps its values out of the price axis and its tick
@@ -171,6 +175,15 @@ export interface Props {
   // drag-to-reorder session from the legend card's grip handle.
   onMove: (name: string, targetIndex: number) => void;
   onStartReorder: (paneId: string, name: string) => void;
+  // Alerts on an indicator as a whole (chart/legendAlertBells), by indicator
+  // name: a bell on that row. Double click edits, right click Edit / Delete.
+  alertBells?: ReadonlyMap<string, LegendAlertBellData[]>;
+  onEditAlert?: (id: string) => void;
+  onDeleteAlert?: (id: string) => void;
+  // A fired "once" alert's gray bell: double click re-arms, right click
+  // Re-arm / Hide (as the on-chart fired bells).
+  onRearmAlert?: (id: string) => void;
+  onHideAlert?: (id: string) => void;
   handleRef?: Ref<ChartLegendHandle>;
 }
 
@@ -292,6 +305,11 @@ export default function ChartLegend({
   onOpenCacheStats,
   onMove,
   onStartReorder,
+  alertBells,
+  onEditAlert,
+  onDeleteAlert,
+  onRearmAlert,
+  onHideAlert,
   handleRef,
 }: Props) {
   const { legendHovered, legendHoverName } = controller;
@@ -442,6 +460,10 @@ export default function ChartLegend({
 
   return (
     <LegendChartContext.Provider value={getChart}>
+    <LegendAlertContext.Provider value={{
+      bells: alertBells ?? NO_BELLS, onEdit: onEditAlert, onDelete: onDeleteAlert,
+      onRearm: onRearmAlert, onHide: onHideAlert,
+    }}>
     <>
     <div
       className="chart-legend"
@@ -673,6 +695,7 @@ export default function ChartLegend({
       />
     ))}
     </>
+    </LegendAlertContext.Provider>
     </LegendChartContext.Provider>
   );
 }
@@ -686,6 +709,92 @@ export default function ChartLegend({
 // (the busy mark is keyed by it). A context rather than one more prop threaded
 // through IndicatorGroup and SubPaneLegend.
 const LegendChartContext = createContext<() => Chart | null>(() => null);
+
+// The whole-indicator alert bells, by indicator name, and what they do. A
+// context for the same reason as LegendChartContext.
+const NO_BELLS: ReadonlyMap<string, LegendAlertBellData[]> = new Map();
+type AlertActions = {
+  onEdit?: (id: string) => void;
+  onDelete?: (id: string) => void;
+  onRearm?: (id: string) => void;
+  onHide?: (id: string) => void;
+};
+const LegendAlertContext = createContext<AlertActions & { bells: ReadonlyMap<string, LegendAlertBellData[]> }>({
+  bells: NO_BELLS,
+});
+
+// The row's whole-indicator alerts: an amber bell for the live ones, a gray
+// one for fired "once" alerts still in History.
+function LegendAlertBells({ name }: { name: string }) {
+  const { bells, ...actions } = useContext(LegendAlertContext);
+  const list = bells.get(name);
+  if (!list?.length) return null;
+  const live = list.filter((b) => b.firedAt == null);
+  const fired = list.filter((b) => b.firedAt != null);
+  return (
+    <>
+      {live.length > 0 && <LegendAlertBell list={live} fired={false} actions={actions} />}
+      {fired.length > 0 && <LegendAlertBell list={fired} fired actions={actions} />}
+    </>
+  );
+}
+
+// One bell for a list of alerts. A double click (or Enter on the focused
+// bell) edits a live alert or re-arms a fired one when the list holds one;
+// the right-click menu has the actions for each.
+function LegendAlertBell({ list, fired, actions }: { list: LegendAlertBellData[]; fired: boolean; actions: AlertActions }) {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const one = list.length === 1 ? list[0] : null;
+  const act = () => {
+    if (one) (fired ? actions.onRearm : actions.onEdit)?.(one.id);
+  };
+  const lines = list.map((b) => (b.firedAt != null ? `${b.label}, ${firedText(b.firedAt).toLowerCase()}` : b.label));
+  const hint = one ? (fired ? "Double click to re-arm" : "Double click to edit") : "Right click for actions";
+  const named = (verb: string, b: LegendAlertBellData) => (one ? verb : `${verb} ${b.label}`);
+  const items = list.flatMap((b) =>
+    fired
+      ? [
+          { label: named("Re-arm", b), icon: MenuIcons.bell, onClick: () => actions.onRearm?.(b.id) },
+          { label: named("Hide", b), icon: MenuIcons.remove, onClick: () => actions.onHide?.(b.id) },
+        ]
+      : [
+          { label: named("Edit", b), icon: MenuIcons.pencil, onClick: () => actions.onEdit?.(b.id) },
+          { label: named("Delete", b), icon: MenuIcons.remove, danger: true, onClick: () => actions.onDelete?.(b.id) },
+        ],
+  );
+  const noun = fired ? "fired indicator alert" : "indicator alert";
+  return (
+    <>
+      <Tooltip asChild content={[...lines, hint]}>
+        <button
+          type="button"
+          className={`cl-alert-bell${fired ? " fired" : ""}`}
+          aria-label={one ? noun : `${list.length} ${noun}s`}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (e.detail === 0) act();
+          }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            act();
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setMenu({ x: e.clientX, y: e.clientY });
+          }}
+        >
+          <BellIcon size={12} />
+          {list.length > 1 && <span className="cl-alert-count">{list.length}</span>}
+        </button>
+      </Tooltip>
+      {menu && createPortal(
+        <ContextMenu x={menu.x} y={menu.y} className="compact" onClose={() => setMenu(null)} items={items} />,
+        document.body,
+      )}
+    </>
+  );
+}
 
 /** True while the named indicator is mid-compute (see lib/indicatorBusy). */
 function useIndicatorBusy(name: string): boolean {
@@ -739,6 +848,7 @@ function IndicatorRow({
         {row.shortName}
         {row.calcParamsText}
       </span>
+      <LegendAlertBells name={row.name} />
       {busy && (
         <Tooltip content="Computing">
           <span className="cl-busy" aria-label="Computing" />

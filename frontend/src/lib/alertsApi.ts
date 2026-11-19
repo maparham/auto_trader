@@ -100,6 +100,10 @@ export interface IndicatorAlert {
   status?: "ok" | "waiting_for_data";
   // The server's rendered "what this watches" phrase (registry label + timeframe).
   label?: string;
+  // Watches the indicator as a whole (a 0/1 event such as a divergence, or
+  // Trendlines' nearest line), not one of its curves or a level: no dashed
+  // line and no curve bell, a bell on the legend row instead. Server-stamped.
+  whole?: boolean;
 }
 
 export interface LineAlertParams {
@@ -353,6 +357,7 @@ interface AlertRow {
   updated_at: number;
   status?: "ok" | "waiting_for_data";
   label?: string;
+  whole?: boolean;
   current?: number | null;
   level?: number | null;
   distanceAtr?: number | null;
@@ -409,6 +414,7 @@ function rowToIndicatorAlert(row: AlertRow): IndicatorAlert {
     precision: row.precision,
     status: row.status,
     label: row.label,
+    ...(row.whole ? { whole: true } : {}),
     params: {
       type: p.type as string,
       config: (p.config as Record<string, unknown>) ?? {},
