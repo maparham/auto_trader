@@ -12,7 +12,6 @@ dependencies = [
     "python-dotenv>=1.0",
     "websockets>=14.0",
     "lightstreamer-client-lib>=2.2.2",
-    "metaapi-cloud-sdk>=29.1.1",
     "numpy>=2.0",
     "dukascopy-python>=4.0.1",
     "yfinance>=1.5.1",

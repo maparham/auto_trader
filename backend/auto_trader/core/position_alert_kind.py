@@ -46,11 +46,6 @@ def data_broker_of(account: str) -> str:
     return account.split(":", 1)[0]
 
 
-def is_watchable(account: str) -> bool:
-    """MetaApi (`mt5` prefix) is never touched, so its positions cannot be watched."""
-    return data_broker_of(account) != "mt5"
-
-
 def watched_price(pos_side: str, bid: float | None, ask: float | None) -> float | None:
     """A long is judged on the bid, a short on the offer. A missing side falls
     back to the other one."""

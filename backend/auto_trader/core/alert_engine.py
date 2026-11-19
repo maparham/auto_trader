@@ -78,16 +78,13 @@ LINE_RESCUE_RETRY_SECONDS = 600.0
 
 
 def _is_broker_paused(exc: BaseException) -> bool:
-    """True when `exc` or anything in its cause/context chain is the MT5
-    paused-account error: the stream helpers wrap it in a RuntimeError, so the
-    original sits one link down the chain. Any other error class can opt in
-    with a truthy `broker_paused` attribute."""
-    from auto_trader.brokers.mt5 import MT5PausedError
-
+    """True when `exc` or anything in its cause/context chain is a paused-broker
+    error (a truthy `broker_paused` attribute): the stream helpers wrap it in a
+    RuntimeError, so the original can sit one link down the chain."""
     seen: set[int] = set()
     cur: BaseException | None = exc
     while cur is not None and id(cur) not in seen:
-        if isinstance(cur, MT5PausedError) or getattr(cur, "broker_paused", False):
+        if getattr(cur, "broker_paused", False):
             return True
         seen.add(id(cur))
         cur = cur.__cause__ or cur.__context__
@@ -382,12 +379,11 @@ class AlertEngine:
         task forever with no signal at all. CancelledError is never caught
         here, so `_feed_loop`'s/`stop()`'s cancellation semantics are
         unchanged."""
-        # Imported lazily — these pull in websocket/MetaApi client deps that
+        # Imported lazily — these pull in websocket client deps that
         # the core package (and its tests) shouldn't need to import eagerly.
         from auto_trader.brokers import ig_stream, mt5_stream
         from auto_trader.brokers.capital_stream import stream_candles as capital_stream_candles
         from auto_trader.brokers.ig import IGBroker
-        from auto_trader.brokers.mt5 import MT5Broker
         from auto_trader.brokers.mt5_mcp import MT5MCPBroker
         from auto_trader.core.models import Resolution
 
@@ -396,7 +392,7 @@ class AlertEngine:
                 await self._poll_feed(broker, broker_id, epic, reset_backoff)
                 return True
             stream = ig_stream.stream_candles(broker, epic, Resolution.MINUTE, "mid")
-        elif isinstance(broker, (MT5Broker, MT5MCPBroker)):
+        elif isinstance(broker, MT5MCPBroker):
             stream = mt5_stream.stream_candles(broker, epic, Resolution.MINUTE, "mid")
         else:
             stream = capital_stream_candles(broker, epic, Resolution.MINUTE, "mid")
@@ -855,9 +851,7 @@ class AlertEngine:
                 # sample after its worker-thread result lands, not the
                 # sample that closed the bar.
                 return
-            last, before = self._hub.last_closed(skey), self._hub.prev_closed(skey)
-            vals = self._hub.values(skey, ind, intrabar=False)
-            pvals = self._hub.prev_values(skey, ind)
+            last, before, vals, pvals = self._hub.close_inputs(skey, ind)
             cur, prev = kind.resolve_close(params, last, before, vals, pvals)
             if cur is None:
                 return

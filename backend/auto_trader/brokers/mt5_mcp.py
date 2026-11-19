@@ -6,15 +6,14 @@ exposes account info, positions/orders, candle history, Market Watch and the
 trade calls we need, so a locally running, logged-in terminal (native Windows,
 or the macOS app under Wine) replaces the custom REST bridge the 2026-07-11
 spec planned. Registered as the "mt5-self" data broker with "mt5-self:paper"
-and the real-money "mt5-self:live" beside the MetaApi "mt5", which stays: the
-two are permanent alternatives for the same account, not a migration.
+and the real-money "mt5-self:live".
 
 Transport is a thin JSON-RPC-over-HTTP client (initialize, then tools/call),
 not the `mcp` SDK: the SDK's task-group lifetime does not fit a long-lived
 broker, and three calls do not justify it. Tool results are JSON packed into
 `content[0].text`; `isError` is the terminal refusing the call.
 
-Conventions that match the MetaApi adapter:
+Conventions:
 - `epic` IS the MT5 symbol verbatim ("EURUSD", "#NVIDIA").
 - MT5 speaks LOTS; the app speaks instrument units. Convert at this boundary.
 
@@ -22,10 +21,9 @@ What the MCP cannot do, and how it surfaces:
 - No push stream. Live ticks are POLLED: one Market Watch read per round
   (6 ms for every selected row) tells which subscribed symbols moved, and
   `get_chart_ticks_history` then returns every tick since the last one, so
-  no tick is skipped between rounds. The same four hooks the MetaApi broker
-  exposes (`_ensure_stream`, `register_tick_queue`, `unregister_tick_queue`,
-  `get_forming_candle`) sit on top, so `mt5_stream.stream_candles` folds the
-  ticks into bars unchanged for both brokers.
+  no tick is skipped between rounds. Four hooks (`_ensure_stream`,
+  `register_tick_queue`, `unregister_tick_queue`, `get_forming_candle`) sit on
+  top, so `mt5_stream.stream_candles` folds the ticks into bars.
 - Higher-timeframe series lag inside the terminal until something rebuilds
   them, while M1 is current. The candle reads therefore rebuild the newest
   bars of any timeframe above M1 from M1 (`_patch_tail`).
@@ -600,11 +598,11 @@ class MT5MCPBroker(MarketDataBroker):
         return bars[-1] if bars else None
 
     # --- live ticks (polled) ---------------------------------------------------
-    # Same surface as MT5Broker's MetaApi stream, so mt5_stream.stream_candles
-    # drives either broker: _ensure_stream, register/unregister_tick_queue.
+    # The surface mt5_stream.stream_candles drives: _ensure_stream,
+    # register/unregister_tick_queue.
 
     async def _ensure_stream(self) -> None:
-        """Reachability check standing in for MetaApi's connect: a terminal
+        """Reachability check before streaming: a terminal
         that is down raises here (mt5_stream turns it into a recoverable
         error, and the chart keeps retrying) rather than in the per-symbol
         subscribe, which it reports as a permanent fault."""
@@ -754,7 +752,7 @@ class MT5MCPBroker(MarketDataBroker):
             out.append({
                 "epic": sym,
                 # description is often a contract note ("1 Lot= 100,000 AUD"),
-                # so the name is the symbol, as on the MetaApi broker.
+                # so the name is the symbol.
                 "name": sym.lstrip("#_"),
                 "status": "TRADEABLE",
                 "type": _classify_symbol(sym),

@@ -311,14 +311,9 @@ def test_remove_token_single_use(tmp_path):
     run(main())
 
 
-def test_never_polls_mt5_and_snapshot(tmp_path):
+def test_snapshot(tmp_path):
     async def main():
         h = Harness(tmp_path)
-        await h.add(broker="mt5:demo")
-        await h.w.start()
-        await asyncio.sleep(0)
-        assert "mt5:demo" not in h.w._tasks
-        await h.w.stop()
         snap = await h.w.snapshot(ACCT, "D1")
         assert snap is not None and snap.sl == 100.0 and snap.side == "BUY"
         assert await h.w.snapshot(ACCT, "nope") is None

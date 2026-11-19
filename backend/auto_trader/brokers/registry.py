@@ -26,7 +26,7 @@ from auto_trader.brokers.base import ExecutionBroker, MarketDataBroker
 # credential-free trio (dukascopy, yfinance, nobitex) stays open to everyone.
 # Keep in sync with the credentialed blocks in build_registry().
 RESTRICTED_BROKER_IDS = frozenset(
-    {"capital", "capital-live", "ig-demo", "ig-live", "mt5", "mt5-self"}
+    {"capital", "capital-live", "ig-demo", "ig-live", "mt5-self"}
 )
 
 
@@ -98,7 +98,7 @@ class BrokerRegistry:
             "data": sorted(data_ids),
             # Broker-reported display names, keyed by broker id. Sparse: only
             # brokers that know their real name at runtime appear (MT5 reads it
-            # from MetaApi account information); the frontend keeps its static
+            # from the terminal account information); the frontend keeps its static
             # label for the rest.
             "labels": {
                 broker_id: label
@@ -152,8 +152,8 @@ class BrokerRegistry:
 def build_registry() -> BrokerRegistry:
     """Wire every broker the app ships with. Adding a broker is one block here:
     register its data broker, then register the executors that price off it."""
-    from auto_trader.brokers import capital, dukascopy, ig, mt5, mt5_mcp, nobitex, yfinance
-    from auto_trader.config import ig_settings, mt5_settings, mt5mcp_settings
+    from auto_trader.brokers import capital, dukascopy, ig, mt5_mcp, nobitex, yfinance
+    from auto_trader.config import ig_settings, mt5mcp_settings
 
     from auto_trader.config import settings
 
@@ -184,15 +184,6 @@ def build_registry() -> BrokerRegistry:
     for side in ("demo", "live"):
         if ig_settings.has(side):
             ig.register(registry, side)
-    # MT5/AvaTrade via MetaApi: "mt5" data broker + mt5:paper + mt5:live. Only when
-    # token + account id are present.
-    if mt5_settings.has():
-        mt5.register(
-            registry,
-            token=mt5_settings.token,
-            account_id=mt5_settings.account_id,
-            region=mt5_settings.region,
-        )
     # MT5/AvaTrade via the local terminal's built-in MCP server: "mt5-self" +
     # mt5-self:paper + mt5-self:live. Only when the MCP key is set.
     if mt5mcp_settings.has():

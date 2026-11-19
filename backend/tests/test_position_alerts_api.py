@@ -39,7 +39,6 @@ def env(monkeypatch):
     from auto_trader.brokers.registry import BrokerRegistry
     reg = BrokerRegistry()
     reg.exec[ACCT] = _FakeExec()
-    reg.exec["mt5:live"] = _FakeExec()
     monkeypatch.setattr(deps_mod, "_registry", reg)
     state = {"snap": Snap(epic="US100", side="BUY", sl=90.0, tp=110.0, trailing=False, upnl=1.0, currency=None),
              "calls": [], "raise": False}
@@ -73,11 +72,6 @@ def test_create_ok_notifies_watch(admin, env):
     r = client.post("/api/alerts", json=_body(), headers=admin)
     assert r.status_code == 200, r.text
     assert env["calls"][-1][2] == "al-pos" and env["calls"][-1][1]["kind"] == "position"
-
-
-def test_create_refuses_mt5(admin, env):
-    r = client.post("/api/alerts", json=_body(broker="mt5:live"), headers=admin)
-    assert r.status_code == 422 and "account_not_watchable" in r.text
 
 
 def test_create_refuses_unknown_account(admin, env):

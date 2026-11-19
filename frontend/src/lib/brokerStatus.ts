@@ -1,7 +1,7 @@
 // Whether each data broker is answering right now (GET /api/brokers/status),
 // for the status dots in the broker menus. The backend reads it off its
 // record of recent calls; with probe=1 it first sends one light test call to
-// each broker that has had no success for a few minutes (never MetaApi mt5).
+// each broker that has had no success for a few minutes.
 import { useEffect, useState } from "react";
 import { API_BASE as BASE, apiFetch } from "./http";
 import { isDemoMode } from "./demoMode";

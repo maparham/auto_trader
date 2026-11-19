@@ -5,8 +5,8 @@ remove it from here (git history and the memory index track shipped features).
 
 ## In progress
 
-- **MT5 local terminal broker (`mt5-self`)**: over MT5's built-in MCP server,
-  beside the MetaApi `mt5`, which stays permanently. Data, paper, live dealing
+- **MT5 local terminal broker (`mt5-self`)**: over MT5's built-in MCP server.
+  Data, paper, live dealing
   and polled live ticks are built in `brokers/mt5_mcp.py`; reads and ticks
   verified live, dealing only unit-tested. Left: one order test on a demo
   account.

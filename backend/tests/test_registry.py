@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from auto_trader.config import IGSettings, MT5MCPSettings, MTSettings, Settings, settings
+from auto_trader.config import IGSettings, MT5MCPSettings, Settings, settings
 from auto_trader.brokers.registry import BrokerRegistry, build_registry
 
 
@@ -27,7 +27,6 @@ def _no_ig(monkeypatch):
     explicitly. Capital creds are set via the underlying fields (not a has()
     override) so tests still exercise the real credential gating."""
     monkeypatch.setattr(IGSettings, "has", lambda self, side: False)
-    monkeypatch.setattr(MTSettings, "has", lambda self: False)
     monkeypatch.setattr(MT5MCPSettings, "has", lambda self: False)
     monkeypatch.setattr(settings, "api_key", "k", raising=False)
     monkeypatch.setattr(settings, "identifier", "i", raising=False)
@@ -159,33 +158,16 @@ def test_ig_live_is_real_money(monkeypatch) -> None:
     assert keys["ig-live:live"]["isRealMoney"] is True
 
 
-def test_mt5_registers_data_paper_and_live(monkeypatch) -> None:
-    """A configured MT5/MetaApi account adds the "mt5" data broker plus a paper
-    sim and a real-money dealing exec. Construction is lazy (no network), so
-    build_registry() doesn't touch MetaApi."""
-    monkeypatch.setattr(MTSettings, "has", lambda self: True)
-    monkeypatch.setattr(MTSettings, "token", "tok", raising=False)
-    monkeypatch.setattr(MTSettings, "account_id", "acct-uuid", raising=False)
-    described = build_registry().describe()
-    assert "mt5" in described["data"]
-    keys = {e["key"]: e for e in described["exec"]}
-    assert keys["mt5:paper"]["env"] == "paper"
-    assert keys["mt5:paper"]["isRealMoney"] is False
-    assert keys["mt5:live"]["env"] == "live"
-    assert keys["mt5:live"]["isRealMoney"] is True
-
-
 def test_describe_labels_reflect_broker_reported_names(monkeypatch) -> None:
     """The labels map is sparse: empty until a broker learns its real name at
-    runtime (MT5 fills display_name from MetaApi account information), then it
-    appears keyed by broker id."""
-    monkeypatch.setattr(MTSettings, "has", lambda self: True)
-    monkeypatch.setattr(MTSettings, "token", "tok", raising=False)
-    monkeypatch.setattr(MTSettings, "account_id", "acct-uuid", raising=False)
+    runtime (MT5 fills display_name from the terminal account information), then
+    it appears keyed by broker id."""
+    monkeypatch.setattr(MT5MCPSettings, "has", lambda self: True)
+    monkeypatch.setattr(MT5MCPSettings, "key", "k", raising=False)
     reg = build_registry()
     assert reg.describe()["labels"] == {}
-    reg.data["mt5"].display_name = "Ava Trade Ltd (demo)"
-    assert reg.describe()["labels"] == {"mt5": "Ava Trade Ltd (demo)"}
+    reg.data["mt5-self"].display_name = "Ava Trade Ltd (demo)"
+    assert reg.describe()["labels"] == {"mt5-self": "Ava Trade Ltd (demo)"}
 
 
 def test_default_data_id_prefers_capital_when_registered() -> None:

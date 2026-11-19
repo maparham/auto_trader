@@ -18,7 +18,8 @@ import pytest
 from auto_trader.brokers.capital import CapitalComBroker
 from auto_trader.brokers.dukascopy import DukascopyBroker
 from auto_trader.brokers.ig import IGBroker
-from auto_trader.brokers.mt5 import MT5Broker, _classify_symbol
+from auto_trader.brokers._mt5_symbols import _classify_symbol
+from auto_trader.brokers.mt5_mcp import MT5MCPBroker
 from auto_trader.brokers.nobitex import NobitexBroker
 from auto_trader.brokers.yfinance import YFinanceBroker
 
@@ -30,7 +31,7 @@ ALL_BROKERS = [
     CapitalComBroker,
     DukascopyBroker,
     IGBroker,
-    MT5Broker,
+    MT5MCPBroker,
     NobitexBroker,
     YFinanceBroker,
 ]
@@ -71,7 +72,7 @@ def test_yfinance_search_rows_use_the_catalogue_vocabulary() -> None:
 
 
 def test_mt5_classifier_matches_its_declared_chips() -> None:
-    """MetaApi gives bare symbols; _classify_symbol is what puts them in a chip."""
+    """The terminal gives bare symbols; _classify_symbol is what puts them in a chip."""
     samples = ["#AAPL", "EURUSD", "BTCUSD", "GOLD", "US_500", "JAPAN_BOND"]
     kinds = {_classify_symbol(s) for s in samples} - {None}
-    assert kinds <= declared_types(MT5Broker)
+    assert kinds <= declared_types(MT5MCPBroker)

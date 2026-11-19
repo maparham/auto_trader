@@ -23,7 +23,7 @@ class _FakeExec:
 
 def _fake_registry() -> BrokerRegistry:
     r = BrokerRegistry()
-    for bid in ("dukascopy", "yfinance", "capital", "mt5"):
+    for bid in ("dukascopy", "yfinance", "capital", "mt5-self"):
         r.add_data(bid, _FakeData())
     r.add_exec("capital:paper", _FakeExec())
     return r

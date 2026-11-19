@@ -559,8 +559,8 @@ def test_forming_candle_is_the_newest_rebuilt_bar():
 
 
 def test_mt5_stream_folds_polled_ticks_unchanged(monkeypatch):
-    """The MetaApi fold (mt5_stream.stream_candles) runs on the local-terminal
-    broker as is: seeded from the forming M1 bar, then the polled ticks move
+    """The fold (mt5_stream.stream_candles) runs on the local-terminal
+    broker: seeded from the forming M1 bar, then the polled ticks move
     the close and stretch the range."""
     import auto_trader.brokers.mt5_mcp as mod
     from auto_trader.brokers import mt5_stream

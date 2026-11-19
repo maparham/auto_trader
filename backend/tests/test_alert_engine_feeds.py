@@ -138,10 +138,12 @@ def test_poll_loop_survives_get_quote_error_and_backs_off(tmp_path):
 
 
 def test_feed_loop_paused_broker_logs_one_line_and_uses_max_backoff(tmp_path, monkeypatch, caplog):
-    """A paused MT5 account is operator state, not a fault: the feed loop logs
+    """A paused broker account is operator state, not a fault: the feed loop logs
     one INFO line without a traceback and waits BACKOFF_MAX before retrying,
     even when the paused error arrives wrapped (as the stream helper raises it)."""
-    from auto_trader.brokers.mt5 import MT5PausedError
+
+    class MT5PausedError(RuntimeError):
+        broker_paused = True
 
     async def main():
         class Paused:

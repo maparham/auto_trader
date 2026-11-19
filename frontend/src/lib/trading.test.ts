@@ -112,12 +112,12 @@ describe("backend-reported broker labels", () => {
     expect(brokerLabel("newbroker")).toBe("Newbroker");
   });
   it("prefers the backend label over the static map and the fallback", () => {
-    noteBrokerLabels({ mt5: "Ava Trade Ltd (demo)", capital: "Capital (renamed)" });
-    expect(brokerLabel("mt5")).toBe("Ava Trade Ltd (demo)");
+    noteBrokerLabels({ "mt5-self": "Ava Trade Ltd (demo)", capital: "Capital (renamed)" });
+    expect(brokerLabel("mt5-self")).toBe("Ava Trade Ltd (demo)");
     expect(brokerLabel("capital")).toBe("Capital (renamed)");
     // A later payload without labels keeps the last-known names.
     noteBrokerLabels(undefined);
-    expect(brokerLabel("mt5")).toBe("Ava Trade Ltd (demo)");
+    expect(brokerLabel("mt5-self")).toBe("Ava Trade Ltd (demo)");
     // Cleanup: restore the static labels for other describe blocks.
     noteBrokerLabels({});
     expect(brokerLabel("capital")).toBe("Capital.com (demo)");

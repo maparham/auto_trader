@@ -10,8 +10,7 @@ Two loops, as in the spec:
   calls `position_alert_kind.step`.
 
 The ATR per (data broker, epic) is refreshed from the poll loop, never from
-`on_tick`. Fires go through the same broadcast + notifiers as account alerts.
-MetaApi (`mt5`) accounts are never polled."""
+`on_tick`. Fires go through the same broadcast + notifiers as account alerts."""
 from __future__ import annotations
 
 import asyncio
@@ -26,7 +25,7 @@ from typing import Any, NamedTuple
 
 from auto_trader.core.alert_store import AlertStore
 from auto_trader.core.position_alert_kind import (
-    atr, data_broker_of, headline, is_watchable, step, watched_price,
+    atr, data_broker_of, headline, step, watched_price,
 )
 
 log = logging.getLogger(__name__)
@@ -200,7 +199,7 @@ class PositionWatch:
     def _reconcile(self) -> None:
         needed = {
             acct for acct, rows in self._alerts.items()
-            if is_watchable(acct) and any(r.get("active", 1) for _, r in rows)
+            if any(r.get("active", 1) for _, r in rows)
         }
         for acct in list(self._tasks):
             if acct not in needed:
@@ -255,8 +254,6 @@ class PositionWatch:
         snapshots of active rows' deals."""
         index: dict[Pair, list[tuple[str, str, str]]] = {}
         for acct, entries in self._alerts.items():
-            if not is_watchable(acct):
-                continue
             for u, r in entries:
                 if not r.get("active", 1):
                     continue
@@ -278,8 +275,6 @@ class PositionWatch:
         `get_positions` changes nothing, so a broker outage never reads as
         every tracked position closing."""
         assert self._store is not None and self._get_exec is not None
-        if not is_watchable(account):
-            return
         try:
             positions = await asyncio.wait_for(self._get_exec(account).get_positions(), timeout=FETCH_TIMEOUT_S)
         except Exception as exc:

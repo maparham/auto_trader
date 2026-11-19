@@ -107,9 +107,6 @@ const BROKER_LABELS: Record<string, string> = {
   "capital-live": "Capital.com (live)",
   "ig-demo": "IG (demo)",
   "ig-live": "IG (live)",
-  // AvaTrade MT5 through MetaApi's cloud. Same account as mt5-self, so the
-  // backend's live label carries "MetaApi" too.
-  mt5: "AvaTrade MT5 (MetaApi)",
   // AvaTrade MT5 through the local terminal's built-in MCP server. The backend
   // sends the real broker name as a label once the terminal answers.
   "mt5-self": "AvaTrade MT5 (self-hosted)",
@@ -121,8 +118,8 @@ const BROKER_LABELS: Record<string, string> = {
   // Read-only Nobitex crypto/IRR pairs (USDT/IRR = live rial-dollar proxy).
   nobitex: "Nobitex (IRR crypto)",
 };
-// Broker-reported display names from /api/brokers (e.g. mt5 → "Ava Trade Ltd
-// (demo)", read from MetaApi account information). They win over the static map
+// Broker-reported display names from /api/brokers (e.g. mt5-self → "Ava Trade
+// Ltd (demo)", read from the terminal account information). They win over the static map
 // because they're the broker's own name for itself. Fed by fetchBrokers /
 // cachedBrokers, so a reload shows the last-known name before the fetch lands.
 let backendLabels: Record<string, string> = {};

@@ -151,18 +151,14 @@ def current_user(request: Request) -> str:
 # Per-broker circuit breaker shared by every data-broker route. Keeps one down or
 # slow broker from holding shared connection slots and starving the others — see
 # auto_trader.core.broker_health.
-# MT5/MetaApi fetches deep history slowly — a MetaApi characteristic, not a fault:
-# ~500 daily bars (~2y) take 10-35s and ~500 weekly bars (~10y) take 30-45s, since
-# latency scales with how far back the request reaches. So MT5 gets a much larger
-# wall-clock budget than the default 8s. The cost is paid ONCE per symbol+resolution
-# — the result populates the sqlite candle cache and every load after serves from it
-# (incl. across restarts). Monthly/yearly are cheaper: they derive from the daily
-# base series, which the cache bounds. Budget covers weekly's worst case (~45-70s
-# through the server) with headroom; scoped to mt5 so a hang can't stall the others.
+# MT5 fetches deep history slowly, so it gets a much larger wall-clock budget than
+# the default 8s. The cost is paid ONCE per symbol+resolution: the result populates
+# the sqlite candle cache and every load after serves from it (incl. across
+# restarts). Scoped to mt5-self so a hang can't stall the others.
 # Dukascopy downloads and decodes day tick files, so even a small cold minute-window
 # fetch routinely exceeds 8s; like MT5 the cost is paid once and then the candle
 # cache serves it.
-BROKER_HEALTH = BrokerHealth(per_key_timeout={"mt5": 90.0, "mt5-self": 60.0, "dukascopy": 45.0, "nobitex": 30.0})
+BROKER_HEALTH = BrokerHealth(per_key_timeout={"mt5-self": 60.0, "dukascopy": 45.0, "nobitex": 30.0})
 
 T = TypeVar("T")
 
@@ -317,12 +313,6 @@ def get_exec(account: str) -> ExecutionBroker:
 _TRIGGER_INTERVAL = 0.5
 
 
-# How often the MT5 idle watchdog checks for a deployed-but-unused account to
-# auto-undeploy (stops MetaApi hosting billing). Coarse: undeploy is a cost
-# guard, not latency-sensitive.
-_MT5_WATCHDOG_INTERVAL = 30.0
-
-
 # Key prefix for the trades-changed push on the /ws/state channel. The frontend
 # refetches positions/orders only when it sees this — replacing the periodic poll.
 TRADES_DIRTY_PREFIX = "__trades__:"
@@ -351,45 +341,6 @@ async def _run_paper_triggers(broker: PaperExecutionBroker, account: str) -> Non
                 )
         except Exception:  # never let one bad tick kill the driver
             log.exception("paper trigger check failed")
-
-
-async def _mt5_idle_tick(broker) -> bool:
-    """One watchdog check: undeploy the MT5 account if THIS process owns the
-    deployment and it has been idle past its window. Returns True iff it
-    undeployed. Never raises: a bad MetaApi call must not kill the watchdog."""
-    try:
-        seq = broker._deploy_seq
-        state = await broker.deploy_state()
-        if state == "off" and broker._deploy_seq == seq:
-            # Stopped elsewhere (the other backend, the dashboard): whoever
-            # deploys it next owns its idle clock, not us.
-            broker.owns_deploy = False
-        elif (
-            state == "on"
-            and broker.owns_deploy
-            and broker.seconds_until_idle_undeploy() == 0
-        ):
-            await broker.pause()
-            log.info("mt5: auto-undeployed after idle timeout")
-            return True
-    except Exception:
-        log.exception("mt5 idle watchdog tick failed")
-    return False
-
-
-async def _run_mt5_idle_watchdog(broker) -> None:
-    """Periodically auto-undeploy an idle MT5 account so a forgotten deployment
-    stops billing. The account is redeployed only by an explicit user action.
-
-    The local and hosted backends share the MetaApi account and each sees only
-    its own MT5 use, so each times only the deployments it started
-    (owns_deploy). At boot the local backend adopts whatever is running, so a
-    deploy that outlived a restart still gets undeployed; the hosted one adopts
-    nothing, or it would undeploy a local Start within one interval."""
-    broker.owns_deploy = not auth_enabled()
-    while True:
-        await asyncio.sleep(_MT5_WATCHDOG_INTERVAL)
-        await _mt5_idle_tick(broker)
 
 
 def _parse_resolution(raw: str) -> Resolution:

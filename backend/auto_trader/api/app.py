@@ -21,7 +21,7 @@ import logging
 import re
 from contextlib import asynccontextmanager, nullcontext, suppress
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -35,7 +35,7 @@ from . import deps
 from .candle_repair import install as install_candle_repair
 from .auth import auth_enabled, install_auth
 from .guard import cors_origins, install_guards
-from .routers import admin, alerts, assistant, backtest, charts, compute, costs, demo, expr, markets, mt5, patterns, pattern_presets, screens, shell_auth, state, strategy, stream, trading, strategies
+from .routers import admin, alerts, assistant, backtest, charts, compute, costs, demo, expr, markets, patterns, pattern_presets, screens, shell_auth, state, strategy, stream, trading, strategies
 
 log = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def _configure_logging() -> None:
             if not any(isinstance(f, _TokenRedactionFilter) for f in handler.filters):
                 handler.addFilter(_TokenRedactionFilter())
     # httpx logs every outbound request at INFO ("HTTP Request: GET ..."), which
-    # floods the console during candle backfills and MetaApi polling. Broker-level
+    # floods the console during candle backfills and broker polling. Broker-level
     # request visibility stays available by lowering this back to INFO/DEBUG.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     app_log = logging.getLogger("auto_trader")
@@ -123,15 +123,6 @@ async def lifespan(app: FastAPI):
         for key, b in deps._registry.exec.items()
         if isinstance(b, PaperExecutionBroker)
     ]
-    # MT5 idle watchdog: auto-undeploy a deployed-but-unused MetaApi account so a
-    # forgotten deployment stops billing. Spawned only when MT5 is configured.
-    try:
-        mt5_watchdog = asyncio.create_task(
-            deps._run_mt5_idle_watchdog(deps.get_data("mt5"))
-        )
-    except HTTPException:
-        mt5_watchdog = None
-
     from auto_trader.config import telegram_settings
     from auto_trader.core.alert_engine import ALERT_ENGINE
     from auto_trader.core.alert_migrate import migrate_legacy_alerts
@@ -203,7 +194,7 @@ async def lifespan(app: FastAPI):
             )
         # start() is the first raising await in this block (a real store
         # failure is possible here) — it's inside try/finally so a failure
-        # still tears down flusher/triggers/mt5_watchdog below rather than
+        # still tears down flusher/triggers below rather than
         # leaking them.
         await ALERT_ENGINE.start()
         await ACCOUNT_MONITOR.start()
@@ -214,7 +205,7 @@ async def lifespan(app: FastAPI):
             yield
     finally:
         # A raise/hang in ALERT_ENGINE.stop() must not prevent the teardown
-        # below (flusher/triggers/watchdog cancel + the registry close) —
+        # below (flusher/triggers cancel + the registry close) —
         # same "one broken cleanup step can't block the rest" convention as
         # the suppress()s a few lines down.
         with suppress(Exception):
@@ -226,12 +217,11 @@ async def lifespan(app: FastAPI):
         telegram_poller.cancel()
         with suppress(asyncio.CancelledError):
             await telegram_poller
-        watchdogs = [t for t in (mt5_watchdog,) if t is not None]
-        for task in (flusher, *triggers, *watchdogs):
+        for task in (flusher, *triggers):
             task.cancel()
         with suppress(asyncio.CancelledError):
             await flusher  # lets run_flusher do its final flush
-        for task in (*triggers, *watchdogs):
+        for task in triggers:
             with suppress(asyncio.CancelledError):
                 await task
         await deps._registry.aclose()
@@ -282,7 +272,7 @@ async def _track_activity(request, call_next):
 # unless the corresponding env flags are set, which happens only on the remote host.
 install_guards(app)
 
-for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr, mt5, patterns, pattern_presets, screens, alerts, assistant, admin, shell_auth, demo):
+for _module in (markets, trading, state, charts, backtest, compute, strategy, stream, strategies, costs, expr, patterns, pattern_presets, screens, alerts, assistant, admin, shell_auth, demo):
     app.include_router(_module.router)
 app.include_router(demo.admin_router)
 

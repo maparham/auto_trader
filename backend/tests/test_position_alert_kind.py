@@ -4,7 +4,7 @@ import pytest
 
 from auto_trader.core.models import Candle
 from auto_trader.core.position_alert_kind import (
-    POSITION_KIND, atr, data_broker_of, headline, is_watchable, step, watched_price,
+    POSITION_KIND, atr, data_broker_of, headline, step, watched_price,
 )
 
 
@@ -80,11 +80,6 @@ def test_data_broker_of_strips_exec_suffix():
     assert data_broker_of("capital:paper") == "capital"
 
 
-def test_is_watchable():
-    assert is_watchable("capital-live:live")
-    assert is_watchable("mt5-self:live")
-    assert is_watchable("capital:paper")
-    assert not is_watchable("mt5:live")
 
 
 # watched price ----------------------------------------------------------

@@ -55,7 +55,7 @@ class MarketDataBroker(ABC):
     # Broker-reported display name for the selector ("Ava Trade Ltd (demo)").
     # Optional: most brokers leave it None and the frontend falls back to its
     # static per-id label map. A broker that learns its real name at runtime
-    # (MT5 via MetaApi account information) fills it in whenever it can.
+    # (MT5 via the terminal account information) fills it in whenever it can.
     display_name: str | None = None
 
     @abstractmethod

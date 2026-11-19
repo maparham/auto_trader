@@ -1167,7 +1167,7 @@ export default function ChartCore({
 
   const [status, setStatus] = useState<LiveStatus>("connecting");
   // The socket reports "live" (handshake up) but no candle has arrived for a while
-  // on an open market — a silently-wedged upstream (e.g. a MetaApi stream that
+  // on an open market — a silently-wedged upstream (e.g. an MT5 stream that
   // hangs awaiting ticks with no error frame). Drives the amber legend dot + a
   // greyed price tag so a frozen chart doesn't keep looking fully live. See the
   // staleness watchdog effect below.
@@ -1678,7 +1678,7 @@ export default function ChartCore({
     if (status === "live") streamLiveAtRef.current = Date.now();
   }, [status]);
   // Staleness watchdog: the socket can report "live" while the upstream is silently
-  // wedged (a MetaApi stream that hangs on `queue.get()` sends no error frame — a
+  // wedged (an MT5 stream that hangs on `queue.get()` sends no error frame — a
   // known limitation), so status alone never flips off and the chart freezes while
   // looking live. Flag it when an OPEN market's connected feed has been silent past
   // STALE_MS. We do NOT auto-reconnect: a client socket bounce re-attaches to the

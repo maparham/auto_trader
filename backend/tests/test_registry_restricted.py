@@ -14,7 +14,7 @@ class _FakeExec:
 
 def _registry() -> BrokerRegistry:
     r = BrokerRegistry()
-    for bid in ("dukascopy", "yfinance", "capital", "mt5"):
+    for bid in ("dukascopy", "yfinance", "capital", "mt5-self"):
         r.add_data(bid, _FakeData())
     r.add_exec("capital:paper", _FakeExec())
     return r
@@ -22,13 +22,13 @@ def _registry() -> BrokerRegistry:
 
 def test_restricted_set_contents():
     assert RESTRICTED_BROKER_IDS == frozenset(
-        {"capital", "capital-live", "ig-demo", "ig-live", "mt5", "mt5-self"}
+        {"capital", "capital-live", "ig-demo", "ig-live", "mt5-self"}
     )
 
 
 def test_is_restricted():
     r = _registry()
-    assert r.is_restricted("capital") and r.is_restricted("mt5")
+    assert r.is_restricted("capital") and r.is_restricted("mt5-self")
     assert not r.is_restricted("dukascopy")
     assert not r.is_restricted("nope")  # unknown ids 404 elsewhere, not here
 
@@ -52,7 +52,7 @@ def test_describe_filters_restricted():
 
 def test_describe_default_unchanged():
     d = _registry().describe()
-    assert d["data"] == ["capital", "dukascopy", "mt5", "yfinance"]
+    assert d["data"] == ["capital", "dukascopy", "mt5-self", "yfinance"]
     assert {e["key"] for e in d["exec"]} == {
-        "capital:paper", "dukascopy:data", "mt5:data", "yfinance:data"
+        "capital:paper", "dukascopy:data", "mt5-self:data", "yfinance:data"
     }

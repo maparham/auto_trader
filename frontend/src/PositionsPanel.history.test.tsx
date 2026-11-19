@@ -3,7 +3,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
-vi.mock("./Mt5DeployButton", () => ({ default: () => null }));
 vi.mock("./HistoryPane", () => ({ default: ({ account }: { account: string }) => <div>history for {account}</div> }));
 
 import PositionsPanel from "./PositionsPanel";

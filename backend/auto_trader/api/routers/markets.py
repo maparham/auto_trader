@@ -60,8 +60,7 @@ async def broker_status(request: Request, probe: bool = Query(False)) -> dict:
 
     The state comes from the breaker's record of recent calls. With probe=1 a
     broker with no success in the last STATUS_STALE_S seconds gets one light
-    test call first. A broker without `ping` is never tested: MetaApi `mt5`
-    has none on purpose, so a menu open never deploys the MetaApi account."""
+    test call first. A broker without `ping` is never tested."""
     assert deps._registry is not None, "registry not initialised"
     admin = request_is_admin(request)
     registry = deps._registry

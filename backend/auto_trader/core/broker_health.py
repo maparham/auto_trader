@@ -132,7 +132,7 @@ class BrokerHealth:
         self._call_timeout = call_timeout
         # Per-broker wall-clock budget overrides. Most brokers answer REST history in
         # well under the default; a broker whose upstream is inherently slow for some
-        # requests (MT5/MetaApi fetching deep daily history takes ~10-30s) needs a
+        # requests (MT5 fetching deep daily history) needs a
         # bigger budget so its FIRST fetch completes and populates the cache instead
         # of timing out forever. Scoped per key so one slow broker can't relax the
         # tight budget that protects the others.

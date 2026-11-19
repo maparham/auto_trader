@@ -1,10 +1,4 @@
-"""AvaTrade MT5 symbol vocabulary, shared by the MT5 adapters.
-
-A copy of the SDK-free helpers in `mt5.py` (which imports the MetaApi SDK at
-module level), so the local-terminal adapter `mt5_mcp.py` can use them without
-pulling MetaApi in. Once MetaApi is removed and `mt5.py` goes, this is the
-canonical version. Keep the two in step until then.
-"""
+"""AvaTrade MT5 symbol vocabulary for the local-terminal adapter `mt5_mcp.py`."""
 
 from __future__ import annotations
 

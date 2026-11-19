@@ -68,7 +68,7 @@ the box would never self-stop.
 
 Broker credentials are NOT required: sweeps ship their bars to the host, so it
 never fetches from a broker (`COMPUTE_ONLY`). If you ever add a code path that
-does fetch on the host, add the same `CAPITAL_*` / `IG_*` / `METAAPI_*` names
+does fetch on the host, add the same `CAPITAL_*` / `IG_*` / `MT5MCP_*` names
 you use in `backend/.env`.
 
 ## 3. Deploy

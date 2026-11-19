@@ -90,8 +90,8 @@ def _registry_for_routes(monkeypatch):
 
     Deliberately does NOT call build_registry(): that reads broker credentials
     from ambient env/.env (pydantic settings with env_file=".env"), so on a
-    machine with real CAPITAL_/IG_/METAAPI_ creds in backend/.env it
-    would construct live credentialed brokers (MetaApi/Capital clients) for
+    machine with real CAPITAL_/IG_/MT5MCP_ creds in backend/.env it
+    would construct live credentialed brokers (Capital/IG clients) for
     every single test, hanging/crawling the suite. Register only the
     unconditional free data brokers instead, exactly as build_registry does
     for its credential-free trio, so this fixture is deterministic and

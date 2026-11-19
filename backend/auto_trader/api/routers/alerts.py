@@ -27,7 +27,7 @@ from auto_trader.core.alert_engine import ALERT_ENGINE
 from auto_trader.core.alert_kinds import INDICATOR, KINDS, carry_output, upgrade_params
 from auto_trader.core.alert_store import ALERT_STORE
 from auto_trader.core.candle_aggregate import resolution_seconds
-from auto_trader.core.position_alert_kind import POSITION_KIND, is_watchable
+from auto_trader.core.position_alert_kind import POSITION_KIND
 from auto_trader.core.position_watch import POSITION_WATCH
 from auto_trader.core.push_notify import PUSH
 from auto_trader.core.telegram_notify import TELEGRAM
@@ -79,9 +79,9 @@ def _check_account(account: str) -> None:
 
 def _check_watchable(account: str) -> None:
     """A position alert's `broker` is a registered exec account the watcher
-    may poll (anything but MetaApi)."""
+    may poll."""
     registry = deps._registry
-    if registry is None or registry.exec.get(account) is None or not is_watchable(account):
+    if registry is None or registry.exec.get(account) is None:
         raise HTTPException(422, "account_not_watchable")
 
 

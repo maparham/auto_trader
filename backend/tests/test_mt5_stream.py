@@ -1,12 +1,6 @@
-"""MT5/MetaApi live-streaming pure logic — the tick-folding bar builder, the
-price-side pick, the epoch-bucket rollover math, and the shared listener's
-symbol-filtered fan-out. The MetaApi streaming connection itself (network + a
-second stateful connection) is not unit-tested; this pins the logic the live
-chart and MT5 paper triggers depend on.
-
-Key invariant under test: MetaApi's on_symbol_price_updated fires for EVERY
-symbol the terminal tracks, so the listener MUST route by price["symbol"] and
-drop symbols with no subscriber (established by the live spike)."""
+"""MT5 live-streaming pure logic: the tick-folding bar builder, the price-side
+pick, the epoch-bucket rollover math, and stream_candles over a fake broker.
+This pins the logic the live chart and MT5 paper triggers depend on."""
 
 from __future__ import annotations
 
@@ -16,38 +10,9 @@ import time
 import pytest
 
 from auto_trader.brokers import mt5_stream
-from auto_trader.brokers.mt5 import MT5Broker
-from auto_trader.brokers.mt5_stream import _Bar, _TickListener, _bucket_ms, _pick_side
+from auto_trader.brokers.mt5_stream import _Bar, _bucket_ms, _pick_side
 from auto_trader.core.models import Candle
 from datetime import datetime, timezone
-
-
-class _FakeStreamConn:
-    """Records subscribe/unsubscribe calls so the refcount contract can be asserted
-    without a live MetaApi streaming connection."""
-
-    def __init__(self) -> None:
-        self.subscribed: list[str] = []
-        self.unsubscribed: list[str] = []
-        self.listeners: list = []
-
-    def add_synchronization_listener(self, listener) -> None:
-        self.listeners.append(listener)
-
-    async def subscribe_to_market_data(self, symbol, subscriptions=None):
-        self.subscribed.append(symbol)
-
-    async def unsubscribe_from_market_data(self, symbol, subscriptions=None):
-        self.unsubscribed.append(symbol)
-
-
-def _stubbed_broker() -> tuple[MT5Broker, _FakeStreamConn]:
-    """An MT5Broker with its streaming connection pre-stubbed (no network)."""
-    broker = MT5Broker(token="t", account_id="a")
-    conn = _FakeStreamConn()
-    broker._stream_conn = conn
-    broker._stream_synced = True
-    return broker, conn
 
 
 # --- price side ------------------------------------------------------------
@@ -152,132 +117,6 @@ def test_bar_roll_resets_state_for_new_bucket() -> None:
     assert c.time == datetime.fromtimestamp(120, tz=timezone.utc)
 
 
-# --- listener fan-out ------------------------------------------------------
-
-def test_listener_routes_tick_to_subscribed_symbol_queue() -> None:
-    subs: dict[str, set[asyncio.Queue]] = {}
-    listener = _TickListener(subs)
-    q: asyncio.Queue = asyncio.Queue()
-    subs["EURUSD"] = {q}
-
-    asyncio.run(
-        listener.on_symbol_price_updated("0", {"symbol": "EURUSD", "bid": 1.1, "ask": 1.2})
-    )
-    tick = q.get_nowait()
-    assert tick == (1.1, 1.2)
-
-
-def test_listener_ignores_unsubscribed_symbol() -> None:
-    subs: dict[str, set[asyncio.Queue]] = {}
-    listener = _TickListener(subs)
-    q: asyncio.Queue = asyncio.Queue()
-    subs["EURUSD"] = {q}
-
-    # A tick for a DIFFERENT symbol (which MetaApi DOES deliver) must not land.
-    asyncio.run(
-        listener.on_symbol_price_updated("0", {"symbol": "GBPUSD", "bid": 2.0, "ask": 2.1})
-    )
-    assert q.empty()
-
-
-def test_listener_fans_out_to_all_queues_for_one_symbol() -> None:
-    subs: dict[str, set[asyncio.Queue]] = {}
-    listener = _TickListener(subs)
-    q1: asyncio.Queue = asyncio.Queue()
-    q2: asyncio.Queue = asyncio.Queue()
-    subs["EURUSD"] = {q1, q2}
-
-    asyncio.run(
-        listener.on_symbol_price_updated("0", {"symbol": "EURUSD", "bid": 1.0, "ask": 1.0})
-    )
-    assert q1.get_nowait() == (1.0, 1.0)
-    assert q2.get_nowait() == (1.0, 1.0)
-
-
-def test_listener_drops_tick_missing_a_side() -> None:
-    subs: dict[str, set[asyncio.Queue]] = {}
-    listener = _TickListener(subs)
-    q: asyncio.Queue = asyncio.Queue()
-    subs["EURUSD"] = {q}
-
-    asyncio.run(
-        listener.on_symbol_price_updated("0", {"symbol": "EURUSD", "bid": None, "ask": 1.2})
-    )
-    assert q.empty()
-
-
-# --- broker register/unregister refcount -----------------------------------
-
-def test_register_first_queue_subscribes_once() -> None:
-    broker, conn = _stubbed_broker()
-    q = asyncio.run(broker.register_tick_queue("EURUSD"))
-    assert conn.subscribed == ["EURUSD"]
-    assert q in broker._tick_subs["EURUSD"]
-
-
-def test_second_queue_same_symbol_shares_one_subscription() -> None:
-    broker, conn = _stubbed_broker()
-
-    async def scenario():
-        q1 = await broker.register_tick_queue("EURUSD")
-        q2 = await broker.register_tick_queue("EURUSD")
-        return q1, q2
-
-    q1, q2 = asyncio.run(scenario())
-    assert conn.subscribed == ["EURUSD"]  # subscribed once, not twice
-    assert broker._tick_subs["EURUSD"] == {q1, q2}
-
-
-def test_unregister_last_queue_unsubscribes_and_clears_symbol() -> None:
-    broker, conn = _stubbed_broker()
-
-    async def scenario():
-        q1 = await broker.register_tick_queue("EURUSD")
-        q2 = await broker.register_tick_queue("EURUSD")
-        await broker.unregister_tick_queue("EURUSD", q1)
-        assert conn.unsubscribed == []  # q2 still there
-        await broker.unregister_tick_queue("EURUSD", q2)
-
-    asyncio.run(scenario())
-    assert conn.unsubscribed == ["EURUSD"]
-    assert "EURUSD" not in broker._tick_subs
-
-
-def test_register_rolls_back_when_subscribe_fails() -> None:
-    # A permanent per-symbol fault (unknown/invalid epic) surfaces from subscribe.
-    # register must re-raise AND leave no orphan registration/refcount behind, so a
-    # later retry of a valid symbol isn't skewed by a leaked count.
-    broker, conn = _stubbed_broker()
-
-    async def boom(symbol, subscriptions=None):
-        raise ValueError("unknown symbol")
-
-    conn.subscribe_to_market_data = boom
-
-    with pytest.raises(ValueError):
-        asyncio.run(broker.register_tick_queue("BOGUS"))
-    assert "BOGUS" not in broker._tick_subs
-    assert "BOGUS" not in broker._sub_refcount
-
-
-def test_register_rolls_back_on_cancellation() -> None:
-    # A client disconnect while the FIRST subscribe is in flight cancels the await.
-    # CancelledError is a BaseException (not Exception), so a plain `except Exception`
-    # rollback would miss it — leaving a dead queue + refcount 1 that permanently
-    # blocks re-subscribing the symbol (first=False forever → the symbol goes silent).
-    broker, conn = _stubbed_broker()
-
-    async def cancel(symbol, subscriptions=None):
-        raise asyncio.CancelledError()
-
-    conn.subscribe_to_market_data = cancel
-
-    with pytest.raises(asyncio.CancelledError):
-        asyncio.run(broker.register_tick_queue("EURUSD"))
-    assert "EURUSD" not in broker._tick_subs
-    assert "EURUSD" not in broker._sub_refcount
-
-
 # --- stream_candles connect-failure surfaces a recoverable error ------------
 
 class _FailingEnsureBroker:
@@ -286,7 +125,7 @@ class _FailingEnsureBroker:
     closes the socket with no error frame. A connect failure is (probably) transient,
     so it should surface as a RECOVERABLE RuntimeError (client retries, self-heals)."""
 
-    broker_id = "mt5"
+    broker_id = "mt5-self"
 
     async def _ensure_stream(self):
         raise TimeoutError("streaming sync timed out")
@@ -309,11 +148,11 @@ def test_stream_connect_failure_raises_runtime_error() -> None:
 # --- stream_candles seeding (integration over a fake broker) ----------------
 
 class _FakeStreamBroker:
-    """Minimal MT5Broker stand-in for driving stream_candles without a network.
+    """Minimal MT5MCPBroker stand-in for driving stream_candles without a network.
     `forming` is what get_forming_candle returns; `ticks` are pre-loaded onto the
     queue register_tick_queue hands back."""
 
-    broker_id = "mt5"
+    broker_id = "mt5-self"
 
     def __init__(self, forming: Candle | None, ticks: list[tuple[float, float]]) -> None:
         self._forming = forming

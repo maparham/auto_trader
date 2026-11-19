@@ -92,7 +92,7 @@ export function accountStats(input: AccountStatsInput): AccountStats {
   // Some brokers (MT5) report account value + margin-in-use authoritatively.
   // When both are present they are used verbatim for equity / margin / margin
   // level instead of the balance−available derivation (which drifts by swap
-  // and commission). MetaApi's identity freeMargin = equity − margin keeps
+  // and commission). MT5's identity freeMargin = equity − margin keeps
   // `available + margin = equity` exact.
   const brokerEquity = summary?.equity ?? null;
   const brokerMargin = summary?.margin ?? null;

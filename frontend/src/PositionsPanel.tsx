@@ -47,7 +47,6 @@ import {
   toggleTradeSelected,
   setTradeSelected,
   draggingLineSignal,
-  mt5DeployStateSignal,
   accountAlertRequest,
   positionAlertRequest,
   alertsChanged,
@@ -70,7 +69,6 @@ import {
   type SortState,
   type TableTab,
 } from "./lib/positionsTable";
-import Mt5DeployButton from "./Mt5DeployButton";
 import HistoryPane from "./HistoryPane";
 
 interface Props {
@@ -191,25 +189,6 @@ export default function PositionsPanel({
       ? brokerAccounts
       : [{ key: account, broker: activeBroker, env: account.split(":")[1] ?? "paper", isRealMoney: false }];
 
-  // MT5 just came on (Start here, or another tab/backend): jump to the live
-  // account so its balance and positions show without a manual switch. Only on
-  // the off → on transition, never on a boot read that finds it already on, so
-  // a deliberate Paper pick survives a reload.
-  const liveSwitchRef = useRef({ account, acctTabs, onAccountChange });
-  liveSwitchRef.current = { account, acctTabs, onAccountChange };
-  useEffect(() => {
-    let prev = mt5DeployStateSignal.value;
-    return mt5DeployStateSignal.subscribe((next) => {
-      const cameOn = next === "on" && (prev === "off" || prev === "turning-on");
-      prev = next;
-      if (!cameOn) return;
-      const { account: cur, acctTabs: tabs, onAccountChange: change } = liveSwitchRef.current;
-      if (brokerOf(cur) !== "mt5") return;
-      const live = tabs.find((a) => a.broker === "mt5" && a.env === "live");
-      if (live && live.key !== cur) change?.(live.key);
-    });
-  }, []);
-
   const trades = all; // whole book — every symbol, not just the focused chart
   const positions = trades.filter((t) => t.kind === "position");
   const orders = trades.filter((t) => t.kind === "order");
@@ -235,8 +214,7 @@ export default function PositionsPanel({
   });
   const { pnl, balance, available, accountMargin, ordersMargin, equity, marginBuffer, marginLevel, noBrokerData } = stats;
   // Account alerts: a bell on the figures the server can watch. Only real
-  // Capital/IG accounts are monitorable (paper has no broker summary; MT5 is
-  // excluded so polling never keeps the MetaApi account deployed).
+  // Capital/IG accounts are monitorable (paper has no broker summary).
   useSignalValue(alertsChanged);
   const canAlert = isAccountMonitorable(account) && isAdminAccount();
   const acctAlerts = canAlert ? loadAccountAlerts(account) : [];
@@ -329,7 +307,7 @@ export default function PositionsPanel({
                   <EyeIcon hidden={linesHidden} />
                 </button>
               </Tooltip>
-              {!isOrder && brokerOf(account) !== "mt5" && (() => {
+              {!isOrder && (() => {
                 const warnOn = !!(findPositionAlert(t.id, "sl") || findPositionAlert(t.id, "tp"));
                 return (
                   <Tooltip content="Warn near SL/TP">
@@ -634,7 +612,6 @@ export default function PositionsPanel({
             reads once, to their left. Backend-reported real name when the broker
             provides one (MT5 → "Ava Trade Ltd (demo)"), static label otherwise. */}
         <span className="pp-acct-broker">{brokerLabel(activeBroker)}</span>
-        {activeBroker === "mt5" && <Mt5DeployButton />}
         <div className="pp-acct-tabs" role="tablist" aria-label="Account">
           {acctTabs.map((a) => {
             const isActive = a.key === account;

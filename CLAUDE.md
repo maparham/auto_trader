@@ -52,7 +52,7 @@ rejected: traffic from Iran to Cloudflare stalls after a few KB. Deploy with
 `scripts/deploy-demo.sh` (root@95.38.187.63, service user `chartkar`, same
 unit names as before).
 
-Foreign brokers (Capital, IG, AvaTrade via MT5/MetaApi) must NEVER be reached
+Foreign brokers (Capital, IG, AvaTrade via MT5) must NEVER be reached
 from the Iranian IP: they geo-block it and may flag the accounts. This is
 enforced, not just configured. `auto-trader-demo` may only reach loopback
 (`IPAddressDeny=any` in the box-only drop-in `no-direct-egress.conf`), and
@@ -352,8 +352,7 @@ resets at server-local midnight. Each notifier call is bounded by
 `NOTIFIER_TIMEOUT_S` (30 s); broadcast and notifier failures are logged and
 never skip the other channels.
 
-Only Capital and IG non-paper accounts are monitorable; MT5 is excluded so
-polling never keeps the MetaApi account deployed. Create and patch are
+Only Capital and IG non-paper accounts are monitorable. Create and patch are
 admin-only. A poll failure older than 120 s or a missing figure reports the
 account unmonitored once (push + Telegram + `__alerts__:monitor`) and
 "resumed" once. `GET /api/alerts` decorates account rows with `current`,
@@ -388,8 +387,9 @@ re-arms once the distance passes 1.5x the threshold or the level moves, and
 deletes the row, with no notification, when the position closes or the level
 is removed. A failed poll deletes nothing; only a successful poll that lacks
 the deal does. Fired state is in memory. No ATR yet means no fire.
-MetaApi `mt5` is never watched (`account_not_watchable`); `mt5-self` and paper
-are. A trailing-stop position refuses the SL side (`trailing_stop`), TP is fine.
+Any registered account is watched, `mt5-self` and paper included
+(`account_not_watchable` means the account is not registered). A
+trailing-stop position refuses the SL side (`trailing_stop`), TP is fine.
 
 The Telegram fire carries a `Remove SL`/`Remove TP` button (`pr:<token>`),
 which opens a separate confirm message (`pry:`/`prn:`). Tokens are 8 chars

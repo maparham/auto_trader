@@ -30,7 +30,7 @@ class _NoPing:
 
 @pytest.fixture()
 def setup(monkeypatch):
-    brokers = {"yfinance": _Pinged(), "capital": _Pinged(fail=True), "mt5": _NoPing()}
+    brokers = {"yfinance": _Pinged(), "capital": _Pinged(fail=True), "noping": _NoPing()}
     registry = BrokerRegistry()
     for bid, broker in brokers.items():
         registry.add_data(bid, broker)
@@ -54,8 +54,8 @@ def test_probe_tests_stale_brokers_only(setup):
     assert body["yfinance"]["state"] == "ok"
     assert body["capital"]["state"] == "down"
     assert "login refused" in body["capital"]["reason"]
-    # No ping method (MetaApi): never tested, stays unknown.
-    assert body["mt5"]["state"] == "unknown"
+    # No ping method: never tested, stays unknown.
+    assert body["noping"]["state"] == "unknown"
 
     # A fresh success is not tested again; a failed one is.
     client.get("/api/brokers/status?probe=1")
