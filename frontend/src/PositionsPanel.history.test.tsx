@@ -3,6 +3,13 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
+// The All accounts tab's polling would make real fetches for capital:demo.
+vi.mock("./app/useAllAccounts", () => ({
+  useAllAccounts: () => ({
+    visible: [], hidden: [], snaps: {}, count: null, updatedAt: null,
+    refresh: () => {}, setHidden: () => {}, hasAccounts: false,
+  }),
+}));
 vi.mock("./HistoryPane", () => ({ default: ({ account }: { account: string }) => <div>history for {account}</div> }));
 
 import PositionsPanel from "./PositionsPanel";

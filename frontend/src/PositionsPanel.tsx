@@ -70,6 +70,8 @@ import {
   type TableTab,
 } from "./lib/positionsTable";
 import HistoryPane from "./HistoryPane";
+import AllAccountsPane from "./AllAccountsPane";
+import { useAllAccounts } from "./app/useAllAccounts";
 
 interface Props {
   account?: TradeAccount;
@@ -94,6 +96,8 @@ interface Props {
   onJumpToEpic?: (epic: string, precisionGuess?: number) => void;
   /** History tab row click: show that closed trade on its chart. */
   onSelectTrade?: (row: TradeRow) => void;
+  /** All accounts tab row click: open that position, switching account first if needed. */
+  onOpenAccountPosition?: (account: TradeAccount, epic: string, dealId: string) => void;
   // When false, a dragged level applies immediately (no Apply/Discard bar).
   confirmLineEdits?: boolean;
   // Dock maximized to fill the chart view (owned by App, which hides the workspace).
@@ -116,6 +120,10 @@ const clampDockHeight = (h: number) =>
   Math.round(Math.max(MIN_DOCK_H, Math.min(h, window.innerHeight - CHART_RESERVE_H)));
 
 // Env tab label (paper/demo/live → Paper/Demo/Live) and its risk tier, mirroring the
+// The dock's tabs: the table tabs plus the All accounts glance (kept out of
+// TableTab, which also drives column labels and the mobile view).
+type DockTab = TableTab | "accounts";
+
 // broker selector's old tiering so a real-money tab still reads red.
 function envLabel(env: string): string {
   return env.charAt(0).toUpperCase() + env.slice(1);
@@ -136,6 +144,7 @@ export default function PositionsPanel({
   trading,
   onJumpToEpic,
   onSelectTrade,
+  onOpenAccountPosition,
   confirmLineEdits = true,
   maximized = false,
   onToggleMaximize,
@@ -154,7 +163,7 @@ export default function PositionsPanel({
   const [selectedId, setSelectedId] = useState<string | null>(tradeLineUiSignal.value.selected);
   // Paused auto-apply while a chart line is being dragged (no-confirm mode).
   const [lineDragging, setLineDragging] = useState<boolean>(draggingLineSignal.value);
-  const [tab, setTab] = useState<TableTab>("positions");
+  const [tab, setTab] = useState<DockTab>("positions");
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   // Re-render when the broker-reported history account list lands (GET /api/brokers),
   // so the History tab appears without a manual account switch.
@@ -278,8 +287,21 @@ export default function PositionsPanel({
   const positions = trades.filter((t) => t.kind === "position");
   const orders = trades.filter((t) => t.kind === "order");
   const hasHistory = accountSupportsHistory(account);
-  // Switching to an account without history while its tab is open falls back.
-  const shownTab: TableTab = tab === "history" && !hasHistory ? "positions" : tab;
+  // Other accounts' positions (All accounts tab). Called before the data-only
+  // early return so the hook order never changes.
+  const allAccounts = useAllAccounts({
+    accounts,
+    active: account,
+    activePositions: positions,
+    activeSummary: accountSummary ?? null,
+    open: tab === "accounts" && !collapsed,
+  });
+  // Switching to an account without history (or losing every dealing account)
+  // while its tab is open falls back.
+  const shownTab: DockTab =
+    (tab === "history" && !hasHistory) || (tab === "accounts" && !allAccounts.hasAccounts)
+      ? "positions"
+      : tab;
   const rows = shownTab === "positions" ? positions : orders;
 
   const toggleSort = (key: SortKey) => setSort((s) => nextSort(s, key));
@@ -607,6 +629,14 @@ export default function PositionsPanel({
             {hasHistory && (
               <TabButton label="History" count={0} on={shownTab === "history"} onClick={() => setTab("history")} />
             )}
+            {allAccounts.hasAccounts && (
+              <TabButton
+                label="All accounts"
+                count={allAccounts.count ?? 0}
+                on={shownTab === "accounts"}
+                onClick={() => setTab("accounts")}
+              />
+            )}
             <div className="pp-winctl">
               <Tooltip content={maximized ? "Restore dock" : "Maximize dock"}>
                 <button
@@ -634,7 +664,14 @@ export default function PositionsPanel({
 
           {error && <div className="pp-error">{error}</div>}
 
-          {shownTab === "history" ? (
+          {shownTab === "accounts" ? (
+            <AllAccountsPane
+              data={allAccounts}
+              active={account}
+              trading={trading}
+              onOpen={(acct, epic, dealId) => onOpenAccountPosition?.(acct, epic, dealId)}
+            />
+          ) : shownTab === "history" ? (
             <HistoryPane
               account={account}
               precisionFor={precisionFor}

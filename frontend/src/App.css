@@ -5521,6 +5521,27 @@ body.pp-resizing { cursor: row-resize; user-select: none; }
 .pp-empty { color: var(--text-faint); font-size: 12px; padding: 14px 12px; }
 .pp-error { color: var(--danger); font-size: 11px; padding: 6px 12px 0; }
 
+/* All accounts tab: one section per dealing account, view-only rows. */
+.aa-pane { overflow: auto; min-height: 0; max-height: min(260px, 40vh); padding-bottom: 8px; }
+.aa-top { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 4px 10px 0; }
+.aa-updated { color: var(--text-faint); font-size: 11px; }
+.aa-acct { border-top: 1px solid var(--border); }
+.aa-acct:first-of-type { border-top: none; }
+.aa-head { display: flex; align-items: center; gap: 12px; padding: 4px 10px 4px 6px; font-size: 12px; }
+.aa-head-toggle {
+  display: flex; align-items: center; gap: 6px; background: none; border: none; padding: 2px 4px;
+  color: var(--text); font: inherit; cursor: pointer;
+}
+.aa-head-toggle[aria-expanded="false"] .pp-group-chevron { transform: none; }
+.aa-name { font-weight: 600; }
+.aa-current { color: var(--text-dim); font-size: 11px; border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+.aa-npos { color: var(--text-dim); }
+.aa-figs { display: flex; gap: 14px; margin-left: auto; color: var(--text-dim); font-family: var(--mono); font-size: 11px; }
+.aa-table { margin-bottom: 4px; }
+.aa-hidden { border-top: 1px solid var(--border); padding: 4px 10px; font-size: 12px; }
+.aa-hidden-toggle { background: none; border: none; color: var(--text-dim); font: inherit; cursor: pointer; padding: 2px 0; }
+.aa-hidden-row { display: flex; align-items: center; justify-content: space-between; padding: 2px 0 2px 12px; color: var(--text-dim); }
+
 /* The open book as a scrollable table. Cap relative to the viewport too, so on a
    short window the table scrolls internally instead of pushing the last row off the
    bottom edge; the padding keeps that last row off the dock's edge when at rest. */
