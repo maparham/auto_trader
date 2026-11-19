@@ -103,10 +103,13 @@ import {
 } from "./lib/feed";
 import {
   brokerLabel,
+  brokerOf,
+  type TradeAccount,
   isDataOnlyBroker,
   migrateCapitalLiveAccountKeys,
 } from "./lib/trading";
 import { toast } from "./lib/notify";
+import { waitForTrade } from "./lib/allAccounts";
 import {
   loadStoredAlert,
   updateStoredAlert,
@@ -563,8 +566,11 @@ export default function App() {
     fromBroker: string;
     tabsBefore: ChartTab[];
     epic: string;
-    target: AlertNavTarget;
     precision: number;
+    // An alert jump carries its target; an All accounts row its account + deal.
+    target?: AlertNavTarget;
+    account?: TradeAccount;
+    dealId?: string;
   } | null>(null);
   const openAlert = async (
     epic: string,
@@ -620,9 +626,53 @@ export default function App() {
     }
     if (tabs === p.tabsBefore) return;
     pendingBrokerNavRef.current = null;
-    void openAlert(p.epic, p.target, p.precision);
+    if (p.dealId && p.account) void openAndSelect(p.account, p.epic, p.dealId);
+    else if (p.target) void openAlert(p.epic, p.target, p.precision);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brokerId, tabs]);
+
+  // All accounts tab row click: open the position's chart and select it, like a
+  // dock row. Another account asks first; another broker swaps the workspace and
+  // finishes in the landing effect above. The trade is selected once the new
+  // account's trades feed holds it (gone meanwhile: just the chart).
+  const openAndSelect = async (account: TradeAccount, epic: string, dealId: string) => {
+    await jumpToEpic(epic);
+    const id = await waitForTrade(account, dealId);
+    if (id) setTradeSelected(id);
+  };
+  const openAccountPosition = (account: TradeAccount, epic: string, dealId: string) => {
+    if (account === activeAccount) {
+      void jumpToEpic(epic).then(() => setTradeSelected(dealId));
+      return;
+    }
+    const broker = brokerOf(account);
+    const fromBroker = brokerIdRef.current;
+    const swap = broker !== fromBroker;
+    requestConfirm({
+      title: "Switch account?",
+      message:
+        `This position is on ${brokerLabel(broker)}. Switch from ${brokerLabel(fromBroker)} to open ${epic}?` +
+        (swap && isDirty ? " Unsaved changes to this layout will be discarded." : ""),
+      confirmLabel: "Switch",
+      onConfirm: () => {
+        if (!swap) {
+          setActiveAccount(account);
+          void openAndSelect(account, epic, dealId);
+          return;
+        }
+        pendingBrokerNavRef.current = {
+          broker,
+          fromBroker,
+          tabsBefore: tabsRef.current,
+          epic,
+          precision: 2,
+          account,
+          dealId,
+        };
+        setActiveAccount(account);
+      },
+    });
+  };
 
   // A fired alert's toast/banner clicks navigate through this handler (the
   // fired callback is registered outside React and can't reach openAlert
@@ -1238,6 +1288,7 @@ export default function App() {
             trading={settings.trading}
             confirmLineEdits={settings.trading.confirmLineEdits}
             onJumpToEpic={jumpToEpic}
+            onOpenAccountPosition={openAccountPosition}
             // History's box is the chart's own transient overlay (lib/historyTradeBox),
             // so the jump only opens, pages and scrolls.
             onSelectTrade={(t) => void jumpToTrade(t, { sketch: false })}
