@@ -3435,6 +3435,12 @@
 }
 .tl-alert-bell.fired { color: var(--text-dim); opacity: .7; }
 .tl-alert-bell:hover { z-index: 51; color: #d4880f; }
+/* A fired bell stays gray on hover (amber would read as live): it just turns
+   solid. After the live :hover rule so it wins at equal specificity. */
+.tl-alert-bell.fired:hover,
+.alert-tag.fired .at-bell:hover { color: var(--text); }
+.tl-alert-bell.fired:hover { opacity: 1; }
+.alert-tag.fired:has(.at-bell:hover) { opacity: 1; }
 
 /* TV-style descriptive pill on the alert line (hover/selected). Unlike the
    axis tag this is interactive (delete button), so it opts back into pointer

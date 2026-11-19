@@ -59,6 +59,21 @@ import type { TradeLinePx } from "./useLineDrag";
 // cursor is over, as produced by ChartCore's component-scope tradePillHitTest().
 type PillHit = { id: string; field: TradeLineField };
 
+const BELL_PAD_PX = 3;
+/** True when the point is on (or within a few px of) an alert bell that takes
+ *  the mouse: a fired axis tag's bell or a curve bell. */
+function overAlertBell(el: HTMLElement, clientX: number, clientY: number): boolean {
+  const root = el.closest(".chart-wrap") ?? el;
+  for (const b of root.querySelectorAll(".alert-tag.fired .at-bell, .tl-alert-bell")) {
+    const r = b.getBoundingClientRect();
+    if (
+      clientX >= r.left - BELL_PAD_PX && clientX <= r.right + BELL_PAD_PX &&
+      clientY >= r.top - BELL_PAD_PX && clientY <= r.bottom + BELL_PAD_PX
+    ) return true;
+  }
+  return false;
+}
+
 /** True when the pointer is over the DOM legend. The legend sits inside the
  *  wrap, so its mousemoves bubble into onMove; without this gate a row lying on
  *  top of a trendline or curve would hover (glow, hand cursor) the line under
@@ -503,7 +518,15 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       // Also hidden inside a trade pill's rect: the pill face (and its buttons) is
       // the interaction surface there, and the snapped "+" + axis price box would
       // sit right on top of it. The bare line outside the pill keeps the readout.
-      if (x > mainW || (candleBottom != null && y > candleBottom) || overTradePillNow) {
+      // And over an alert bell (a fired tag's bell sits just left of the axis,
+      // where the "+" circle protrudes): the bell takes the hover, tooltip and
+      // double click there.
+      if (
+        x > mainW ||
+        (candleBottom != null && y > candleBottom) ||
+        overTradePillNow ||
+        overAlertBell(el, clientX, clientY)
+      ) {
         btn.style.display = "none";
         setPlusCrosshair(null);
         return;
