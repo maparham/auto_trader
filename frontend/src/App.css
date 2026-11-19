@@ -5302,6 +5302,22 @@
 .trading-dock.maximized .pp-table-wrap { max-height: none; flex: 1; }
 .trading-dock.maximized .pp-empty { flex: 1; }
 .pp { display: flex; flex-direction: column; }
+/* A user-dragged height (inline style on .pp): the table or empty note takes
+   whatever the tabs and the footer bar leave, instead of its capped window. */
+.pp { position: relative; }
+.pp-sized { min-height: 0; }
+.pp-sized .pp-tabs, .pp-sized .pp-bar, .pp-sized .pp-history-bar { flex-shrink: 0; }
+.pp-sized .pp-table-wrap { max-height: none; flex: 1; }
+.pp-sized .pp-empty { flex: 1; }
+.pp-sized .pp-history { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* Top-edge drag handle: drag to resize the dock, double-click to reset. */
+.pp-resize-handle {
+  position: absolute; left: 0; right: 0; top: -3px; height: 6px;
+  cursor: row-resize; z-index: 5; touch-action: none;
+}
+.pp-resize-handle:hover,
+.pp-resize-handle:active { background: var(--accent); opacity: 0.35; }
+body.pp-resizing { cursor: row-resize; user-select: none; }
 
 /* Account strip — now a FOOTER below the table. Collapse toggle + account identity
    on the left; the stat row (or, collapsed, a live ticker) on the right. The top

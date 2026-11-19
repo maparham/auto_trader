@@ -13,7 +13,7 @@
 // combined Apply / Discard for all staged changes, so a poll never snaps a
 // half-edited line back. Apply writes them to the broker.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useSignalValue } from "./lib/signalHooks";
 import { findPositionAlert, isAccountMonitorable, loadAccountAlerts, METRIC_LABELS, type AccountMetric } from "./lib/alertsApi";
 import {
@@ -106,6 +106,13 @@ interface Props {
 // with our paper P&L — see lib/orderInfo. Sortable columns read straight off this.
 type RowExt = EnrichedTrade;
 const COLLAPSE_KEY = "tradeDockCollapsed";
+// User-dragged dock height in px; absent means content-sized (the default).
+const HEIGHT_KEY = "tradeDockHeight";
+const MIN_DOCK_H = 90;
+// Always leave this much of the window for the chart above the dock.
+const CHART_RESERVE_H = 160;
+const clampDockHeight = (h: number) =>
+  Math.round(Math.max(MIN_DOCK_H, Math.min(h, window.innerHeight - CHART_RESERVE_H)));
 
 // Env tab label (paper/demo/live → Paper/Demo/Live) and its risk tier, mirroring the
 // broker selector's old tiering so a real-money tab still reads red.
@@ -159,6 +166,62 @@ export default function PositionsPanel({
       return false;
     }
   });
+
+  const [dockHeight, setDockHeight] = useState<number | null>(() => {
+    try {
+      const v = Number(localStorage.getItem(HEIGHT_KEY));
+      return Number.isFinite(v) && v > 0 ? v : null;
+    } catch {
+      return null;
+    }
+  });
+  const sectionRef = useRef<HTMLElement>(null);
+  // Ends an in-flight drag; also run on unmount so no window listener leaks.
+  const endResizeRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => endResizeRef.current?.(), []);
+  function saveDockHeight(h: number | null) {
+    try {
+      if (h == null) localStorage.removeItem(HEIGHT_KEY);
+      else localStorage.setItem(HEIGHT_KEY, String(h));
+    } catch {
+      /* ignore */
+    }
+  }
+  // Drag the dock's top edge to resize it; double-click goes back to content-sized.
+  function startResize(e: ReactPointerEvent<HTMLDivElement>) {
+    if (e.button !== 0 || !sectionRef.current) return;
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = sectionRef.current.getBoundingClientRect().height;
+    // Null until the pointer moves, so a plain click (or the first half of the
+    // reset double-click) never pins the content-sized dock to a fixed height.
+    let last: number | null = null;
+    const move = (ev: PointerEvent) => {
+      last = clampDockHeight(startH + (startY - ev.clientY));
+      setDockHeight(last);
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      document.body.classList.remove("pp-resizing");
+      endResizeRef.current = null;
+    };
+    const up = () => {
+      end();
+      if (last != null) saveDockHeight(last);
+    };
+    endResizeRef.current?.();
+    endResizeRef.current = end;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    document.body.classList.add("pp-resizing");
+  }
+  function resetDockHeight() {
+    setDockHeight(null);
+    saveDockHeight(null);
+  }
 
   useEffect(() => subscribeTrades(setAll), []);
   // Re-render on each streamed price so P&L marks to market live — without polling
@@ -483,6 +546,7 @@ export default function PositionsPanel({
   // a plain "history only" note instead of a misleading paper account strip + book.
   // Deliberately NOT collapsible: the toolbar trade-toggle that would re-open the dock
   // is hidden for a data-only source, so a Close button here would strand it shut.
+  const sized = dockHeight != null && !collapsed && !maximized;
   if (dataOnly) {
     return (
       <section className="pp">
@@ -496,7 +560,21 @@ export default function PositionsPanel({
   }
 
   return (
-    <section className={`pp${collapsed ? " pp-collapsed" : ""}`}>
+    <section
+      ref={sectionRef}
+      className={`pp${collapsed ? " pp-collapsed" : ""}${sized ? " pp-sized" : ""}`}
+      style={sized ? { height: clampDockHeight(dockHeight) } : undefined}
+    >
+      {!collapsed && !maximized && (
+        <div
+          className="pp-resize-handle"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize dock"
+          onPointerDown={startResize}
+          onDoubleClick={resetDockHeight}
+        />
+      )}
       {!collapsed && (
         <>
           {/* Positions / Orders tabs with live counts. Window controls (maximize fills
