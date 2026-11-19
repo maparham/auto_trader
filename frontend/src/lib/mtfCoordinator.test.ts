@@ -409,6 +409,22 @@ describe("applyTrendlinesTimeframe", () => {
     );
   });
 
+  it("an unpin while the pin is still fetching wins", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    fetchRangeStrict.mockImplementation(async (_e, _tf, fromSec, toSec) => {
+      await gate;
+      return htfPage(fromSec as number, toSec as number);
+    });
+    const { chart, overrides } = fakeChart();
+    const pin = apply(chart, "MINUTE_15");
+    await apply(chart, null);
+    release();
+    await pin;
+    const mtfs = overrides.map((o) => o.patch.extendData?.mtf).filter(Boolean);
+    expect(mtfs.at(-1)).toEqual({ timeframe: null });
+  });
+
   it("stashes the HTF series and lines, from CLOSED bars only", async () => {
     fetchRangeStrict.mockImplementation((_e, _tf, fromSec, toSec) =>
       Promise.resolve(htfPage(fromSec as number, toSec as number)),

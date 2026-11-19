@@ -19,6 +19,8 @@ inputs [0..i].
 from __future__ import annotations
 
 import math
+import threading
+from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
@@ -1135,14 +1137,40 @@ def trendlines_warmup(cfg: TrendlinesConfig, output: str) -> int:
     return TL_ATR_LEN + 2 * cfg.pivot_len + cfg.min_span_bars
 
 
+# The last few detector runs, so a rule reading several outputs of one
+# instance (tl_1, tl_2, tl_nearest) runs the detector once. An entry holds the
+# candles list itself and its last candle, so a hit is the same list object,
+# unchanged at the end, never a recycled id().
+_SERIES_CACHE_SIZE = 8
+_SERIES_CACHE: OrderedDict[tuple, tuple[Sequence[Candle], Candle, list[dict[str, float]]]] = OrderedDict()
+_SERIES_LOCK = threading.Lock()
+
+
+def _points_for(candles: Sequence[Candle], cfg: TrendlinesConfig) -> list[dict[str, float]]:
+    if not candles:
+        return compute_trendlines(candles, cfg)[0]
+    key = (cfg, id(candles), len(candles))
+    with _SERIES_LOCK:
+        hit = _SERIES_CACHE.get(key)
+        if hit is not None and hit[0] is candles and hit[1] is candles[-1]:
+            _SERIES_CACHE.move_to_end(key)
+            return hit[2]
+    points, _lines = compute_trendlines(candles, cfg)
+    with _SERIES_LOCK:
+        _SERIES_CACHE[key] = (candles, candles[-1], points)
+        _SERIES_CACHE.move_to_end(key)
+        while len(_SERIES_CACHE) > _SERIES_CACHE_SIZE:
+            _SERIES_CACHE.popitem(last=False)
+    return points
+
+
 def trendlines_series(
     cfg: TrendlinesConfig, output: str, candles: Sequence[Candle], bar_hours: float
 ) -> list[float | None]:
     """bar_hours is unused; the IndicatorSeriesSpec signature requires it."""
     if output not in trendlines_outputs(cfg):
         return [None] * len(candles)
-    points, _lines = compute_trendlines(candles, cfg)
-    return [p.get(output) for p in points]
+    return [p.get(output) for p in _points_for(candles, cfg)]
 
 
 TL_DEFAULT_PARAMS: list[float] = trendlines_config_params(parse_trendlines_config([], {}))

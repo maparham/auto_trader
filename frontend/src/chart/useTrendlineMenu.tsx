@@ -62,13 +62,23 @@ const HOVERED = new WeakMap<object, Picked | null>();
 /** The double-clicked lines per chart, each run on to the pane's edge. */
 const EXTENDED = new WeakMap<object, Picked[]>();
 
+/** One key of an instance's live extendData. The maps below remember what
+ * was last written, but an instance removed and re-created under the same
+ * name (an undo) comes back without it, so each diff checks the live value. */
+function liveExt(chart: Chart, paneId: string, name: string, field: string): unknown {
+  const ind = chart.getIndicators({ paneId, name })[0];
+  return (ind?.extendData as Record<string, unknown> | undefined)?.[field];
+}
+
 function markLine(
   map: WeakMap<object, Picked | null>,
   field: "selectedLine" | "hoveredLine",
   chart: Chart,
   next: Picked | null,
 ): void {
-  const cur = map.get(chart) ?? null;
+  const was = map.get(chart) ?? null;
+  // Already gone from the live instance: nothing to clear, nothing to match.
+  const cur = was && liveExt(chart, was.paneId, was.name, field) === was.key ? was : null;
   if (
     cur?.key === next?.key &&
     cur?.paneId === next?.paneId &&
@@ -90,7 +100,7 @@ const instKey = (l: Picked) => `${l.paneId}\u0000${l.name}`;
 /** Write the extended set, one extendedLines array per instance, touching
  * only the instances whose keys changed. */
 function setExtended(chart: Chart, next: Picked[]): void {
-  const cur = EXTENDED.get(chart) ?? [];
+  const cur = liveExtended(chart);
   const keysOf = (lines: Picked[], at: Picked) =>
     lines.filter((l) => instKey(l) === instKey(at)).map((l) => l.key);
   const seen = new Set<string>();
@@ -106,6 +116,14 @@ function setExtended(chart: Chart, next: Picked[]): void {
   EXTENDED.set(chart, next);
 }
 
+/** The remembered extended lines still on their live instance. */
+function liveExtended(chart: Chart): Picked[] {
+  return (EXTENDED.get(chart) ?? []).filter((l) => {
+    const live = liveExt(chart, l.paneId, l.name, "extendedLines");
+    return Array.isArray(live) && live.includes(l.key);
+  });
+}
+
 export function pickTrendline(chart: Chart, next: Picked | null): void {
   markLine(PICKED, "selectedLine", chart, next);
   // A click on any line keeps the extensions, so several can be studied
@@ -118,7 +136,7 @@ export function pickTrendline(chart: Chart, next: Picked | null): void {
  * to the pane's right edge, keeping the other extended lines. */
 export function toggleTrendlineExtension(chart: Chart, line: Picked): void {
   pickTrendline(chart, line);
-  const cur = EXTENDED.get(chart) ?? [];
+  const cur = liveExtended(chart);
   const on = cur.some((l) => samePick(l, line));
   setExtended(chart, on ? cur.filter((l) => !samePick(l, line)) : [...cur, line]);
 }
@@ -144,7 +162,11 @@ function applyEmphasis(chart: Chart): void {
     const ind = chart.getIndicators({ paneId: "candle_pane", name })[0];
     if (ind && indTypeOf(ind) === "TRENDLINES") next.add(name);
   }
-  const cur = EMPHASIZED.get(chart) ?? new Set<string>();
+  const cur = new Set(
+    [...(EMPHASIZED.get(chart) ?? [])].filter(
+      (name) => liveExt(chart, "candle_pane", name, "emphasized") === true,
+    ),
+  );
   for (const name of cur)
     if (!next.has(name)) overrideExtend(chart, "candle_pane", name, { emphasized: null });
   for (const name of next)

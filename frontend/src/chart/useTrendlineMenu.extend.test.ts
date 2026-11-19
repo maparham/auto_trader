@@ -13,10 +13,16 @@ function liveChart() {
     const k = `${paneId}:${name}`;
     ext.set(k, { ...ext.get(k), ...patch });
   });
-  const chart = { getIndicators: () => [] } as unknown as Chart;
+  const chart = {
+    getIndicators: ({ paneId, name }: { paneId: string; name: string }) => [
+      { name, extendData: ext.get(`${paneId}:${name}`) ?? {} },
+    ],
+  } as unknown as Chart;
   const extended = (name = "TL") =>
     (ext.get(`candle_pane:${name}`)?.extendedLines as string[] | null | undefined) ?? null;
-  return { chart, extended };
+  // An undo re-creates the instance without the session gesture keys.
+  const recreate = (name = "TL") => ext.delete(`candle_pane:${name}`);
+  return { chart, extended, recreate };
 }
 
 const a = { paneId: "candle_pane", name: "TL", key: "a" };
@@ -63,5 +69,13 @@ describe("toggleTrendlineExtension", () => {
     pickTrendline(chart, null);
     expect(extended()).toBeNull();
     expect(extended("TL2")).toBeNull();
+  });
+
+  it("a re-created instance extends on the first double click", () => {
+    const { chart, extended, recreate } = liveChart();
+    doubleClick(chart, a);
+    recreate();
+    doubleClick(chart, a);
+    expect(extended()).toEqual(["a"]);
   });
 });

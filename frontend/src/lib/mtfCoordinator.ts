@@ -49,6 +49,7 @@ import {
 } from "./indicators/autoFibOutputs";
 import {
   setTrendlinesHtfBars,
+  dropTrendlinesHtfBars,
   type TrendlinesExtend,
 } from "./indicators/trendlines";
 import {
@@ -680,6 +681,16 @@ const buildGens = new WeakMap<Chart, Map<string, number>>();
 function buildGenOf(chart: Chart, paneId: string, name: string): number {
   return buildGens.get(chart)?.get(`${paneId}|${name}`) ?? 0;
 }
+/** Unpins per chart and instance, so a pin started before one is dropped. */
+const unpinCounts = new WeakMap<Chart, Map<string, number>>();
+function unpinsOf(chart: Chart, paneId: string, name: string): number {
+  return unpinCounts.get(chart)?.get(`${paneId}|${name}`) ?? 0;
+}
+function bumpUnpins(chart: Chart, paneId: string, name: string): void {
+  let m = unpinCounts.get(chart);
+  if (!m) unpinCounts.set(chart, (m = new Map()));
+  m.set(`${paneId}|${name}`, unpinsOf(chart, paneId, name) + 1);
+}
 function bumpBuildGen(chart: Chart, paneId: string, name: string): number {
   let m = buildGens.get(chart);
   if (!m) buildGens.set(chart, (m = new Map()));
@@ -731,6 +742,9 @@ async function applyHtfPin<E extends { mtf?: unknown }>(
   spec: HtfPinSpec<E>,
 ): Promise<void> {
   cancelMtfRetry(chart, paneId, name); // this apply supersedes any pending retry
+  // A pin still fetching or building when the user unpins never lands
+  // afterwards: the unpin bumps both counters, checked after each await.
+  const startUnpins = unpinsOf(chart, paneId, name);
   const ind = getIndicator(chart, paneId, name) as { extendData?: E } | null;
   const waitClose = readWaitClose(ind);
   const ext = spec.extend((ind?.extendData ?? {}) as E);
@@ -742,6 +756,8 @@ async function applyHtfPin<E extends { mtf?: unknown }>(
 
   if (!timeframe || timeframe === "chart") {
     clearMtfRetry(chart, paneId, name);
+    bumpBuildGen(chart, paneId, name);
+    bumpUnpins(chart, paneId, name);
     ext.mtf = { timeframe: null };
     write();
     return;
@@ -761,6 +777,7 @@ async function applyHtfPin<E extends { mtf?: unknown }>(
   // meanwhile, and a failed fetch must keep those, not the pre-fetch stash.
   const liveMtf = (getIndicator(chart, paneId, name) as { extendData?: E } | null)?.extendData
     ?.mtf as MtfSeriesBase | undefined;
+  if (unpinsOf(chart, paneId, name) !== startUnpins) return; // unpinned while fetching
   const proceed = mtfFetchTail(
     chart,
     paneId,
@@ -1167,6 +1184,8 @@ function applyTrendlinesPin(
   brokerId: string | undefined,
   needed: NeededInterval | undefined,
 ): Promise<void> {
+  // Unpinned: the chart-timeframe compute never reads the HTF bars again.
+  if (!timeframe || timeframe === "chart") dropTrendlinesHtfBars(chart, name);
   return applyHtfPin<TrendlinesExtend>(chart, epic, name, paneId, timeframe, brokerId, needed, {
     extend: (live) => ({ ...live }),
     // Object.values ORDER IS the calcParams order (TrendlinesConfig's key order

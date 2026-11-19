@@ -246,10 +246,12 @@ function medianGap(timeAt: (i: number) => number, n: number, fallback: number): 
 }
 
 // Per frame: every line of an instance, its alert lines and its hit targets
-// read one map, so it is built once per data list and pin.
+// read one map, so it is built once per data list and pin. Keyed by the data
+// list, then by the pin's starts array, so two pinned instances on one chart
+// each keep their own map instead of evicting each other on every draw.
 const MAPS = new WeakMap<
   object,
-  { n: number; newest: number; starts: readonly number[]; slots: SlotGrid | null; map: HtfStepMap }
+  WeakMap<readonly number[], { n: number; newest: number; slots: SlotGrid | null; map: HtfStepMap }>
 >();
 
 /** The step map for a coarser pin, memoised on the data list (same length,
@@ -261,10 +263,12 @@ export function stepMapFor(dataList: readonly KLineData[], mtf: TrendlinesMtf): 
   const n = dataList.length;
   const newest = dataList[n - 1].timestamp;
   const slots = slotGridFor(dataList);
-  const hit = MAPS.get(dataList);
-  if (hit && hit.n === n && hit.newest === newest && hit.starts === starts && hit.slots === slots) return hit.map;
+  let byStarts = MAPS.get(dataList);
+  if (!byStarts) MAPS.set(dataList, (byStarts = new WeakMap()));
+  const hit = byStarts.get(starts);
+  if (hit && hit.n === n && hit.newest === newest && hit.slots === slots) return hit.map;
   const map = buildHtfStepMap((i) => dataList[i].timestamp, n, starts, htfMs, mtf.timeframe ?? undefined, slots);
-  MAPS.set(dataList, { n, newest, starts, slots, map });
+  byStarts.set(starts, { n, newest, slots, map });
   return map;
 }
 

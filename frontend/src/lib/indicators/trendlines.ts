@@ -1434,6 +1434,10 @@ export function setTrendlinesHtfBars(chart: object, name: string, bars: KLineDat
   if (!byName) TL_HTF_BARS.set(chart, (byName = new Map()));
   byName.set(name, bars);
 }
+/** Forget an instance's HTF bars (removed or unpinned). */
+export function dropTrendlinesHtfBars(chart: object, name: string): void {
+  TL_HTF_BARS.get(chart)?.delete(name);
+}
 /** The instance's HTF bars when they match its stash's htfStarts, else undefined. */
 export function trendlinesHtfBars(chart: object, name: string, starts: readonly number[] | undefined): KLineData[] | undefined {
   const bars = TL_HTF_BARS.get(chart)?.get(name);
@@ -2697,6 +2701,7 @@ export function getTrendlineTags(chart: object, paneId: string): TrendlineTagBox
  * here for the life of the chart. */
 export function dropTrendlineTargets(chart: object, name: string): void {
   dropTrendlineSegments(chart, name);
+  dropTrendlinesHtfBars(chart, name);
   const byPane = TAGS.get(chart);
   if (!byPane) return;
   for (const key of [...byPane.keys()])
@@ -2729,22 +2734,55 @@ function setTrendlineTags(
  * The line list rides the last row as usual, still in HTF bar indices — see
  * TrendlinesMtf for why they are not converted.
  */
-export function alignMtfTrendlines(
-  dataList: KLineData[],
+/** The aligned rows of a pinned stash, before the live last row: one entry
+ * per stash (its htfPoints array), reused while the chart's bars and the pin
+ * are the same. A pinned pane calcs on every tick and on every hover or pick
+ * write, and only the last row reads the live price. */
+const ALIGNED = new WeakMap<
+  object,
+  {
+    n: number;
+    first: number;
+    last: number;
+    starts: readonly number[];
+    outputs: readonly string[];
+    htfMs: number;
+    formingIdx: number | undefined;
+    chartMs: number | undefined;
+    timeframe: string | null | undefined;
+    rows: TrendlinesCalcPoint[];
+  }
+>();
+
+function alignedRows(
+  ts: number[],
   mtf: TrendlinesMtf,
-  cfg?: TrendlinesConfig,
+  starts: readonly number[],
+  htfMs: number,
 ): TrendlinesCalcPoint[] {
-  const ts = dataList.map((k) => k.timestamp);
-  const starts = mtf.htfStarts ?? [];
-  const htfMs = mtf.htfMs ?? 0;
-  const htfBars = starts.map((t) => ({ timestamp: t }) as KLineData);
   const outputs = mtf.htfOutputs ?? [];
-  const rows = mtf.htfPoints ?? [];
+  const rows = mtf.htfPoints;
+  const n = ts.length;
+  const hit = rows ? ALIGNED.get(rows) : undefined;
+  if (
+    hit &&
+    hit.n === n &&
+    hit.first === ts[0] &&
+    hit.last === ts[n - 1] &&
+    hit.starts === starts &&
+    hit.outputs === outputs &&
+    hit.htfMs === htfMs &&
+    hit.formingIdx === mtf.formingIdx &&
+    hit.chartMs === mtf.chartMs &&
+    hit.timeframe === mtf.timeframe
+  )
+    return hit.rows;
+  const htfBars = starts.map((t) => ({ timestamp: t }) as KLineData);
   const aligned = outputs.map((name) =>
     alignHtfToChart(
       ts,
       htfBars,
-      rows.map((p) => readOutput(p, name)),
+      (rows ?? []).map((p) => readOutput(p, name)),
       htfMs,
       true,
       mtf.formingIdx,
@@ -2760,6 +2798,33 @@ export function alignMtfTrendlines(
     });
     return row;
   });
+  if (rows)
+    ALIGNED.set(rows, {
+      n,
+      first: ts[0],
+      last: ts[n - 1],
+      starts,
+      outputs,
+      htfMs,
+      formingIdx: mtf.formingIdx,
+      chartMs: mtf.chartMs,
+      timeframe: mtf.timeframe,
+      rows: out,
+    });
+  return out;
+}
+
+export function alignMtfTrendlines(
+  dataList: KLineData[],
+  mtf: TrendlinesMtf,
+  cfg?: TrendlinesConfig,
+): TrendlinesCalcPoint[] {
+  const ts = dataList.map((k) => k.timestamp);
+  const starts = mtf.htfStarts ?? [];
+  const htfMs = mtf.htfMs ?? 0;
+  // A copy of the cached rows: only the last row is replaced below, and the
+  // cached one must keep the HTF bar's own values for the next call.
+  const out = alignedRows(ts, mtf, starts, htfMs).slice();
   if (!out.length) return out;
   // The HTF bar the LAST chart bar reads, by the same rule alignHtfToChart
   // used above. The draw path measures every line at it, and selectDrawnLines
