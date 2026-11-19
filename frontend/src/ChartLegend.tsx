@@ -175,8 +175,8 @@ export interface Props {
   // drag-to-reorder session from the legend card's grip handle.
   onMove: (name: string, targetIndex: number) => void;
   onStartReorder: (paneId: string, name: string) => void;
-  // Alerts on an indicator as a whole (chart/legendAlertBells), by indicator
-  // name: a bell on that row. Double click edits, right click Edit / Delete.
+  // Every indicator alert (chart/legendAlertBells), by indicator name: a
+  // bell on that row. Double click edits, right click Edit / Delete.
   alertBells?: ReadonlyMap<string, LegendAlertBellData[]>;
   onEditAlert?: (id: string) => void;
   onDeleteAlert?: (id: string) => void;
@@ -710,7 +710,7 @@ export default function ChartLegend({
 // through IndicatorGroup and SubPaneLegend.
 const LegendChartContext = createContext<() => Chart | null>(() => null);
 
-// The whole-indicator alert bells, by indicator name, and what they do. A
+// The indicator alert bells, by indicator name, and what they do. A
 // context for the same reason as LegendChartContext.
 const NO_BELLS: ReadonlyMap<string, LegendAlertBellData[]> = new Map();
 type AlertActions = {
@@ -723,7 +723,7 @@ const LegendAlertContext = createContext<AlertActions & { bells: ReadonlyMap<str
   bells: NO_BELLS,
 });
 
-// The row's whole-indicator alerts: an amber bell for the live ones, a gray
+// The row's indicator alerts: an amber bell for the live ones, a gray
 // one for fired "once" alerts still in History.
 function LegendAlertBells({ name }: { name: string }) {
   const { bells, ...actions } = useContext(LegendAlertContext);
@@ -784,7 +784,7 @@ function LegendAlertBell({ list, fired, actions }: { list: LegendAlertBellData[]
             setMenu({ x: e.clientX, y: e.clientY });
           }}
         >
-          <BellIcon size={12} />
+          <BellIcon size={13} />
           {list.length > 1 && <span className="cl-alert-count">{list.length}</span>}
         </button>
       </Tooltip>

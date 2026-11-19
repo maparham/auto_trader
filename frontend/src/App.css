@@ -3987,18 +3987,26 @@
   background: none; border: none; padding: 0; margin: 0; line-height: 0;
 }
 .cl-warn svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
-/* Bell on a legend row: an alert on the indicator as a whole (an event such
-   as a divergence), which has no curve or level to carry a bell. Same amber
-   as the on-chart bells. */
+/* Bell on a legend row: the indicator has an alert (any kind; one on the
+   indicator as a whole, such as a divergence, has no other mark). A FILLED
+   amber bell means armed (the on-chart bells' amber); a fired "once" alert
+   still in History is the same bell as a gray outline. The halo is the
+   chart bells' own, so the mark reads over candles when the row has no card. */
 .cl-alert-bell {
-  display: inline-flex; align-items: center; gap: 1px; color: #f5a623; cursor: pointer;
-  background: none; border: none; padding: 0; margin: 0; line-height: 0; font: inherit;
+  display: inline-flex; align-items: center; gap: 2px; color: #f5a623; cursor: pointer;
+  /* No margin here: the row's `.cl-row > * + *` gives it the same 6px gap as
+     every other legend item. */
+  background: none; border: none; padding: 0; line-height: 1; font: inherit;
+  border-radius: 3px;
+  filter: drop-shadow(0 0 1px var(--bg)) drop-shadow(0 0 1px var(--bg));
 }
+.cl-alert-bell svg { display: block; fill: currentColor; stroke-width: 1.6; }
 .cl-alert-bell:hover { color: #d4880f; }
-.cl-alert-bell.fired { color: var(--text-dim); opacity: .7; }
-.cl-alert-bell.fired:hover { opacity: 1; }
-.cl-alert-bell svg { display: block; }
-.cl-alert-count { font-size: 10px; line-height: 1; }
+.cl-alert-bell:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.cl-alert-bell.fired { color: var(--text-dim); }
+.cl-alert-bell.fired svg { fill: none; }
+.cl-alert-bell.fired:hover { color: var(--text); }
+.cl-alert-count { font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; }
 /* Busy spinner on a legend row while the indicator computes (lib/indicatorBusy).
    A transform animation, so the compositor keeps it turning even while a
    synchronous compute holds the main thread. */

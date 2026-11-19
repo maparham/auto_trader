@@ -275,7 +275,7 @@ import AlertTags from "./chart/AlertTags";
 import AlertCurveBells, { type AlertCurveBellTag } from "./chart/AlertCurveBells";
 import AxisPriceTags, { WithPriceTag, type BaTag, type PriceTag } from "./chart/AxisPriceTags";
 import { signalSetter } from "./lib/signalHooks";
-import { bellsSig, wholeAlertBells, type LegendAlertBell } from "./chart/legendAlertBells";
+import { bellsSig, indicatorAlertBells, type LegendAlertBell } from "./chart/legendAlertBells";
 import TradePills from "./chart/TradePills";
 
 // klinecharts' own initial bar spacing (its DEFAULT_BAR_SPACE, not exported) — used to
@@ -1052,8 +1052,7 @@ export default function ChartCore({
   // The inset band's legend card (the same card a sub-pane gets, positioned at the
   // band's top edge) and the band's own geometry, which the resize handle sits on.
   const [insetLegend, setInsetLegend] = useState<SubPaneLegendData | null>(null);
-  // Bells on the legend rows of indicators that carry a whole-indicator alert
-  // (an event such as a divergence), live or fired. Read on every alerts bump
+  // Bells on the legend rows of indicators that carry an alert, live or fired. Read on every alerts bump
   // and every render (an indicator added, removed or re-pinned re-renders
   // through the legend rows), but the map only changes when its signature
   // does: an alert-line drag bumps alertsChanged per move, and must not
@@ -1063,7 +1062,7 @@ export default function ChartCore({
   const legendAlertBells = useSyncExternalStore(subscribeAlerts, () => {
     const c = chartRef.current;
     const map = c
-      ? wholeAlertBells(
+      ? indicatorAlertBells(
           c,
           [...loadIndicatorAlerts(symbol.epic, brokerId), ...firedIndicatorAlerts(symbol.epic, brokerId)],
           scope,
