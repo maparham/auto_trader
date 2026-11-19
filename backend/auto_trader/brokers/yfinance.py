@@ -389,6 +389,10 @@ class YFinanceBroker(MarketDataBroker):
     async def all_markets(self) -> list[dict]:
         return [self._curated_row(i) for i in _INSTRUMENT_LIST]
 
+    async def ping(self) -> None:
+        """Status check for the broker menu: one small Yahoo search."""
+        await asyncio.to_thread(_search_yahoo, "AAPL", 1)
+
     async def search_markets(self, query: str, limit: int = 20) -> list[dict]:
         """Curated matches first, then live Yahoo search results. A Yahoo
         outage degrades to curated-only rather than failing the search."""

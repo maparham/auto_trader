@@ -876,6 +876,11 @@ class MT5MCPBroker(MarketDataBroker):
             "will fail. Log in again in the terminal."
         )
 
+    async def ping(self) -> None:
+        """Status check for the broker menu: the terminal answers and is
+        logged in to its trade server."""
+        self.check_logged_in(await self.call("get_trading_account_info", timeout=8.0))
+
     def start_display_name_fetch(self) -> None:
         """One background read of the account's broker name. A no-op outside a
         running loop (unit tests construct brokers directly)."""

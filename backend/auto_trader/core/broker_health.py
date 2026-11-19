@@ -144,6 +144,29 @@ class BrokerHealth:
         self._half_open: set[str] = set()
         # What the latest failure was on (CAUSE_*), reported by BrokerUnavailable.
         self._cause: dict[str, str] = {}
+        # For the broker menu's status dots: when each broker last answered,
+        # and why its latest call failed (cleared by the next success).
+        self._last_ok: dict[str, float] = {}
+        self._last_error: dict[str, str] = {}
+
+    def status(self, key: str) -> dict:
+        """What the recent calls say about `key`: "down" while its latest call
+        failed (or its breaker is open), "ok" when its latest call worked,
+        "unknown" when nothing has called it since the process started.
+        `okAgeS` is seconds since the last success."""
+        last_ok = self._last_ok.get(key)
+        age = None if last_ok is None else max(0.0, self._clock() - last_ok)
+        if key in self._last_error or self.is_open(key):
+            state = "down"
+        elif last_ok is not None:
+            state = "ok"
+        else:
+            state = "unknown"
+        return {
+            "state": state,
+            "okAgeS": None if age is None else round(age),
+            "reason": self._last_error.get(key),
+        }
 
     def is_open(self, key: str) -> bool:
         """True while `key`'s breaker is open (within its cooldown window)."""
@@ -156,6 +179,7 @@ class BrokerHealth:
         factory: Callable[[], Awaitable[T]],
         *,
         ignore: tuple[type[BaseException], ...] = (),
+        timeout: float | None = None,
     ) -> T:
         """Run `factory()` under the breaker for `key`.
 
@@ -170,7 +194,10 @@ class BrokerHealth:
         (they never trip the breaker). In the CLOSED state they also don't reset it
         (the fail streak is left untouched); but on a HALF-OPEN trial they DO close
         it, since the broker responding at all proves it has recovered — see the
-        `except ignore` handler."""
+        `except ignore` handler.
+
+        `timeout` replaces the key's wall-clock budget for this one call (a
+        light status ping must not wait a history fetch's 60 s)."""
         until = self._open_until.get(key)
         if until is not None:
             if self._clock() < until:
@@ -189,10 +216,11 @@ class BrokerHealth:
                 raise BrokerUnavailable(key, self._cause.get(key, CAUSE_BROKER))
             self._half_open.add(key)
         try:
-            timeout = self._per_key_timeout.get(key, self._call_timeout)
+            if timeout is None:
+                timeout = self._per_key_timeout.get(key, self._call_timeout)
             started = self._clock()
             result = await asyncio.wait_for(factory(), timeout)
-        except ignore:
+        except ignore as e:
             # Expected business error — the broker RESPONDED, so it's reachable.
             # In the closed state we deliberately leave the breaker untouched
             # (don't count toward opening, don't reset the fail streak). But on a
@@ -204,6 +232,11 @@ class BrokerHealth:
             # concurrent callers as BrokerUnavailable even though the broker is up.
             if until is not None:
                 self._record_success(key)
+            # Blocked or reconnecting: the breaker stays out of it, but the
+            # broker is not usable right now, so the status dot must say so.
+            if isinstance(e, (BrokerBlocked, BrokerReconnecting)):
+                self._last_ok.pop(key, None)
+                self._last_error[key] = (str(e) or type(e).__name__)[:_MAX_LOGGED_ERR_LEN]
             raise
         except asyncio.TimeoutError as e:
             elapsed = self._clock() - started
@@ -225,6 +258,7 @@ class BrokerHealth:
         n = self._fails.get(key, 0) + 1
         self._fails[key] = n
         self._cause[key] = cause
+        self._last_error[key] = why[:_MAX_LOGGED_ERR_LEN] or "call failed"
         log.warning(
             "broker %s call failed (%d in a row, on %s): %s",
             key, n, cause, why[:_MAX_LOGGED_ERR_LEN],
@@ -239,5 +273,7 @@ class BrokerHealth:
     def _record_success(self, key: str) -> None:
         self._fails.pop(key, None)
         self._cause.pop(key, None)
+        self._last_error.pop(key, None)
+        self._last_ok[key] = self._clock()
         if self._open_until.pop(key, None) is not None:
             log.warning("broker %s breaker closed: call succeeded", key)

@@ -33,6 +33,73 @@ async def brokers(request: Request) -> dict:
     return {**deps._registry.describe(include_restricted=admin), "isAdmin": admin}
 
 
+# A broker with no successful call for this long gets one test call when the
+# broker menu asks with probe=1.
+STATUS_STALE_S = 180.0
+# Wall-clock budget of one test call. Far below the history budgets: a ping
+# that takes longer than this is not a working connection.
+STATUS_PING_TIMEOUT_S = 10.0
+# Test calls in flight, by broker id, so two open menus share one call.
+_status_pings: dict[str, asyncio.Task] = {}
+
+
+async def _status_ping(broker_id: str, broker) -> None:
+    """One test call under the breaker. The outcome lands in BROKER_HEALTH,
+    which is all the caller reads, so every failure is swallowed here."""
+    try:
+        await deps.BROKER_HEALTH.run(
+            broker_id, broker.ping, timeout=STATUS_PING_TIMEOUT_S
+        )
+    except Exception:
+        pass
+
+
+@router.get("/api/brokers/status")
+async def broker_status(request: Request, probe: bool = Query(False)) -> dict:
+    """Whether each data broker is answering right now, for the broker menu.
+
+    The state comes from the breaker's record of recent calls. With probe=1 a
+    broker with no success in the last STATUS_STALE_S seconds gets one light
+    test call first. A broker without `ping` is never tested: MetaApi `mt5`
+    has none on purpose, so a menu open never deploys the MetaApi account."""
+    assert deps._registry is not None, "registry not initialised"
+    admin = request_is_admin(request)
+    registry = deps._registry
+    ids = sorted(
+        bid for bid in registry.data if admin or not registry.is_restricted(bid)
+    )
+    health = deps.BROKER_HEALTH
+    if probe:
+        pending = []
+        for bid in ids:
+            broker = registry.data[bid]
+            if getattr(broker, "ping", None) is None or health.is_open(bid):
+                continue
+            status = health.status(bid)
+            fresh = (
+                status["state"] == "ok"
+                and status["okAgeS"] is not None
+                and status["okAgeS"] < STATUS_STALE_S
+            )
+            if fresh:
+                continue
+            task = _status_pings.get(bid)
+            if task is None or task.done():
+                task = asyncio.create_task(_status_ping(bid, broker))
+                _status_pings[bid] = task
+            pending.append(task)
+        if pending:
+            # shield: a client that goes away must not cancel a shared ping.
+            await asyncio.shield(asyncio.gather(*pending))
+    out = {}
+    for bid in ids:
+        status = health.status(bid)
+        if not admin:
+            status["reason"] = None  # upstream error text is for the operator
+        out[bid] = status
+    return {"brokers": out}
+
+
 @router.get("/api/markets", response_model=list[MarketDTO])
 async def markets(
     q: str = Query(""), broker_id: str = Depends(broker_query)

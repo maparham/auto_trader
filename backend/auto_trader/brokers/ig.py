@@ -255,6 +255,10 @@ class IGBroker(SessionAuthBroker, MarketDataBroker):
         resp.raise_for_status()
         return resp
 
+    async def ping(self) -> None:
+        """Status check for the broker menu: read our own session."""
+        await self._request("GET", "/session")
+
     # --- market data ------------------------------------------------------
 
     async def get_recent_candles(

@@ -4677,6 +4677,16 @@
   border-radius: 6px; color: var(--text); font-size: 12px; cursor: pointer;
   text-align: left;
 }
+/* Connection dot (BrokerStatusDot), shared with the mobile broker sheet. */
+.broker-status-dot {
+  flex: none; width: 7px; height: 7px; border-radius: 50%; box-sizing: border-box;
+}
+.broker-status-dot.is-ok { background: var(--pos); }
+.broker-status-dot.is-down { background: var(--danger); }
+.broker-status-dot.is-unknown { border: 1.5px solid var(--text-dim); opacity: 0.7; }
+.broker-status-dot.is-checking { animation: broker-status-pulse 1s ease-in-out infinite; }
+@keyframes broker-status-pulse { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .broker-status-dot.is-checking { animation: none; } }
 .broker-menu .broker-menu-item:hover { background: var(--hover); }
 .broker-menu .broker-menu-item.active { background: var(--hover-strong); }
 /* Active marker: a thin rail (accent normally, red for a live account) instead of

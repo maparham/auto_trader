@@ -135,6 +135,9 @@ def _df_to_candles(df) -> list[Candle]:
     return out
 
 
+_PING_URL = "https://freeserv.dukascopy.com/2.0/"
+
+
 class DukascopyBroker(MarketDataBroker):
     """Read-only historical candles from Dukascopy. Data-only: no stream, no quote."""
 
@@ -249,6 +252,16 @@ class DukascopyBroker(MarketDataBroker):
 
     async def all_markets(self) -> list[dict]:
         return [self._market_row(i) for i in _INSTRUMENT_LIST]
+
+    async def ping(self) -> None:
+        """Status check for the broker menu: the chart data host answers.
+        A candle fetch would download tick files, far too heavy for a check."""
+        import httpx
+
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+            resp = await client.get(_PING_URL)
+        if resp.status_code >= 500:
+            resp.raise_for_status()
 
     async def search_markets(self, query: str, limit: int = 20) -> list[dict]:
         q = query.strip().lower()

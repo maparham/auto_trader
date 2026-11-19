@@ -308,3 +308,68 @@ def test_logged_out_broker_sends_its_message_bare() -> None:
     plain = broker_down_http("account summary failed", BrokerDown("edge 502"))
     assert plain.detail == "account summary failed: edge 502"
     assert "X-Broker-Message" not in plain.headers
+
+
+# --- status(): what the broker menu's dots read -----------------------------
+
+
+async def _scenario_status_unknown_then_ok_then_down():
+    now = [100.0]
+    health = BrokerHealth(clock=lambda: now[0])
+    assert health.status("x") == {"state": "unknown", "okAgeS": None, "reason": None}
+
+    async def ok():
+        return 1
+
+    async def boom():
+        raise RuntimeError("nope")
+
+    await health.run("x", ok)
+    now[0] += 30
+    assert health.status("x") == {"state": "ok", "okAgeS": 30, "reason": None}
+
+    with pytest.raises(RuntimeError):
+        await health.run("x", boom)
+    status = health.status("x")
+    assert status["state"] == "down"
+    assert "nope" in status["reason"]
+
+    await health.run("x", ok)
+    assert health.status("x")["state"] == "ok"
+
+
+async def _scenario_status_blocked_reads_down_without_tripping_breaker():
+    from auto_trader.core.broker_health import BrokerBlocked
+
+    health = BrokerHealth()
+
+    async def blocked():
+        raise BrokerBlocked("waf")
+
+    for _ in range(3):
+        with pytest.raises(BrokerBlocked):
+            await health.run("x", blocked, ignore=(BrokerBlocked,))
+    assert health.status("x")["state"] == "down"
+    assert not health.is_open("x")
+
+
+async def _scenario_run_timeout_override():
+    health = BrokerHealth(call_timeout=60.0)
+
+    async def slow():
+        await asyncio.sleep(5)
+
+    with pytest.raises(BrokerTimeout):
+        await health.run("x", slow, timeout=0.01)
+
+
+def test_status_unknown_then_ok_then_down() -> None:
+    asyncio.run(_scenario_status_unknown_then_ok_then_down())
+
+
+def test_status_blocked_reads_down_without_tripping_breaker() -> None:
+    asyncio.run(_scenario_status_blocked_reads_down_without_tripping_breaker())
+
+
+def test_run_timeout_override() -> None:
+    asyncio.run(_scenario_run_timeout_override())

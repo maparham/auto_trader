@@ -228,6 +228,10 @@ class NobitexBroker(MarketDataBroker):
         candles = await self.get_candles(epic, resolution, now - span, now, price_side)
         return candles[-count:]
 
+    async def ping(self) -> None:
+        """Status check for the broker menu: one small stats call."""
+        await self._get("/market/stats", {"srcCurrency": "btc", "dstCurrency": "rls"})
+
     async def get_quote(self, epic: str) -> tuple[float | None, float | None]:
         """Live orderbook top from /market/stats — already in RIAL (only the
         UDF candle endpoint speaks toman). Real spread: paper trading can

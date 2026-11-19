@@ -15,6 +15,8 @@ import {
   fetchBrokers,
   type BrokerAccount,
 } from "../lib/trading";
+import BrokerStatusDot from "../components/BrokerStatusDot";
+import { useBrokerStatus } from "../lib/brokerStatus";
 import { mobileAccount, mobileAccountFor, setMobileAccount } from "./mobileChartState";
 
 export default function MobileBrokerSheet({ onClose }: { onClose: () => void }) {
@@ -41,6 +43,7 @@ export default function MobileBrokerSheet({ onClose }: { onClose: () => void }) 
   // Distinct brokers in registry order.
   const brokers = useMemo(() => [...new Set(accounts.map((a) => a.broker))], [accounts]);
   const active = brokerOf(account);
+  const { status, checking } = useBrokerStatus(true);
 
   return (
     <Sheet title="Broker" onClose={onClose}>
@@ -48,13 +51,16 @@ export default function MobileBrokerSheet({ onClose }: { onClose: () => void }) 
       {brokers.map((b) => (
         <button
           key={b}
-          className={`m-sheet-row${b === active ? " m-sheet-row-on" : ""}`}
+          className={`m-sheet-row m-broker-row${b === active ? " m-sheet-row-on" : ""}`}
           onClick={() => {
             if (b !== active) setMobileAccount(mobileAccountFor(b, accounts));
             onClose();
           }}
         >
-          {brokerLabel(b)}
+          <span>{brokerLabel(b)}</span>
+          {(checking || status[b]) && (
+            <BrokerStatusDot status={status[b]} checking={checking} />
+          )}
         </button>
       ))}
     </Sheet>

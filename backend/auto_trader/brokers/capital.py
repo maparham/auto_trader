@@ -205,6 +205,10 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
     async def _get(self, path: str, params: dict) -> httpx.Response:
         return await self._request("GET", path, params=params)
 
+    async def ping(self) -> None:
+        """Status check for the broker menu: one authenticated call."""
+        await self._get("/api/v1/ping", {})
+
     # --- market data ------------------------------------------------------
 
     def _to_dto(self, m: dict) -> dict:

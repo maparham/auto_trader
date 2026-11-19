@@ -14,6 +14,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { brokerLabel, isAdminAccount, type BrokerAccount } from "./lib/trading";
 import { CLERK_ENABLED } from "./lib/authToken";
 import Tooltip from "./components/Tooltip";
+import BrokerStatusDot from "./components/BrokerStatusDot";
+import { useBrokerStatus } from "./lib/brokerStatus";
 
 interface Props {
   accounts: BrokerAccount[];
@@ -24,6 +26,7 @@ interface Props {
 export default function BrokerSelector({ accounts, activeBroker, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const { status, checking } = useBrokerStatus(open);
 
   useEffect(() => {
     if (!open) return;
@@ -113,6 +116,9 @@ export default function BrokerSelector({ accounts, activeBroker, onChange }: Pro
                 }}
               >
                 <span className="broker-menu-label">{brokerLabel(broker)}</span>
+                {(checking || status[broker]) && (
+                  <BrokerStatusDot status={status[broker]} checking={checking} />
+                )}
               </button>
             );
           })}
