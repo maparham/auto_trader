@@ -180,6 +180,7 @@ const DEVICE_LOCAL_FLAT_KEYS = new Set([
   // on purpose, same as desktop's activeLayoutId: picking a layout on the phone must
   // not change which layout other devices see as their default.
   `${PREFIX}.mobileLayoutId`,
+  `${PREFIX}.mirrorUnsent`,
 ]);
 export function isDeviceLocalKey(k: string): boolean {
   return (
@@ -237,6 +238,115 @@ const CLIENT_ID =
 // match. "\0deleted" marks a remotely-applied delete.
 const remoteEcho = new Map<string, string>();
 
+// --- ordered sends ------------------------------------------------------------
+//
+// One request per key at a time, always the LATEST value, retried until the
+// backend takes it. Plain fire-and-forget lost settings in two ways: a burst
+// of writes to one key (a template apply rewrites `<scope>.indicatorConfig`
+// once per pane) could be stored out of order, since nothing orders parallel
+// requests and the backend keeps whichever it finishes last; and a write sent
+// while the backend restarted was dropped. Either way the backend kept an
+// older value and handed it back on the next load.
+//
+// A key with a write the backend has not confirmed is listed in
+// `mirrorUnsent` (device-local, {key: ms}). hydrateFromBackend lets the local
+// value win for those keys and sends it again, so a reload or a closed tab in
+// the middle of a send loses nothing. Entries older than a day are ignored:
+// by then another device's newer write is the likelier truth.
+type MirrorOp = { body: string } | { del: true };
+const UNSENT_KEY = `${PREFIX}.mirrorUnsent`;
+const UNSENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const RETRY_MAX_MS = 30_000;
+const queuedOps = new Map<string, MirrorOp>();
+const sendingKeys = new Set<string>();
+
+function readUnsent(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(UNSENT_KEY);
+    const v: unknown = raw ? JSON.parse(raw) : null;
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+function writeUnsent(map: Record<string, number>): void {
+  try {
+    if (Object.keys(map).length === 0) localStorage.removeItem(UNSENT_KEY);
+    else localStorage.setItem(UNSENT_KEY, JSON.stringify(map));
+  } catch {
+    /* quota: the queue still sends, only the reload safety net is lost */
+  }
+}
+function markUnsent(key: string): void {
+  const map = readUnsent();
+  map[key] = Date.now();
+  writeUnsent(map);
+}
+function clearUnsent(key: string): void {
+  const map = readUnsent();
+  if (!(key in map)) return;
+  delete map[key];
+  writeUnsent(map);
+}
+
+// Worth sending again: the backend was down, busy or restarting. Any other
+// refusal (403, 413, 422) would fail the same way every time.
+const retryable = (status: number) =>
+  status === 408 || status === 425 || status === 429 || status >= 500;
+
+function enqueueMirror(key: string, op: MirrorOp): void {
+  queuedOps.set(key, op);
+  markUnsent(key);
+  if (!sendingKeys.has(key)) pumpMirror(key, 0);
+}
+
+function pumpMirror(key: string, attempt: number): void {
+  const op = queuedOps.get(key);
+  if (!op) {
+    sendingKeys.delete(key);
+    return;
+  }
+  queuedOps.delete(key);
+  sendingKeys.add(key);
+  const url = `${API_BASE}/api/state/${encodeURIComponent(key)}?origin=${CLIENT_ID}`;
+  const init: RequestInit =
+    "del" in op
+      ? { method: "DELETE" }
+      : { method: "PUT", headers: { "Content-Type": "application/json" }, body: op.body };
+  let sent: Promise<Response>;
+  try {
+    sent = apiFetch(url, init);
+  } catch (err) {
+    sent = Promise.reject(err);
+  }
+  sent
+    .then(
+      // "done" | "retry" | "keep": a 401 is a dead session, so stop sending
+      // but keep the key listed for the next signed-in load.
+      (res) => (res.ok ? "done" : res.status === 401 ? "keep" : retryable(res.status) ? "retry" : "done"),
+      () => "retry",
+    )
+    .then((outcome) => {
+      if (outcome !== "retry") {
+        if (outcome === "done" && !queuedOps.has(key)) clearUnsent(key);
+        pumpMirror(key, 0);
+        return;
+      }
+      // A newer value is waiting: it replaces the failed one, send it now.
+      if (queuedOps.has(key)) {
+        pumpMirror(key, attempt);
+        return;
+      }
+      setTimeout(
+        () => {
+          if (!queuedOps.has(key)) queuedOps.set(key, op);
+          pumpMirror(key, attempt + 1);
+        },
+        Math.min(RETRY_MAX_MS, 1000 * 2 ** attempt),
+      );
+    });
+}
+
 function mirrorSet(key: string, value: string): void {
   // Anonymous demo boot: never talk to the backend mirror, no matter what
   // mirrorEnabled says.
@@ -257,16 +367,7 @@ function mirrorSet(key: string, value: string): void {
   } catch {
     return;
   }
-  void apiFetch(
-    `${API_BASE}/api/state/${encodeURIComponent(key)}?origin=${CLIENT_ID}`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: parsed }),
-    },
-  ).catch(() => {
-    /* offline / backend down: localStorage already holds the write */
-  });
+  enqueueMirror(key, { body: JSON.stringify({ value: parsed }) });
 }
 
 export function mirrorDelete(key: string): void {
@@ -279,12 +380,7 @@ export function mirrorDelete(key: string): void {
     remoteEcho.delete(key);
     return; // echo of a remote delete
   }
-  void apiFetch(
-    `${API_BASE}/api/state/${encodeURIComponent(key)}?origin=${CLIENT_ID}`,
-    { method: "DELETE" },
-  ).catch(() => {
-    /* best-effort */
-  });
+  enqueueMirror(key, { del: true });
 }
 
 // --- per-cell namespacing ----------------------------------------------------
@@ -496,11 +592,24 @@ export async function hydrateFromBackend(): Promise<boolean> {
       localStorage.removeItem(k);
       changed = true;
     }
+    writeUnsent({}); // nothing of this browser's belongs to a fresh account
     return changed;
+  }
+
+  // Keys with a write the backend never confirmed (see "ordered sends"): the
+  // local value is the newer one, so it is kept and sent again below.
+  const unsent = new Set<string>();
+  if (mirrorEnabled) {
+    const now = Date.now();
+    for (const [k, at] of Object.entries(readUnsent())) {
+      if (typeof at === "number" && now - at < UNSENT_MAX_AGE_MS) unsent.add(k);
+    }
+    if (unsent.size === 0) writeUnsent({});
   }
 
   let changed = false;
   for (const key of keys) {
+    if (unsent.has(key)) continue;
     const next = JSON.stringify(snapshot[key]);
     if (localStorage.getItem(key) !== next) {
       localStorage.setItem(key, next);
@@ -517,9 +626,21 @@ export async function hydrateFromBackend(): Promise<boolean> {
   const own = `${PREFIX}.`;
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const k = localStorage.key(i);
-    if (!k || !k.startsWith(own) || present.has(k) || isDeviceLocalKey(k)) continue;
+    if (!k || !k.startsWith(own) || present.has(k) || isDeviceLocalKey(k) || unsent.has(k))
+      continue;
     localStorage.removeItem(k);
     changed = true;
+  }
+  for (const key of unsent) {
+    const local = localStorage.getItem(key);
+    if (local === null) {
+      if (present.has(key)) mirrorDelete(key);
+      else clearUnsent(key);
+    } else if (present.has(key) && JSON.stringify(snapshot[key]) === local) {
+      clearUnsent(key);
+    } else {
+      mirrorSet(key, local);
+    }
   }
   return changed;
 }
@@ -531,9 +652,15 @@ export async function hydrateFromBackend(): Promise<boolean> {
 // adopt it — the very cross-device bleed these keys are meant to avoid.
 function seedBackendFromLocal(): void {
   const own = `${PREFIX}.`;
+  // Keys first: mirrorSet adds the mirrorUnsent key, which would shift an
+  // index walk over localStorage.
+  const seed: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
     if (!k || !k.startsWith(own) || isDeviceLocalKey(k) || isLegacyTabsKey(k)) continue;
+    seed.push(k);
+  }
+  for (const k of seed) {
     const v = localStorage.getItem(k);
     if (v != null) mirrorSet(k, v);
   }

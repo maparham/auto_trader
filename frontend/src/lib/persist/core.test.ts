@@ -153,8 +153,11 @@ describe("save() mirror skipping (no-op writes)", () => {
     const unsub = core.subscribeToBackendUpdates(() => {});
     const K = "auto-trader.tab.A.viewpos.US100";
 
+    // Sends to one key go out one at a time, so let each finish before the next.
+    const settle = () => new Promise((r) => setTimeout(r, 0));
     core.save(K, { a: 1 });
     expect(puts.length).toBe(1); // genuine new value mirrors
+    await settle();
     core.save(K, { a: 1 });
     expect(puts.length).toBe(1); // byte-identical re-save (mount-time save) does NOT re-mirror
 
@@ -167,6 +170,7 @@ describe("save() mirror skipping (no-op writes)", () => {
 
     core.save(K, { a: 3 });
     expect(puts.length).toBe(2); // genuine local edit mirrors
+    await settle();
     core.save(K, { a: 2 });
     // Revert to the previously-pushed value must mirror too — if the echo entry
     // from the push above lingered (not consumed by the skipped save), mirrorSet
@@ -201,5 +205,126 @@ describe("persistBroker init reads the per-tab session account first", () => {
     vi.resetModules();
     core = await import("./core");
     expect(core.getPersistBroker()).toBe("capital");
+  });
+});
+
+describe("backend mirror: ordered sends", () => {
+  const K = "auto-trader.tab.A.indicatorConfig";
+  const UNSENT = "auto-trader.mirrorUnsent";
+  type Call = { method: string; url: string; body: string; resolve: (status: number) => void; fail: () => void };
+
+  // A backend whose answers the test releases by hand, plus the snapshot the
+  // boot-time GET returns.
+  async function boot(snapshot: Record<string, unknown> = { "auto-trader.seeded": 1 }) {
+    const calls: Call[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: unknown, opts?: { method?: string; body?: string }) => {
+        const method = opts?.method ?? "GET";
+        if (method === "GET") return Promise.resolve({ ok: true, status: 200, json: async () => snapshot });
+        return new Promise((resolve, reject) => {
+          calls.push({
+            method,
+            url: String(url),
+            body: opts?.body ?? "",
+            resolve: (status) => resolve({ ok: status < 300, status }),
+            fail: () => reject(new TypeError("network")),
+          });
+        });
+      }),
+    );
+    vi.resetModules();
+    const core = await import("./core");
+    await core.hydrateFromBackend();
+    return { core, calls };
+  }
+  const tick = () => vi.advanceTimersByTimeAsync(0);
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("sends one write per key at a time and skips to the latest value", async () => {
+    const { core, calls } = await boot();
+    core.save(K, { v: 1 });
+    core.save(K, { v: 2 });
+    core.save(K, { v: 3 });
+    core.save("auto-trader.tab.A.indicators", [1]); // another key is not held back
+    expect(calls.map((c) => c.body)).toEqual(['{"value":{"v":1}}', '{"value":[1]}']);
+    calls[0].resolve(204);
+    await tick();
+    // v2 was replaced while v1 was on its way: it is never sent, so no older
+    // map can land after the newest one.
+    expect(calls.map((c) => c.body)).toEqual(['{"value":{"v":1}}', '{"value":[1]}', '{"value":{"v":3}}']);
+    calls[2].resolve(204);
+    calls[1].resolve(204);
+    await tick();
+    expect(calls.length).toBe(3);
+    expect(localStorage.getItem(UNSENT)).toBeNull();
+  });
+
+  it("retries a write the backend did not take (restart, network)", async () => {
+    const { core, calls } = await boot();
+    core.save(K, { v: 1 });
+    calls[0].fail();
+    await tick();
+    expect(calls.length).toBe(1);
+    expect(JSON.parse(localStorage.getItem(UNSENT)!)).toHaveProperty(K);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(calls.length).toBe(2);
+    calls[1].resolve(502);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(calls.map((c) => c.body)).toEqual(Array(3).fill('{"value":{"v":1}}'));
+    calls[2].resolve(204);
+    await tick();
+    expect(localStorage.getItem(UNSENT)).toBeNull();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls.length).toBe(3);
+  });
+
+  it("does not retry a write the backend refuses", async () => {
+    const { core, calls } = await boot();
+    core.save(K, { v: 1 });
+    calls[0].resolve(403);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls.length).toBe(1);
+    expect(localStorage.getItem(UNSENT)).toBeNull();
+  });
+
+  it("orders a delete after the write before it", async () => {
+    const { core, calls } = await boot();
+    core.save(K, { v: 1 });
+    core.mirrorDelete(K);
+    expect(calls.map((c) => c.method)).toEqual(["PUT"]);
+    calls[0].resolve(204);
+    await tick();
+    expect(calls.map((c) => c.method)).toEqual(["PUT", "DELETE"]);
+  });
+
+  it("keeps an unconfirmed local write through a reload and sends it again", async () => {
+    const first = await boot();
+    first.core.save(K, { v: "new" });
+    first.core.save("auto-trader.tab.A.indicators", ["mine"]);
+    // Page reloads before either send is confirmed. The backend still holds
+    // the older map, and nothing at all for the second key.
+    const { calls } = await boot({ "auto-trader.seeded": 1, [K]: { v: "old" } });
+    expect(localStorage.getItem(K)).toBe('{"v":"new"}');
+    expect(localStorage.getItem("auto-trader.tab.A.indicators")).toBe('["mine"]');
+    expect(calls.map((c) => c.body).sort()).toEqual(['{"value":["mine"]}', '{"value":{"v":"new"}}']);
+  });
+
+  it("lets the backend win for an unconfirmed write older than a day", async () => {
+    const first = await boot();
+    first.core.save(K, { v: "new" });
+    vi.setSystemTime(Date.now() + 25 * 60 * 60 * 1000);
+    const { calls } = await boot({ "auto-trader.seeded": 1, [K]: { v: "other device" } });
+    expect(localStorage.getItem(K)).toBe('{"v":"other device"}');
+    expect(calls.length).toBe(0);
   });
 });
