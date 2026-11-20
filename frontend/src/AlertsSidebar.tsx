@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from "react";
 import Tooltip from "./components/Tooltip";
 import { ago } from "./lib/timeFormat";
+import { accountRowView, decimalsOf, historyRowView, positionRowView, useAlertTick } from "./lib/alertRows";
 import type { ChartController } from "./lib/chartController";
 import type { ChartTab, AlertCondition } from "./lib/persist";
 import type { OverlayManager } from "./lib/overlays";
@@ -43,7 +44,6 @@ import {
 import {
   alertLabel,
   TRIGGER_LABELS,
-  triggeredLabel,
   loadServerAlerts,
   loadAllServerAlerts,
   deleteIndicatorAlert,
@@ -52,9 +52,7 @@ import {
   deletePositionAlert,
   type PositionAlert,
   deleteAccountAlert,
-  resyncAlerts,
   accountLabel,
-  fmtMetric,
   METRIC_LABELS,
   type AccountAlert,
   type ServerAlert,
@@ -233,28 +231,28 @@ function IndicatorAlertRow({
 // per-symbol list on the live tab; double-click or the edit icon opens the modal.
 function AccountAlertRow({ a }: { a: AccountAlert }) {
   const edit = () => accountAlertRequest.set({ mode: "edit", id: a.id });
-  const fired = new Set(a.firedTiers ?? []);
+  const view = accountRowView(a);
   return (
     <div className="ap-row" onDoubleClick={edit}>
       <div className="ap-row-main">
-        <span className="ap-sym">{accountLabel(a.account)}</span>
+        <span className="ap-sym">{view.title}</span>
         <span className="ap-cond">
-          {METRIC_LABELS[a.metric]}
-          {a.current != null && <> · now {fmtMetric(a.metric, a.current, a.currency ?? null)}</>}
+          {view.metric}
+          {view.now != null && <> · now {view.now}</>}
         </span>
       </div>
       {a.message && <div className="ap-msg">{a.message}</div>}
       <div className="ap-row-meta">
         <span className="ap-row-badges">
-          {a.tiers.map((t) => (
-            <Tooltip key={t.level} content={`${t.label}${fired.has(t.level) ? " · fired" : ""}`}>
-              <span className={`ap-badge ap-tier${fired.has(t.level) ? " fired" : ""}`}>
-                {fmtMetric(a.metric, t.level, a.currency ?? null)}
+          {view.tiers.map((t) => (
+            <Tooltip key={t.level} content={`${t.label}${t.fired ? " · fired" : ""}`}>
+              <span className={`ap-badge ap-tier${t.fired ? " fired" : ""}`}>
+                {t.text}
               </span>
             </Tooltip>
           ))}
-          {a.monitored === false && (
-            <Tooltip content={a.unmonitoredReason ?? "Not monitored"}>
+          {view.unmonitored != null && (
+            <Tooltip content={view.unmonitored}>
               <span className="ap-badge ap-badge-wait">Unmonitored</span>
             </Tooltip>
           )}
@@ -293,20 +291,18 @@ function AccountAlertRow({ a }: { a: AccountAlert }) {
 
 // One SL/TP proximity row: `US100 long · SL · 0.5× ATR · now 0.8 ATR`.
 function PositionAlertRow({ a }: { a: PositionAlert }) {
-  const trade = tradesSignal.value.find((t) => t.id === a.dealId);
-  const dir = trade ? ` ${trade.side === "buy" ? "long" : "short"}` : "";
+  const view = positionRowView(a, tradesSignal.value);
   const edit = () => positionAlertRequest.set({ account: a.account, epic: a.epic, dealId: a.dealId, precision: a.precision ?? 2 });
-  const sideLabel = a.side === "sl" ? "SL" : "TP";
-  const now = a.distanceAtr == null ? "now n/a" : `now ${Number(a.distanceAtr.toFixed(2))} ATR`;
+  const sideLabel = view.sideLabel;
   return (
     <div className="ap-row" onDoubleClick={edit}>
       <div className="ap-row-main">
-        <span className="ap-sym">{a.epic}{dir}</span>
-        <span className="ap-cond">{sideLabel} · {a.atrMult}× ATR · {now}</span>
+        <span className="ap-sym">{view.title}</span>
+        <span className="ap-cond">{view.cond}</span>
       </div>
       <div className="ap-row-meta">
         <span className="ap-row-badges">
-          {a.fired && <span className="ap-badge ap-tier fired">Fired</span>}
+          {view.fired && <span className="ap-badge ap-tier fired">Fired</span>}
         </span>
         <div className="ap-row-actions">
           <Tooltip content="Edit alert">
@@ -475,19 +471,7 @@ export default function AlertsSidebar({
   // alerts exist, the same tick re-pulls /api/alerts: their "now" value, fired
   // tiers and monitored flag only live on that response (the monitor polls
   // every 30 s too), so the panel would otherwise show the boot-time figures.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const bump = () => setNow(Date.now());
-    const unsub = alertsChanged.subscribe(bump);
-    const id = setInterval(() => {
-      bump();
-      if (loadAccountAlerts().length > 0 || loadPositionAlerts().length > 0) void resyncAlerts();
-    }, 30_000);
-    return () => {
-      unsub();
-      clearInterval(id);
-    };
-  }, []);
+  const now = useAlertTick();
 
   // Live alerts for the open symbol. overlays.getAlerts() reads live overlay
   // levels, so a dragged line shows its current price. Re-pulled each render via
@@ -559,12 +543,6 @@ export default function AlertsSidebar({
       if (!byEpic.has(a.epic)) byEpic.set(a.epic, new Map());
     }
 
-    // Fractional digit count of a level (capped), to format symbols with no open cell.
-    const decimalsOf = (n: number): number => {
-      const s = String(n);
-      const dot = s.indexOf(".");
-      return dot === -1 ? 0 : Math.min(8, s.length - dot - 1);
-    };
     const groups = [...byEpic.entries()].map(([ep, alertMap]) => {
       const alerts = sortAlerts([...alertMap.values()], () => ep);
       // Off-screen symbols have no open cell in precMap; fall back to inferring the
@@ -955,17 +933,18 @@ export default function AlertsSidebar({
                 // Jump back to the alert that fired. Prefer the stamped stable id;
                 // older rows match by condition+level. The alert may be gone (a fired
                 // "once") — then onChart is false and we just open the chart unselected.
-                const hp = t.precision ?? precision;
+                const view = historyRowView(t, brokerId, precision);
+                const hp = view.precision;
                 // An account firing has no symbol and no chart: name the
                 // account, print the metric headline, offer no Go-to.
-                if (t.kind === "account") {
+                if (view.isAccount) {
                   return (
                     <div key={`${t.time}-${i}`} className="ap-row ap-row-hist">
                       <div className="ap-row-main">
-                        <span className="ap-sym">{accountLabel(t.broker ?? "")}</span>
+                        <span className="ap-sym">{view.title}</span>
                         <span className="ap-time">{ago(t.time, now)}</span>
                       </div>
-                      <div className="ap-cond">{triggeredLabel(t, hp)}</div>
+                      <div className="ap-cond">{view.cond}</div>
                       {t.message && <div className="ap-msg">{t.message}</div>}
                     </div>
                   );
@@ -976,7 +955,8 @@ export default function AlertsSidebar({
                 // History spans every broker. A firing on another one is never
                 // "on chart" here (a same-named epic on this broker is a different
                 // instrument), and going to it asks before switching broker.
-                const foreign = t.broker != null && t.broker !== brokerId;
+                // Position firings carry an account key, compared by its broker.
+                const foreign = view.foreignBroker != null;
                 const onChart = !foreign && targetVisible(t.epic, target);
                 return (
                 <div
@@ -991,14 +971,14 @@ export default function AlertsSidebar({
                   <div className="ap-row-main">
                     <span className="ap-sym">
                       {t.epic}
-                      {foreign && <span className="ap-broker">{brokerLabel(t.broker!)}</span>}
+                      {foreign && <span className="ap-broker">{brokerLabel(view.foreignBroker!)}</span>}
                     </span>
                     <span className="ap-time">{ago(t.time, now)}</span>
                   </div>
                   <div className="ap-cond">
                     {/* History is cross-symbol: format with the firing's own
                         precision, falling back to the focused one for old rows. */}
-                    {triggeredLabel(t, hp)}
+                    {view.cond}
                   </div>
                   {t.message && <div className="ap-msg">{t.message}</div>}
                   <div className="ap-row-meta ap-row-meta-end">
@@ -1008,7 +988,7 @@ export default function AlertsSidebar({
                         className="ap-icon-btn"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onOpenAlert(t.epic, target, hp, t.broker);
+                          onOpenAlert(t.epic, target, hp, view.foreignBroker ?? undefined);
                         }}
                       >
                         <GoToIcon />

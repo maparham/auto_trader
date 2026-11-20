@@ -218,6 +218,30 @@ describe("AlertsSidebar history: account firings", () => {
     expect(rows[1].querySelector(".ap-sym")?.textContent).toBe("US100");
   });
 
+  it("reads a position firing's account key as this broker: no badge, Go-to without a broker", () => {
+    const onOpenAlert = vi.fn();
+    mocks.triggered.push({
+      time: Date.now() - 60_000, epic: "US100", broker: "capital:demo", kind: "position",
+      condition: "near", level: 100, price: 100.5, message: "", precision: 2, alertId: "p-1",
+      headline: "US100 long near SL",
+    });
+    const { container } = render(
+      <AlertsSidebar
+        controller={bareController as any}
+        epic="US100"
+        precision={2}
+        tabs={[]}
+        visibleCells={[]}
+        brokerId="capital"
+        onOpenAlert={onOpenAlert}
+      />,
+    );
+    const row = container.querySelector(".ap-row-hist")!;
+    expect(row.querySelector(".ap-broker")).toBeNull();
+    (row.querySelector(".ap-icon-btn") as HTMLButtonElement).click();
+    expect(onOpenAlert).toHaveBeenCalledWith("US100", { savedId: "p-1" }, 2, undefined);
+  });
+
   it("re-pulls the alerts on the 30 s tick while account alerts exist", () => {
     vi.useFakeTimers();
     try {
