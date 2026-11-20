@@ -49,6 +49,7 @@ describe("MobileAssistant", () => {
       cellIds: ["mobile"],
       chart: { epic: "US100", resolution: "HOUR_4" },
     });
+    expect((panelProps.last!.examples as string[]).some((e) => /backtest/i.test(e))).toBe(false);
     expect(screen.queryByRole("button", { name: "Assistant" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "close panel" }));
     expect(screen.queryByRole("button", { name: "close panel" })).toBeNull();

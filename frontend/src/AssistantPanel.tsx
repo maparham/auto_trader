@@ -186,13 +186,15 @@ function Markdown({ text }: { text: string }) {
   );
 }
 
-export default function AssistantPanel({ cellId = null, cellIds, chart = null, onClose }: {
+export default function AssistantPanel({ cellId = null, cellIds, chart = null, examples = EXAMPLES, onClose }: {
   /** The focused chart cell: each cell has its own chat. */
   cellId?: string | null;
   /** Every open cell, so chats of closed ones are dropped. */
   cellIds?: string[];
   /** The focused chart the next request acts on, shown above the composer. */
   chart?: { epic: string; resolution: string } | null;
+  /** The empty chat's suggested prompts (the phone has no backtest tools). */
+  examples?: readonly string[];
   onClose: () => void;
 }) {
   // The busy session in the middle of its own market_select wins over the
@@ -482,7 +484,7 @@ export default function AssistantPanel({ cellId = null, cellIds, chart = null, o
         ) : s.turns.length === 0 ? (
           <div className="as-empty">
             <div className="as-muted">Try one of these:</div>
-            {EXAMPLES.map((e) => (
+            {examples.map((e) => (
               <button key={e} className="as-chip" onClick={() => submit(e)}>{e}</button>
             ))}
           </div>

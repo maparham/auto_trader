@@ -13,6 +13,12 @@ import { installMobileAssistant, MOBILE_CELL_ID } from "./assistantSetup";
 
 const AssistantPanel = lazyChunk(() => import("../AssistantPanel"));
 const CELL_IDS = [MOBILE_CELL_ID];
+// The phone registers no backtest tools, so its suggestions stay on the chart.
+const MOBILE_EXAMPLES = [
+  "Add rising trendlines on the daily",
+  "Show me where RSI was oversold last month",
+  "Add a 50 and 200 EMA",
+];
 
 export default function MobileAssistant() {
   const [open, setOpen] = useState(false);
@@ -45,6 +51,7 @@ export default function MobileAssistant() {
       <AssistantPanel
         cellId={MOBILE_CELL_ID}
         cellIds={CELL_IDS}
+        examples={MOBILE_EXAMPLES}
         chart={symbol && period ? { epic: symbol.epic, resolution: period.resolution } : null}
         onClose={() => setOpen(false)}
       />
