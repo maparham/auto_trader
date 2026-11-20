@@ -2,7 +2,8 @@
 // The current chart instance/controller, symbol and period the mobile chart
 // tab is showing. Other mobile tabs (Task 7+) read these to act on "the
 // chart the user is looking at" without owning the chart themselves.
-import { Signal, requestSymbolSearch } from "../lib/signals";
+import { Signal, requestConfirm, requestSymbolSearch } from "../lib/signals";
+import { toast } from "../lib/notify";
 import type { Chart } from "klinecharts";
 import type { ChartController } from "../lib/chartController";
 import { DEFAULT_BROKER, periodByResolution, resolveInstrument, type Instrument, type Period } from "../lib/feed";
@@ -10,6 +11,7 @@ import { initialMarket, mobileDrawScope } from "../lib/mobileScope";
 import { resolveDescriptor } from "../lib/snapshotBoot";
 import {
   DEFAULT_ACCOUNT,
+  brokerLabel,
   brokerOf,
   cachedBrokers,
   loadLastAccountByBroker,
@@ -185,6 +187,37 @@ export async function showMobileEpic(epic: string, precision = 2): Promise<void>
     }
   }
   mobileTabSignal.set("chart");
+}
+
+/** A History row's "go to chart". `broker` is a broker id on most firings
+ * and an account key (`capital:demo`) on position firings, so it is compared
+ * through brokerOf. Another broker follows desktop's App.openAlert: a toast
+ * when no account is registered on it, otherwise a confirm, then the account
+ * switch and the jump. The switch's boot cannot overwrite the jump:
+ * bootMobileMarket stops once a symbol is set, and showMobileEpic re-checks
+ * the broker after its await. */
+export function openMobileAlert(epic: string, broker: string | undefined, precision: number): void {
+  const from = mobileBroker();
+  const b = broker ? brokerOf(broker) : from;
+  if (b === from) {
+    void showMobileEpic(epic, precision);
+    return;
+  }
+  const accounts = cachedBrokers()?.exec ?? [];
+  if (accounts.length > 0 && !accounts.some((a) => a.broker === b)) {
+    toast(`${brokerLabel(b)} is not available, so ${epic} cannot be opened.`);
+    return;
+  }
+  const own = broker && broker.includes(":") && accounts.some((a) => a.key === broker) ? broker : null;
+  requestConfirm({
+    title: "Switch broker?",
+    message: `This alert is on ${brokerLabel(b)}. Switch from ${brokerLabel(from)} to open ${epic}?`,
+    confirmLabel: "Switch",
+    onConfirm: () => {
+      setMobileAccount(own ?? mobileAccountFor(b, accounts));
+      void showMobileEpic(epic, precision);
+    },
+  });
 }
 
 /** The account a broker pick lands on, as desktop's tab-bar selector picks it

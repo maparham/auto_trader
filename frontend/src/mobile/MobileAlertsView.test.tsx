@@ -29,6 +29,12 @@ vi.mock("../lib/trading", async (orig) => ({
   fetchQuote: (...args: unknown[]) => fetchQuote(...args),
 }));
 
+const openMobileAlert = vi.fn();
+vi.mock("./mobileChartState", async (orig) => ({
+  ...(await orig<object>()),
+  openMobileAlert: (...args: unknown[]) => openMobileAlert(...args),
+}));
+
 import MobileAlertsView from "./MobileAlertsView";
 import { mobileSymbol } from "./mobileChartState";
 import {
@@ -271,5 +277,21 @@ describe("MobileAlertsView History like the desktop", () => {
     expect(document.querySelector(".m-seg-count")?.textContent).toBe("2");
     await userEvent.click(screen.getByRole("button", { name: "History" }));
     expect(pushTriggeredSeen).toHaveBeenCalledWith(newest);
+  });
+
+  it("tapping a symbol row opens its chart through openMobileAlert", async () => {
+    openMobileAlert.mockReset();
+    loadTriggered.mockReturnValue([fired({ broker: "ig", precision: 5 })]);
+    await openHistory();
+    await userEvent.click(screen.getByText("US100"));
+    expect(openMobileAlert).toHaveBeenCalledWith("US100", "ig", 5);
+  });
+
+  it("tapping an account row opens nothing", async () => {
+    openMobileAlert.mockReset();
+    loadTriggered.mockReturnValue([fired({ epic: "", kind: "account", broker: "capital-live:live" })]);
+    await openHistory();
+    await userEvent.click(screen.getByText(accountLabel("capital-live:live")));
+    expect(openMobileAlert).not.toHaveBeenCalled();
   });
 });

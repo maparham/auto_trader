@@ -31,7 +31,7 @@ import Tooltip from "../components/Tooltip";
 import { brokerLabel, fetchQuote } from "../lib/trading";
 import { ago } from "../lib/timeFormat";
 import { historyRowView, unseenCount, useAlertTick } from "../lib/alertRows";
-import { mobileAccount, mobileBroker, mobileSymbol } from "./mobileChartState";
+import { mobileAccount, mobileBroker, mobileSymbol, openMobileAlert } from "./mobileChartState";
 
 type SubTab = "active" | "history";
 
@@ -227,7 +227,11 @@ export default function MobileAlertsView() {
             {history.map((t, i) => {
               const view = historyRowView(t, broker, 2);
               return (
-                <div key={`${t.time}-${i}`} className="m-alerts-row m-alerts-hist">
+                <div
+                  key={`${t.time}-${i}`}
+                  className={`m-alerts-row m-alerts-hist${view.isAccount ? "" : " m-alerts-tappable"}`}
+                  onClick={view.isAccount ? undefined : () => openMobileAlert(t.epic, t.broker, view.precision)}
+                >
                   <div className="m-alerts-row-main">
                     <span className="m-alerts-epic">
                       {view.title}
