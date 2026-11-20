@@ -303,6 +303,14 @@ body.m-mobile {
 .m-alerts-wait { display: inline-block; margin-top: 4px; font-size: 11px; color: var(--text-secondary, #888); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
 .m-alerts-delete { position: absolute; right: 10px; top: 8px; padding: 4px 10px; background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--danger); font-size: 12px; }
 .m-alerts-empty { padding: 24px 16px; color: var(--text-secondary, #888); font-size: 14px; text-align: center; }
+/* Desktop parity (2026-11-20 spec): unseen count on the History switch, the
+   other-broker badge, the Clear history row, the dot on the bottom Alerts tab. */
+.m-seg-count { display: inline-block; margin-left: 6px; min-width: 16px; padding: 0 5px; border-radius: 8px; background: var(--border); color: var(--text); font-size: 11px; line-height: 16px; }
+.m-alerts-broker { margin-left: 6px; font-size: 11px; font-weight: 500; color: var(--text-secondary, #888); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
+.m-alerts-clear-row { display: flex; justify-content: flex-end; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.m-alerts-clear { background: none; border: none; color: var(--text-dim, var(--text)); font-size: 12px; padding: 4px 6px; }
+.m-tabbar button { position: relative; }
+.m-tabbar-dot { position: absolute; top: 6px; margin-left: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent, #2962ff); }
 
 /* Task 11: Positions tab (account summary strip + trade rows + detail sheet). */
 .m-pos-view { position: absolute; inset: 0; display: flex; flex-direction: column; }

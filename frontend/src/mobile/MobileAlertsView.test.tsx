@@ -8,8 +8,14 @@ const deleteStoredAlert = vi.fn();
 const loadTriggered = vi.fn();
 const loadAllServerAlerts = vi.fn();
 const deleteIndicatorAlert = vi.fn();
+const clearTriggered = vi.fn();
+const loadTriggeredSeen = vi.fn(() => 0);
+const pushTriggeredSeen = vi.fn();
 vi.mock("../lib/alertsApi", async (orig) => ({
   ...(await orig<object>()),
+  clearTriggered: (...args: unknown[]) => clearTriggered(...args),
+  loadTriggeredSeen: () => loadTriggeredSeen(),
+  pushTriggeredSeen: (...args: unknown[]) => pushTriggeredSeen(...args),
   loadAllServerAlerts: (...args: unknown[]) => loadAllServerAlerts(...args),
   deleteIndicatorAlert: (...args: unknown[]) => deleteIndicatorAlert(...args),
   loadAllAlerts: (...args: unknown[]) => loadAllAlerts(...args),
@@ -31,7 +37,8 @@ import {
   alertModalRequest,
   indicatorAlertRequest,
 } from "../lib/signals";
-import type { IndicatorAlert, SavedAlert, TriggeredAlert } from "../lib/alertsApi";
+import { accountLabel, type IndicatorAlert, type SavedAlert, type TriggeredAlert } from "../lib/alertsApi";
+import { brokerLabel } from "../lib/trading";
 
 afterEach(() => {
   cleanup();
@@ -192,5 +199,77 @@ describe("MobileAlertsView", () => {
     expect(confirmRequest.value?.message).toBe("Delete this alert on US100?");
     confirmRequest.value!.onConfirm();
     expect(deleteIndicatorAlert).toHaveBeenCalledWith("ind1");
+  });
+});
+
+describe("MobileAlertsView History like the desktop", () => {
+  beforeEach(() => {
+    loadAllServerAlerts.mockReturnValue([]);
+    loadAllAlerts.mockReturnValue([]);
+    loadTriggered.mockReset();
+    clearTriggered.mockReset();
+    pushTriggeredSeen.mockReset();
+    loadTriggeredSeen.mockReturnValue(Number.MAX_SAFE_INTEGER);
+  });
+
+  function fired(over: Partial<TriggeredAlert> = {}): TriggeredAlert {
+    return {
+      time: Date.now() - 5 * 60_000,
+      epic: "US100",
+      condition: "crossing",
+      level: 100,
+      price: 100.2,
+      message: "",
+      precision: 2,
+      ...over,
+    };
+  }
+
+  async function openHistory() {
+    render(<MobileAlertsView />);
+    await userEvent.click(screen.getByRole("button", { name: "History" }));
+  }
+
+  it("shows relative times", async () => {
+    loadTriggered.mockReturnValue([fired()]);
+    await openHistory();
+    expect(screen.getByText("5m ago")).toBeTruthy();
+  });
+
+  it("names an account firing by its account", async () => {
+    loadTriggered.mockReturnValue([
+      fired({ epic: "", kind: "account", broker: "capital-live:live", headline: "Margin level 118% < 120% (danger)" }),
+    ]);
+    await openHistory();
+    expect(screen.getByText(accountLabel("capital-live:live"))).toBeTruthy();
+    expect(screen.getByText("Margin level 118% < 120% (danger)")).toBeTruthy();
+  });
+
+  it("badges a firing on another broker only", async () => {
+    loadTriggered.mockReturnValue([fired({ broker: "ig", time: Date.now() - 1000 }), fired({ epic: "DE40" })]);
+    await openHistory();
+    const rows = document.querySelectorAll(".m-alerts-hist");
+    expect(rows[0].querySelector(".m-alerts-broker")?.textContent).toBe(brokerLabel("ig"));
+    expect(rows[1].querySelector(".m-alerts-broker")).toBeNull();
+  });
+
+  it("clears history, and offers no Clear on an empty list", async () => {
+    loadTriggered.mockReturnValue([fired()]);
+    clearTriggered.mockImplementation(() => loadTriggered.mockReturnValue([]));
+    await openHistory();
+    await userEvent.click(screen.getByRole("button", { name: "Clear history" }));
+    expect(clearTriggered).toHaveBeenCalled();
+    expect(screen.getByText("No alerts have triggered yet.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Clear history" })).toBeNull();
+  });
+
+  it("counts unseen firings on the History button and marks them seen when opened", async () => {
+    loadTriggeredSeen.mockReturnValue(0);
+    const newest = Date.now() - 1000;
+    loadTriggered.mockReturnValue([fired({ time: newest }), fired()]);
+    render(<MobileAlertsView />);
+    expect(document.querySelector(".m-seg-count")?.textContent).toBe("2");
+    await userEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(pushTriggeredSeen).toHaveBeenCalledWith(newest);
   });
 });

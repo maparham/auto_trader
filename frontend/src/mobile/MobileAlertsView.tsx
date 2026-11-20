@@ -5,15 +5,17 @@
 // epic) since mobile has no per-cell overlay list to fall back on. Editing
 // and creating alerts reuse Task 7's hosted AlertModal via the same signals
 // (alertGlobalEditRequest / alertModalRequest) — this view only fires them.
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import {
   loadAllAlerts,
   loadAllServerAlerts,
   deleteStoredAlert,
   deleteIndicatorAlert,
   loadTriggered,
+  clearTriggered,
+  loadTriggeredSeen,
+  pushTriggeredSeen,
   alertLabel,
-  triggeredLabel,
   type ServerAlert,
   type SavedAlert,
 } from "../lib/alertsApi";
@@ -26,7 +28,9 @@ import {
   requestConfirm,
 } from "../lib/signals";
 import Tooltip from "../components/Tooltip";
-import { fetchQuote } from "../lib/trading";
+import { brokerLabel, fetchQuote } from "../lib/trading";
+import { ago } from "../lib/timeFormat";
+import { historyRowView, unseenCount, useAlertTick } from "../lib/alertRows";
 import { mobileAccount, mobileBroker, mobileSymbol } from "./mobileChartState";
 
 type SubTab = "active" | "history";
@@ -73,6 +77,17 @@ export default function MobileAlertsView() {
   }
 
   const history = loadTriggered(); // already newest-first (see alertsApi.ts)
+  // "x ago" labels and the account/position figures refresh on the shared tick.
+  const now = useAlertTick();
+  // Unseen firings, against the same "seen" marker the desktop History uses,
+  // so viewing History on either device clears the count on both.
+  const seen = loadTriggeredSeen();
+  const unseen = unseenCount(history, seen);
+  const newest = history[0]?.time;
+  useEffect(() => {
+    if (tab !== "history" || newest == null) return;
+    if (newest > seen) pushTriggeredSeen(newest);
+  }, [tab, newest, seen]);
 
   // Precision for formatting an epic's level: the currently-open chart's
   // symbol supplies it when it matches; otherwise mobile has nothing else to
@@ -121,8 +136,13 @@ export default function MobileAlertsView() {
           <button className={tab === "active" ? "on" : ""} onClick={() => setTab("active")}>
             Active
           </button>
-          <button className={tab === "history" ? "on" : ""} onClick={() => setTab("history")}>
+          <button
+            className={tab === "history" ? "on" : ""}
+            aria-label="History"
+            onClick={() => setTab("history")}
+          >
             History
+            {tab !== "history" && unseen > 0 && <span className="m-seg-count">{unseen}</span>}
           </button>
         </div>
         <button className="m-alerts-add" onClick={() => void handleCreate()} aria-label="Create alert">
@@ -198,19 +218,29 @@ export default function MobileAlertsView() {
         ) : history.length === 0 ? (
           <div className="m-alerts-empty">No alerts have triggered yet.</div>
         ) : (
-          history.map((t, i) => {
-            const precision = t.precision ?? 2;
-            return (
-              <div key={`${t.time}-${i}`} className="m-alerts-row m-alerts-hist">
-                <div className="m-alerts-row-main">
-                  <span className="m-alerts-epic">{t.epic}</span>
-                  <span className="m-alerts-time">{new Date(t.time).toLocaleString()}</span>
+          <>
+            <div className="m-alerts-clear-row">
+              <button className="m-alerts-clear" onClick={() => { clearTriggered(); bumpAlerts(); }}>
+                Clear history
+              </button>
+            </div>
+            {history.map((t, i) => {
+              const view = historyRowView(t, broker, 2);
+              return (
+                <div key={`${t.time}-${i}`} className="m-alerts-row m-alerts-hist">
+                  <div className="m-alerts-row-main">
+                    <span className="m-alerts-epic">
+                      {view.title}
+                      {view.foreignBroker && <span className="m-alerts-broker">{brokerLabel(view.foreignBroker)}</span>}
+                    </span>
+                    <span className="m-alerts-time">{ago(t.time, now)}</span>
+                  </div>
+                  <div className="m-alerts-cond">{view.cond}</div>
+                  {t.message && <div className="m-alerts-msg">{t.message}</div>}
                 </div>
-                <div className="m-alerts-cond">{triggeredLabel(t, precision)}</div>
-                {t.message && <div className="m-alerts-msg">{t.message}</div>}
-              </div>
-            );
-          })
+              );
+            })}
+          </>
         )}
       </div>
     </div>

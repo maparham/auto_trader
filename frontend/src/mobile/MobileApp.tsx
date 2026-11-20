@@ -4,7 +4,9 @@
 // registered before we mount (see lib/moduleInitOrder.test.ts).
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { hydrateFromBackend, subscribeToBackendUpdates } from "../lib/persist";
-import { hydrateAlerts } from "../lib/alertsApi";
+import { hydrateAlerts, loadTriggered, loadTriggeredSeen } from "../lib/alertsApi";
+import { alertsChanged } from "../lib/signals";
+import { unseenCount } from "../lib/alertRows";
 import { applyThemeToDocument, loadSettings } from "../theme";
 import MobileChartView from "./MobileChartView";
 import MobileAlertsView from "./MobileAlertsView";
@@ -41,6 +43,13 @@ export default function MobileApp({ banner }: { banner?: ReactNode } = {}) {
     (fn) => mobileTabSignal.subscribe(fn),
     () => mobileTabSignal.value,
   );
+  // Unseen History firings put a dot on the Alerts tab. Computed here, not in
+  // MobileAlertsView, which is mounted only while the Alerts tab is open.
+  useSyncExternalStore(
+    (fn) => alertsChanged.subscribe(fn),
+    () => alertsChanged.value,
+  );
+  const alertsUnseen = !demo && unseenCount(loadTriggered(), loadTriggeredSeen()) > 0;
   const viewMode = useSyncExternalStore(
     (fn) => mobileViewMode.subscribe(fn),
     () => mobileViewMode.value,
@@ -163,6 +172,7 @@ export default function MobileApp({ banner }: { banner?: ReactNode } = {}) {
               onClick={() => mobileTabSignal.set(t.id)}
             >
               {t.label}
+              {t.id === "alerts" && alertsUnseen && <span className="m-tabbar-dot" aria-hidden="true" />}
             </button>
           ))}
           <button

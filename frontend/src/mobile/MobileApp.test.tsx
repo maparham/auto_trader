@@ -21,9 +21,12 @@ vi.mock("../lib/persist", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   hydrateFromBackend: vi.fn().mockResolvedValue(undefined),
 }));
+const history = vi.hoisted(() => ({ rows: [] as { time: number }[], seen: 0 }));
 vi.mock("../lib/alertsApi", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   hydrateAlerts: vi.fn().mockResolvedValue(undefined),
+  loadTriggered: () => history.rows,
+  loadTriggeredSeen: () => history.seen,
 }));
 vi.mock("../lib/feed", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -186,4 +189,29 @@ it("watches for full screen ending outside the app", async () => {
     onChange!();
   });
   expect(mobileViewMode.value).toEqual({ chromeHidden: false, landscape: false });
+});
+
+describe("MobileApp Alerts tab dot", () => {
+  beforeEach(() => mobileTabSignal.set("chart"));
+  afterEach(() => {
+    cleanup();
+    history.rows = [];
+    history.seen = 0;
+  });
+
+  it("shows a dot on the Alerts tab while unseen firings exist, from the Chart tab", async () => {
+    history.rows = [{ time: 200 }, { time: 100 }];
+    history.seen = 150;
+    render(<MobileApp />);
+    const btn = await screen.findByRole("button", { name: "Alerts" });
+    expect(btn.querySelector(".m-tabbar-dot")).not.toBeNull();
+  });
+
+  it("shows no dot when every firing was seen", async () => {
+    history.rows = [{ time: 100 }];
+    history.seen = 150;
+    render(<MobileApp />);
+    const btn = await screen.findByRole("button", { name: "Alerts" });
+    expect(btn.querySelector(".m-tabbar-dot")).toBeNull();
+  });
 });
