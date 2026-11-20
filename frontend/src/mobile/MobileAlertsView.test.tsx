@@ -390,4 +390,18 @@ describe("MobileAlertsView Active list like the desktop", () => {
     confirmRequest.value!.onConfirm();
     expect(deletePositionAlert).toHaveBeenCalledWith("po1");
   });
+
+  it("takes an epic's indicator alert precision into the guess, as the desktop does", () => {
+    mobileSymbol.set({ epic: "US100", pricePrecision: 2 } as never);
+    loadAllAlerts.mockReturnValue([{ epic: "EURUSD", alerts: [alert({ level: 1.1 })] }]);
+    loadAllServerAlerts.mockReturnValue([indAlert({ epic: "EURUSD", precision: 5 })]);
+    render(<MobileAlertsView />);
+    expect(screen.getByText(/1\.10000/)).toBeTruthy();
+  });
+
+  it("shows the Unmonitored reason as text on a phone", () => {
+    loadAccountAlerts.mockReturnValue([acct]);
+    render(<MobileAlertsView />);
+    expect(screen.getByText("Poll failing")).toBeTruthy();
+  });
 });

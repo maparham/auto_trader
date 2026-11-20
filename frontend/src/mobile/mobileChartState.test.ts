@@ -36,7 +36,7 @@ import {
   openMobileAlert,
   bootMobileMarket,
 } from "./mobileChartState";
-import { confirmRequest } from "../lib/signals";
+import { confirmRequest, symbolSearchRequest } from "../lib/signals";
 import { brokerLabel } from "../lib/trading";
 
 function inst(epic: string) {
@@ -94,5 +94,21 @@ describe("openMobileAlert", () => {
     await flush();
     expect(mobileSymbol.value?.epic).toBe("US500");
     expect(mobileTabSignal.value).toBe("chart");
+  });
+
+  it("does not open symbol search when the new broker has no boot market while the jump resolves", async () => {
+    initialMarket.mockResolvedValue(null);
+    let release: (v: unknown) => void = () => {};
+    resolveInstrument.mockImplementation((epic: string) => new Promise((r) => { release = () => r(inst(epic)); }));
+    const before = symbolSearchRequest.value;
+    openMobileAlert("US500", "ig-demo", 2);
+    confirmRequest.value!.onConfirm();
+    await bootMobileMarket("ig-demo");
+    await flush();
+    expect(symbolSearchRequest.value).toBe(before);
+    release(null);
+    await flush();
+    expect(mobileSymbol.value?.epic).toBe("US500");
+    expect(symbolSearchRequest.value).toBe(before);
   });
 });

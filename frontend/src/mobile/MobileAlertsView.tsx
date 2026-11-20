@@ -121,7 +121,11 @@ export default function MobileAlertsView() {
   // cell, so an FX level like 1.08234 does not show as 1.08.
   function precisionFor(epic: string): number {
     if (symbol && symbol.epic === epic) return symbol.pricePrecision ?? 2;
-    return Math.max(2, ...rows.filter((r) => r.epic === epic).map((r) => decimalsOf(r.alert.level)));
+    return Math.max(
+      2,
+      ...rows.filter((r) => r.epic === epic).map((r) => decimalsOf(r.alert.level)),
+      ...(indByEpic.get(epic) ?? []).map((a) => a.precision),
+    );
   }
 
   function handleDelete(epic: string, alert: SavedAlert) {
@@ -312,12 +316,10 @@ function AccountRow({ a }: { a: AccountAlert }) {
             {t.text}
           </span>
         ))}
-        {view.unmonitored != null && (
-          <Tooltip content={view.unmonitored}>
-            <span className="m-alerts-wait">Unmonitored</span>
-          </Tooltip>
-        )}
+        {view.unmonitored != null && <span className="m-alerts-wait">Unmonitored</span>}
       </div>
+      {/* No hover on a phone: the reason is shown as text, not a tooltip. */}
+      {view.unmonitored != null && <div className="m-alerts-msg">{view.unmonitored}</div>}
       <button
         className="m-alerts-delete"
         onClick={(e) => {

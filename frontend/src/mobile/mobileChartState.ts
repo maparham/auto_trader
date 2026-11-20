@@ -136,8 +136,10 @@ export async function bootMobileMarket(broker: string): Promise<void> {
   // usual chain would land a first-time visitor on symbol search.
   if (isDemoMode() && bootFromLayout()) return;
   const m = await initialMarket(broker);
-  // A symbol picked while this fetch was in flight wins over the boot default.
-  if (mobileSymbol.value) return;
+  // A symbol picked while this fetch was in flight wins over the boot default,
+  // and so does an alert jump still resolving its epic (openMobileAlert): the
+  // fallbacks below would otherwise open symbol search over the chart it lands.
+  if (mobileSymbol.value || alertJumpPending) return;
   if (!m) {
     // No heartbeat, no favorites: a mirrored layout cell still beats search.
     if (!bootFromLayout()) requestSymbolSearch();
@@ -196,6 +198,7 @@ export async function showMobileEpic(epic: string, precision = 2): Promise<void>
  * switch and the jump. The switch's boot cannot overwrite the jump:
  * bootMobileMarket stops once a symbol is set, and showMobileEpic re-checks
  * the broker after its await. */
+let alertJumpPending = false;
 export function openMobileAlert(epic: string, broker: string | undefined, precision: number): void {
   const from = mobileBroker();
   const b = broker ? brokerOf(broker) : from;
@@ -214,8 +217,16 @@ export function openMobileAlert(epic: string, broker: string | undefined, precis
     message: `This alert is on ${brokerLabel(b)}. Switch from ${brokerLabel(from)} to open ${epic}?`,
     confirmLabel: "Switch",
     onConfirm: () => {
+      alertJumpPending = true;
       setMobileAccount(own ?? mobileAccountFor(b, accounts));
-      void showMobileEpic(epic, precision);
+      void showMobileEpic(epic, precision)
+        .catch(() => {})
+        .finally(() => {
+          alertJumpPending = false;
+          // The epic could not be opened: fall back to symbol search, as the
+          // boot would have.
+          if (!mobileSymbol.value) requestSymbolSearch();
+        });
     },
   });
 }
