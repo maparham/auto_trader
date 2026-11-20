@@ -319,6 +319,32 @@ describe("backend mirror: ordered sends", () => {
     expect(calls.map((c) => c.body).sort()).toEqual(['{"value":["mine"]}', '{"value":{"v":"new"}}']);
   });
 
+  it("drops a waiting write when another tab's value arrives for the key", async () => {
+    class WS {
+      static last: WS | null = null;
+      onopen: (() => void) | null = null;
+      onmessage: ((ev: { data: string }) => void) | null = null;
+      onclose: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor() {
+        WS.last = this;
+      }
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", WS);
+    const { core, calls } = await boot();
+    const unsub = core.subscribeToBackendUpdates(() => {});
+    core.save(K, { v: 1 });
+    calls[0].fail(); // backend down: v1 waits for its retry
+    await tick();
+    WS.last!.onmessage!({ data: JSON.stringify({ key: K, value: { v: "theirs" }, origin: "other" }) });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls.length).toBe(1); // the older v1 is never sent over theirs
+    expect(localStorage.getItem(K)).toBe('{"v":"theirs"}');
+    expect(localStorage.getItem(UNSENT)).toBeNull();
+    unsub();
+  });
+
   it("lets the backend win for an unconfirmed write older than a day", async () => {
     const first = await boot();
     first.core.save(K, { v: "new" });

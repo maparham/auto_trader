@@ -259,6 +259,8 @@ const UNSENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const RETRY_MAX_MS = 30_000;
 const queuedOps = new Map<string, MirrorOp>();
 const sendingKeys = new Set<string>();
+// A failed op waiting out its retry delay.
+const retryOps = new Map<string, MirrorOp>();
 
 function readUnsent(): Record<string, number> {
   try {
@@ -337,14 +339,27 @@ function pumpMirror(key: string, attempt: number): void {
         pumpMirror(key, attempt);
         return;
       }
+      retryOps.set(key, op);
       setTimeout(
         () => {
-          if (!queuedOps.has(key)) queuedOps.set(key, op);
+          // Gone from retryOps: a remote push replaced the value meanwhile.
+          const again = retryOps.get(key);
+          retryOps.delete(key);
+          if (again && !queuedOps.has(key)) queuedOps.set(key, again);
           pumpMirror(key, attempt + 1);
         },
         Math.min(RETRY_MAX_MS, 1000 * 2 ** attempt),
       );
     });
+}
+
+// Another tab or device just wrote this key and the backend holds its value:
+// whatever we still had waiting for it is older, so it must not be sent.
+// (A request already on its way cannot be recalled.)
+function dropPendingMirror(key: string): void {
+  queuedOps.delete(key);
+  retryOps.delete(key);
+  clearUnsent(key);
 }
 
 function mirrorSet(key: string, value: string): void {
@@ -601,10 +616,13 @@ export async function hydrateFromBackend(): Promise<boolean> {
   const unsent = new Set<string>();
   if (mirrorEnabled) {
     const now = Date.now();
+    const fresh: Record<string, number> = {};
     for (const [k, at] of Object.entries(readUnsent())) {
-      if (typeof at === "number" && now - at < UNSENT_MAX_AGE_MS) unsent.add(k);
+      if (typeof at !== "number" || now - at >= UNSENT_MAX_AGE_MS) continue;
+      unsent.add(k);
+      fresh[k] = at;
     }
-    if (unsent.size === 0) writeUnsent({});
+    writeUnsent(fresh); // drops the entries that are too old to honour
   }
 
   let changed = false;
@@ -633,13 +651,15 @@ export async function hydrateFromBackend(): Promise<boolean> {
   }
   for (const key of unsent) {
     const local = localStorage.getItem(key);
+    // Queued directly, not through mirrorSet/mirrorDelete: their remote-echo
+    // check could swallow the send and leave the key listed.
     if (local === null) {
-      if (present.has(key)) mirrorDelete(key);
+      if (present.has(key)) enqueueMirror(key, { del: true });
       else clearUnsent(key);
     } else if (present.has(key) && JSON.stringify(snapshot[key]) === local) {
       clearUnsent(key);
     } else {
-      mirrorSet(key, local);
+      enqueueMirror(key, { body: `{"value":${local}}` });
     }
   }
   return changed;
@@ -791,6 +811,7 @@ export function subscribeToBackendUpdates(
         // state/overlays to storage. Suppressing "unchanged" pushes here silently
         // disables same-browser cross-tab sync (and the next persist() stomps the
         // sibling's edit — the cross-tab data-loss bug this handler exists to fix).
+        dropPendingMirror(msg.key);
         if ("deleted" in msg && msg.deleted) {
           localStorage.removeItem(msg.key);
           remoteEcho.set(msg.key, "\0deleted");
