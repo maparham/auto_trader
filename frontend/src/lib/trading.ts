@@ -11,7 +11,7 @@
 import { BROKERS_CACHE_KEY, defaultAccount } from "./brokerDefaults";
 import { isCapitalBroker, onTradesDirty } from "./persist";
 import { isStrategyDeal } from "./liveTags";
-import { Signal, tradesSignal } from "./signals";
+import { Signal, tradePanelOpen, tradesSignal } from "./signals";
 import {
   API_BASE as BASE,
   apiFetch,
@@ -725,7 +725,12 @@ export async function applyLevels(
     body: JSON.stringify(edit),
   });
   if (!res.ok) throw new Error(await errorDetail(res, `update failed (${res.status})`));
-  return res.json();
+  const result = await res.json();
+  // A saved edit is a finished one, whichever surface saved it (the ticket's
+  // Update, a chart pill, the dock's Apply), so the order ticket never stays
+  // open after it. Closing it also clears the trade selection (usePanelSignals).
+  tradePanelOpen.set(false);
+  return result;
 }
 
 /** Keep an SL/TP on the valid side of a REFERENCE price: a long's stop must sit BELOW

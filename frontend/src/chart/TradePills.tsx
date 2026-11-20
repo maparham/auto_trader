@@ -122,18 +122,9 @@ export default function TradePills({
   actions,
 }: TradePillsProps) {
   // Is THIS cell replaying? Asked at CLICK time (a Set lookup), not captured at
-  // render: the two questions below are about what a button press may do, and the
+  // render: the questions below are about what a button press may do, and the
   // answer must be the one that holds when it is pressed.
   const replaying = () => isCellReplaying(cellId);
-  // Whether a chart-side selection may open the app's real OrderTicket. It may
-  // not while this cell is replaying: a pill there belongs to the cell's local
-  // ledger, that id is in no account book, and the ticket therefore falls back to
-  // its LIVE new-order form — a real-money submit one click from a practice
-  // trade, on today's quote, inside a session whose whole point is not knowing
-  // where price ended up. Selecting still happens (the pills ARE the replay
-  // trade UI: drag to move a level, then Apply / Close / Cancel); only the panel
-  // is withheld, which is exactly what a single click on the line already does.
-  const opensTicket = () => !replaying();
   // Dealing defaulted ONCE, so the three call sites below read the same object
   // whether the trade lives in the account or in a replay ledger. The default
   // branch keeps the refreshTrades that follows each account write; the replay
@@ -389,7 +380,9 @@ export default function TradePills({
           try {
             await act.apply(t, merged);
             discardPendingEdit(t.id);
-            setTradeSelected(t.id, "price", opensTicket());
+            // Move focus to the entry line without reopening the ticket the save
+            // just closed (applyLevels).
+            setTradeSelected(t.id, "price", false);
           } catch (err) {
             toast(err instanceof Error ? err.message : "Remove failed");
           }

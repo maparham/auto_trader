@@ -301,6 +301,31 @@ describe("applyEditedLevels expiry", () => {
   });
 });
 
+describe("a saved edit closes the order ticket", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("closes the ticket once the broker accepts the edit", async () => {
+    const { tradePanelOpen } = await import("./signals");
+    tradePanelOpen.set(true);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ status: "filled" }) }) as Response));
+    await applyEditedLevels({ kind: "position", id: "P-1" }, { price: null, stop: 1.2, takeProfit: null }, "capital:paper");
+    expect(tradePanelOpen.value).toBe(false);
+  });
+
+  it("keeps it open when the edit is refused", async () => {
+    const { tradePanelOpen } = await import("./signals");
+    tradePanelOpen.set(true);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "nope" }), { status: 422 })));
+    await expect(
+      applyEditedLevels({ kind: "position", id: "P-1" }, { price: null, stop: 1.2, takeProfit: null }, "capital:paper"),
+    ).rejects.toThrow();
+    expect(tradePanelOpen.value).toBe(true);
+    tradePanelOpen.set(false);
+  });
+});
+
 describe("trades feed on a data-only source", () => {
   it("never asks the backend for positions or orders (it would 422)", async () => {
     const t = await import("./trading");
