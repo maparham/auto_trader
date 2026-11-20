@@ -1602,6 +1602,9 @@ export interface TrendlinesExtend {
    * place in the rankLines order among the lines passing every filter on the
    * last bar. OFF by default. Render-only. */
   showStrength?: boolean;
+  /** Log Scale (calcParams slot 33) follows the chart's L button
+   * (chart/trendlineLogFollow.ts). The calc never reads it. */
+  logFollow?: boolean;
   /** Dim the drawn lines inside a fan, keeping its two edges (fanInnerLines).
    * OFF by default. Render-only. */
   fanEdges?: boolean;

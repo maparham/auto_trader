@@ -11,6 +11,7 @@
 //
 // Edits preview live on the chart; Cancel/Escape restores the opening snapshot.
 
+import { syncLogFollow } from "./chart/trendlineLogFollow";
 import { DBG_FAILED_DASH, DBG_FORCED_DASH, DBG_OUTRANKED_DASH } from "./lib/indicators/trendlinesDebugDraw";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
@@ -2197,6 +2198,8 @@ function IndicatorSettingsForm({
       }
     }
     saveIndicatorConfig(scope, name, cfg);
+    // Follow Chart's L: Log Scale takes the chart's L state now.
+    if (isTrendlines) syncLogFollow(chart, { scope, epic, brokerId }, { paneId, name });
     // Each linked alert is re-pointed at the pane's new settings; the server
     // re-validates it against its own timeframe (never chartResolution, F6)
     // and refuses the ones the new settings can't serve.

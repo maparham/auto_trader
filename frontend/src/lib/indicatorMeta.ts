@@ -1469,6 +1469,18 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         ],
       },
       {
+        key: "logFollow",
+        label: "Follow Chart's L",
+        type: "boolean",
+        source: "extend",
+        field: "logFollow",
+        default: false,
+        tip: [
+          "Log Scale turns on and off with the chart's L button.",
+          "Rules and alerts on this pane change with it.",
+        ],
+      },
+      {
         ...num(21, "Merge lines within", { min: 0, step: 0.1 }),
         group: "merge",
         // The tolerance IS the switch: 0 merges nothing.

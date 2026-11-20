@@ -41,6 +41,7 @@ import { isDemoMode } from "../lib/demoMode";
 import { isSynthetic } from "../lib/syntheticRegistry";
 import { syncAlertsAfterRemove } from "../lib/indicatorAlertSync";
 import { pickTrendline } from "./useTrendlineMenu";
+import { trendlineMenuItems } from "./trendlineLegendMenu";
 import { toast } from "../lib/notify";
 import { inShell, shellInvoke } from "../lib/shellBridge";
 import { MenuIcons } from "../lib/menuIcons";
@@ -694,6 +695,12 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
             ? []
             : [{ label: "Add alert", icon: MenuIcons.bell, onClick: () => indicatorAlertRequest.set({ mode: "create", draft: r.draft }) }];
         })(),
+        // Trendlines: Log Scale, Debug mode and (while on) its layers.
+        ...(c && indTypeOf({ name, extendData: ind?.extendData }) === "TRENDLINES"
+          ? trendlineMenuItems({
+              chart: c, scope, epic: alertContext.current.epic, brokerId: alertContext.current.broker, paneId, name,
+            })
+          : []),
         { label: "Copy", icon: MenuIcons.copy, onClick: () => copyIndicator(paneId, name) },
         { label: "Duplicate", icon: MenuIcons.clone, onClick: () => duplicateIndicator(paneId, name) },
         {
@@ -715,7 +722,7 @@ export function useIndicatorCommands(handle: ChartHandle, deps: IndicatorCommand
       ];
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- omitted deps are refs, handle members or controller signals, stable for the mount
-    [copyIndicator, duplicateIndicator, toggleVisibleOn, removeOn, reorderPaneByName, setIndicatorInset, alertDraftFor],
+    [copyIndicator, duplicateIndicator, toggleVisibleOn, removeOn, reorderPaneByName, setIndicatorInset, alertDraftFor, scope],
   );
 
   // The legend's ⋯ "more" button opens the menu (anchored below the button).

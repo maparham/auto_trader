@@ -3,6 +3,7 @@
 // scroll-back pagination. Hands the Chart up via onReady so the toolbar can
 // drive indicators, overlays, and the price scale.
 
+import { setChartLogSource, syncLogFollow } from "./chart/trendlineLogFollow";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   init,
@@ -1567,8 +1568,10 @@ export default function ChartCore({
         if (!c) return;
         applyScalePriceOnly(c, scalePriceOnly.value);
         applyCandleFit(c, priceFitMode.value);
+        // Trendlines panes set to follow the L button switch Log Scale too.
+        syncLogFollow(c, { scope, epic: alertContext.current.epic, brokerId: alertContext.current.broker });
       }),
-    [logScale, scalePriceOnly, priceFitMode],
+    [logScale, scalePriceOnly, priceFitMode, scope],
   );
   // Flip "scale price chart only": persist it and swap the candle pane's
   // createRange override (candles-only vs the framework's default full-pane fit).
@@ -2055,6 +2058,8 @@ export default function ChartCore({
     const chart = init(el);
     if (!chart) return;
     chartRef.current = chart;
+    // Trendlines panes that follow the L button read it through this.
+    setChartLogSource(chart, () => logScale.value);
     // Lets a deferred Trendlines rebuild find this chart to repaint its rows.
     const unregisterTrendlinesChart = registerTrendlinesChart(chart);
     // Initial declared-interval registration (see the resolution-keyed effect
