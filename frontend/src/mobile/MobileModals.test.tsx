@@ -18,10 +18,19 @@ vi.mock("../SymbolSearchModal", () => ({
   ),
 }));
 vi.mock("../Settings", () => ({ default: () => <div data-testid="chart-settings" /> }));
+vi.mock("../AccountAlertModal", () => ({ default: () => <div data-testid="account-alert-modal" /> }));
+vi.mock("../PositionAlertModal", () => ({ default: () => <div data-testid="position-alert-modal" /> }));
+const demo = vi.hoisted(() => ({ on: false }));
+vi.mock("../lib/demoMode", async (orig) => ({
+  ...(await orig<object>()),
+  isDemoMode: () => demo.on,
+}));
 
 import MobileModals from "./MobileModals";
 import {
   alertModalRequest,
+  accountAlertRequest,
+  positionAlertRequest,
   drawingSettingsRequest,
   requestConfirm,
   confirmRequest,
@@ -131,5 +140,37 @@ describe("symbol pick routing", () => {
     await pickSymbol("NVDA");
     expect(symbolPickTarget.value).toBeNull();
     expect(mobileSymbol.value?.epic).toBe("NVDA");
+  });
+});
+
+describe("MobileModals account and position alert dialogs", () => {
+  afterEach(() => {
+    cleanup();
+    demo.on = false;
+    accountAlertRequest.set(null);
+    positionAlertRequest.set(null);
+  });
+
+  it("hosts the account alert dialog on accountAlertRequest", () => {
+    render(<MobileModals />);
+    act(() => accountAlertRequest.set({ mode: "edit", id: "a1" } as never));
+    expect(screen.getByTestId("account-alert-modal")).toBeTruthy();
+  });
+
+  it("hosts the position alert dialog on positionAlertRequest", () => {
+    render(<MobileModals />);
+    act(() => positionAlertRequest.set({ account: "capital:demo", epic: "US100", dealId: "D1", precision: 2 } as never));
+    expect(screen.getByTestId("position-alert-modal")).toBeTruthy();
+  });
+
+  it("hosts neither in demo mode", () => {
+    demo.on = true;
+    render(<MobileModals />);
+    act(() => {
+      accountAlertRequest.set({ mode: "edit", id: "a1" } as never);
+      positionAlertRequest.set({ account: "capital:demo", epic: "US100", dealId: "D1", precision: 2 } as never);
+    });
+    expect(screen.queryByTestId("account-alert-modal")).toBeNull();
+    expect(screen.queryByTestId("position-alert-modal")).toBeNull();
   });
 });

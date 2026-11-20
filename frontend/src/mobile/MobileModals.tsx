@@ -10,6 +10,8 @@ import { createPortal } from "react-dom";
 import type { Signal } from "../lib/signals";
 import {
   alertModalRequest,
+  accountAlertRequest,
+  positionAlertRequest,
   alertEditRequest,
   alertGlobalEditRequest,
   indicatorAlertRequest,
@@ -34,6 +36,8 @@ import { isDemoMode } from "../lib/demoMode";
 import AlertModal from "../AlertModal";
 import IndicatorAlertModal from "../IndicatorAlertModal";
 import LineAlertModal from "../LineAlertModal";
+import AccountAlertModal from "../AccountAlertModal";
+import PositionAlertModal from "../PositionAlertModal";
 import SettingsModal from "../Settings";
 import DrawingSettings from "../DrawingSettings";
 import IndicatorSettings from "../IndicatorSettings";
@@ -63,6 +67,8 @@ export default function MobileModals() {
   const alertGlobalEdit = useSignal(alertGlobalEditRequest);
   const indAlertReq = useSignal(indicatorAlertRequest);
   const lineAlertReq = useSignal(lineAlertRequest);
+  const acctAlertReq = useSignal(accountAlertRequest);
+  const posAlertReq = useSignal(positionAlertRequest);
   const indSettings = useSignal(indicatorSettingsRequest);
   const drawSettings = useSignal(drawingSettingsRequest);
   const confirm = useSignal(confirmRequest);
@@ -143,6 +149,14 @@ export default function MobileModals() {
           now={Date.now()}
           onClose={() => indicatorAlertRequest.set(null)}
         />
+      )}
+
+      {!isDemoMode() && acctAlertReq && (
+        <AccountAlertModal request={acctAlertReq} now={Date.now()} onClose={() => accountAlertRequest.set(null)} />
+      )}
+
+      {!isDemoMode() && posAlertReq && (
+        <PositionAlertModal request={posAlertReq} onClose={() => positionAlertRequest.set(null)} />
       )}
 
       {!isDemoMode() && lineAlertReq && (

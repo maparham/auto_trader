@@ -9,11 +9,19 @@ const loadTriggered = vi.fn();
 const loadAllServerAlerts = vi.fn();
 const deleteIndicatorAlert = vi.fn();
 const clearTriggered = vi.fn();
+const loadAccountAlerts = vi.fn(() => [] as unknown[]);
+const loadPositionAlerts = vi.fn(() => [] as unknown[]);
+const deleteAccountAlert = vi.fn();
+const deletePositionAlert = vi.fn();
 const loadTriggeredSeen = vi.fn(() => 0);
 const pushTriggeredSeen = vi.fn();
 vi.mock("../lib/alertsApi", async (orig) => ({
   ...(await orig<object>()),
   clearTriggered: (...args: unknown[]) => clearTriggered(...args),
+  loadAccountAlerts: () => loadAccountAlerts(),
+  loadPositionAlerts: () => loadPositionAlerts(),
+  deleteAccountAlert: (...args: unknown[]) => deleteAccountAlert(...args),
+  deletePositionAlert: (...args: unknown[]) => deletePositionAlert(...args),
   loadTriggeredSeen: () => loadTriggeredSeen(),
   pushTriggeredSeen: (...args: unknown[]) => pushTriggeredSeen(...args),
   loadAllServerAlerts: (...args: unknown[]) => loadAllServerAlerts(...args),
@@ -42,8 +50,10 @@ import {
   alertGlobalEditRequest,
   alertModalRequest,
   indicatorAlertRequest,
+  accountAlertRequest,
+  positionAlertRequest,
 } from "../lib/signals";
-import { accountLabel, type IndicatorAlert, type SavedAlert, type TriggeredAlert } from "../lib/alertsApi";
+import { accountLabel, METRIC_LABELS, TRIGGER_LABELS, type AccountAlert, type PositionAlert, type IndicatorAlert, type SavedAlert, type TriggeredAlert } from "../lib/alertsApi";
 import { brokerLabel } from "../lib/trading";
 
 afterEach(() => {
@@ -293,5 +303,91 @@ describe("MobileAlertsView History like the desktop", () => {
     await openHistory();
     await userEvent.click(screen.getByText(accountLabel("capital-live:live")));
     expect(openMobileAlert).not.toHaveBeenCalled();
+  });
+});
+
+describe("MobileAlertsView Active list like the desktop", () => {
+  const acct = {
+    kind: "account", id: "ac1", account: "capital-live:live", metric: "marginLevel",
+    tiers: [{ level: 150, label: "warn" }, { level: 50, label: "critical" }],
+    firedTiers: [150], monitored: false, unmonitoredReason: "Poll failing",
+    message: "", expiresAt: null, precision: 2, current: 180, currency: "EUR",
+    notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+  } as unknown as AccountAlert;
+  const posAl = {
+    kind: "position", id: "po1", account: "capital:demo", epic: "US100", dealId: "D1",
+    side: "tp", atrMult: 0.5, distanceAtr: 1.2, precision: 1,
+    notify: { toast: true, browser: true, sound: true, push: true, telegram: true },
+  } as unknown as PositionAlert;
+
+  beforeEach(() => {
+    loadAllServerAlerts.mockReturnValue([]);
+    loadAllAlerts.mockReturnValue([]);
+    loadTriggered.mockReturnValue([]);
+    loadAccountAlerts.mockReturnValue([]);
+    loadPositionAlerts.mockReturnValue([]);
+    deleteAccountAlert.mockReset();
+    deletePositionAlert.mockReset();
+  });
+  afterEach(() => {
+    accountAlertRequest.set(null);
+    positionAlertRequest.set(null);
+  });
+
+  it("shows a trigger badge on a price row", () => {
+    loadAllAlerts.mockReturnValue([{ epic: "US100", alerts: [alert({ trigger: "once" })] }]);
+    render(<MobileAlertsView />);
+    expect(document.querySelector(".m-alerts-trigger")?.textContent).toBe(TRIGGER_LABELS.once);
+  });
+
+  it("drops an expired price alert", () => {
+    loadAllAlerts.mockReturnValue([{ epic: "US100", alerts: [alert({ expiresAt: Date.now() - 1000 })] }]);
+    render(<MobileAlertsView />);
+    expect(screen.getByText("No active alerts.")).toBeTruthy();
+  });
+
+  it("formats an off-chart level with its own decimals", () => {
+    mobileSymbol.set({ epic: "US100", pricePrecision: 2 } as never);
+    loadAllAlerts.mockReturnValue([{ epic: "EURUSD", alerts: [alert({ level: 1.08234 })] }]);
+    render(<MobileAlertsView />);
+    expect(screen.getByText(/1\.08234/)).toBeTruthy();
+  });
+
+  it("lists Account then Positions above the symbol alerts", () => {
+    loadAccountAlerts.mockReturnValue([acct]);
+    loadPositionAlerts.mockReturnValue([posAl]);
+    loadAllAlerts.mockReturnValue([{ epic: "US100", alerts: [alert()] }]);
+    render(<MobileAlertsView />);
+    const heads = [...document.querySelectorAll(".m-alerts-group")].map((h) => h.textContent);
+    expect(heads).toEqual(["Account", "Positions"]);
+    const tiers = document.querySelectorAll(".m-alerts-tier");
+    expect(tiers).toHaveLength(2);
+    expect(tiers[0].classList.contains("fired")).toBe(true);
+    expect(screen.getByText("Unmonitored")).toBeTruthy();
+    expect(screen.getByText("TP · 0.5× ATR · now 1.2 ATR")).toBeTruthy();
+  });
+
+  it("tapping account and position rows opens their editors", async () => {
+    loadAccountAlerts.mockReturnValue([acct]);
+    loadPositionAlerts.mockReturnValue([posAl]);
+    render(<MobileAlertsView />);
+    await userEvent.click(screen.getByText(accountLabel("capital-live:live")));
+    expect(accountAlertRequest.value).toEqual({ mode: "edit", id: "ac1" });
+    await userEvent.click(screen.getByText("TP · 0.5× ATR · now 1.2 ATR"));
+    expect(positionAlertRequest.value).toEqual({ account: "capital:demo", epic: "US100", dealId: "D1", precision: 1 });
+  });
+
+  it("Delete confirms with the desktop's text, then deletes", async () => {
+    loadAccountAlerts.mockReturnValue([acct]);
+    loadPositionAlerts.mockReturnValue([posAl]);
+    render(<MobileAlertsView />);
+    await userEvent.click(screen.getByRole("button", { name: `Delete alert on ${accountLabel("capital-live:live")}` }));
+    expect(confirmRequest.value?.message).toBe(`Delete this ${METRIC_LABELS.marginLevel} alert on ${accountLabel("capital-live:live")}?`);
+    confirmRequest.value!.onConfirm();
+    expect(deleteAccountAlert).toHaveBeenCalledWith("ac1");
+    await userEvent.click(screen.getByRole("button", { name: "Delete TP warning on US100" }));
+    expect(confirmRequest.value?.message).toBe("Delete this TP warning on US100?");
+    confirmRequest.value!.onConfirm();
+    expect(deletePositionAlert).toHaveBeenCalledWith("po1");
   });
 });

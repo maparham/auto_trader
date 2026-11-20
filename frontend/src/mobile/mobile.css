@@ -600,3 +600,11 @@ body.m-mobile .ss-exch { display: none; }
 .m-tf-group .custom-tf-form .custom-tf-units button { width: 40px; font-size: 15px; }
 .m-tf-group .custom-tf-form .custom-tf-add { height: 40px; border-radius: 8px; font-size: 15px; }
 .m-tf-group .custom-tf-form .custom-tf-error { min-height: 40px; font-size: 13px; }
+
+/* Active list parity (2026-11-20 spec): group headers, trigger and tier badges. */
+.m-alerts-group { padding: 8px 14px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-secondary, #888); border-bottom: 1px solid var(--border); }
+.m-alerts-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; padding-right: 60px; }
+.m-alerts-trigger, .m-alerts-tier { display: inline-block; margin-top: 4px; font-size: 11px; color: var(--text-dim, var(--text)); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
+.m-alerts-badges .m-alerts-tier, .m-alerts-badges .m-alerts-wait { margin-top: 0; }
+.m-alerts-tier.fired { opacity: .5; }
+

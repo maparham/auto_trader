@@ -15,6 +15,14 @@ import {
   clearTriggered,
   loadTriggeredSeen,
   pushTriggeredSeen,
+  normalizeAlert,
+  loadAccountAlerts,
+  loadPositionAlerts,
+  deleteAccountAlert,
+  deletePositionAlert,
+  TRIGGER_LABELS,
+  type AccountAlert,
+  type PositionAlert,
   alertLabel,
   type ServerAlert,
   type SavedAlert,
@@ -24,13 +32,16 @@ import {
   alertsChanged,
   alertGlobalEditRequest,
   alertModalRequest,
+  accountAlertRequest,
+  positionAlertRequest,
+  tradesSignal,
   bumpAlerts,
   requestConfirm,
 } from "../lib/signals";
 import Tooltip from "../components/Tooltip";
 import { brokerLabel, fetchQuote } from "../lib/trading";
 import { ago } from "../lib/timeFormat";
-import { historyRowView, unseenCount, useAlertTick } from "../lib/alertRows";
+import { accountRowView, decimalsOf, historyRowView, positionRowView, unseenCount, useAlertTick } from "../lib/alertRows";
 import { mobileAccount, mobileBroker, mobileSymbol, openMobileAlert } from "./mobileChartState";
 
 type SubTab = "active" | "history";
@@ -56,9 +67,26 @@ export default function MobileAlertsView() {
   );
   const broker = mobileBroker();
 
+  // "x ago" labels, expiry and the account/position figures refresh on the
+  // shared tick (lib/alertRows.ts), the same one the desktop panel runs.
+  const now = useAlertTick();
   const groups = loadAllAlerts(broker);
   const rows: { epic: string; alert: SavedAlert }[] = [];
-  for (const g of groups) for (const a of g.alerts) rows.push({ epic: g.epic, alert: a });
+  // Normalized (legacy rows get their id) and expired ones dropped, as the
+  // desktop's all-symbols list does: an expired alert can never fire.
+  for (const g of groups) {
+    g.alerts.forEach((r, i) => {
+      const a = normalizeAlert(r, i);
+      if (a.expiresAt != null && now > a.expiresAt) return;
+      rows.push({ epic: g.epic, alert: a });
+    });
+  }
+  const accountAlerts = loadAccountAlerts();
+  const positionAlerts = loadPositionAlerts();
+  const trades = useSyncExternalStore(
+    (fn) => tradesSignal.subscribe(fn),
+    () => tradesSignal.value,
+  );
   // Indicator alerts sit after the price rows of their epic (an epic with only
   // indicator alerts still gets its block, at the end).
   const indByEpic = new Map<string, ServerAlert[]>();
@@ -77,8 +105,6 @@ export default function MobileAlertsView() {
   }
 
   const history = loadTriggered(); // already newest-first (see alertsApi.ts)
-  // "x ago" labels and the account/position figures refresh on the shared tick.
-  const now = useAlertTick();
   // Unseen firings, against the same "seen" marker the desktop History uses,
   // so viewing History on either device clears the count on both.
   const seen = loadTriggeredSeen();
@@ -89,13 +115,13 @@ export default function MobileAlertsView() {
     if (newest > seen) pushTriggeredSeen(newest);
   }, [tab, newest, seen]);
 
-  // Precision for formatting an epic's level: the currently-open chart's
-  // symbol supplies it when it matches; otherwise mobile has nothing else to
-  // infer from (no per-cell precision map like AlertsSidebar's all-symbols
-  // mode), so fall back to 2 — same fallback AlertsSidebar uses.
+  // Precision for formatting an epic's levels: the open chart's symbol
+  // supplies it when it matches; otherwise it is inferred from the levels
+  // themselves (at least 2), as the desktop does for symbols with no open
+  // cell, so an FX level like 1.08234 does not show as 1.08.
   function precisionFor(epic: string): number {
     if (symbol && symbol.epic === epic) return symbol.pricePrecision ?? 2;
-    return 2;
+    return Math.max(2, ...rows.filter((r) => r.epic === epic).map((r) => decimalsOf(r.alert.level)));
   }
 
   function handleDelete(epic: string, alert: SavedAlert) {
@@ -151,10 +177,23 @@ export default function MobileAlertsView() {
       </div>
       <div className="m-alerts-list">
         {tab === "active" ? (
-          items.length === 0 ? (
+          items.length + accountAlerts.length + positionAlerts.length === 0 ? (
             <div className="m-alerts-empty">No active alerts.</div>
           ) : (
-            items.map((it) => {
+            <>
+            {accountAlerts.length > 0 && (
+              <>
+                <div className="m-alerts-group">Account</div>
+                {accountAlerts.map((a) => <AccountRow key={a.id} a={a} />)}
+              </>
+            )}
+            {positionAlerts.length > 0 && (
+              <>
+                <div className="m-alerts-group">Positions</div>
+                {positionAlerts.map((a) => <PositionRow key={a.id} a={a} trades={trades} />)}
+              </>
+            )}
+            {items.map((it) => {
               if (it.kind === "indicator") {
                 const a = it.alert;
                 return (
@@ -201,6 +240,7 @@ export default function MobileAlertsView() {
                     <span className="m-alerts-cond">{alertLabel(a, precision)}</span>
                   </div>
                   {a.message && <div className="m-alerts-msg">{a.message}</div>}
+                  <span className="m-alerts-trigger">{TRIGGER_LABELS[a.trigger]}</span>
                   <button
                     className="m-alerts-delete"
                     onClick={(e) => {
@@ -213,7 +253,8 @@ export default function MobileAlertsView() {
                   </button>
                 </div>
               );
-            })
+            })}
+            </>
           )
         ) : history.length === 0 ? (
           <div className="m-alerts-empty">No alerts have triggered yet.</div>
@@ -247,6 +288,85 @@ export default function MobileAlertsView() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// One account alert row: account, metric, "now" value, tier badges (fired ones
+// dimmed), Unmonitored with its reason. Tap edits, Delete confirms first.
+function AccountRow({ a }: { a: AccountAlert }) {
+  const view = accountRowView(a);
+  return (
+    <div className="m-alerts-row" onClick={() => accountAlertRequest.set({ mode: "edit", id: a.id })}>
+      <div className="m-alerts-row-main">
+        <span className="m-alerts-epic">{view.title}</span>
+        <span className="m-alerts-cond">
+          {view.metric}
+          {view.now != null && <> · now {view.now}</>}
+        </span>
+      </div>
+      {a.message && <div className="m-alerts-msg">{a.message}</div>}
+      <div className="m-alerts-badges">
+        {view.tiers.map((t) => (
+          <span key={t.level} className={`m-alerts-tier${t.fired ? " fired" : ""}`}>
+            {t.text}
+          </span>
+        ))}
+        {view.unmonitored != null && (
+          <Tooltip content={view.unmonitored}>
+            <span className="m-alerts-wait">Unmonitored</span>
+          </Tooltip>
+        )}
+      </div>
+      <button
+        className="m-alerts-delete"
+        onClick={(e) => {
+          e.stopPropagation();
+          requestConfirm({
+            message: `Delete this ${view.metric} alert on ${view.title}?`,
+            onConfirm: () => deleteAccountAlert(a.id),
+          });
+        }}
+        aria-label={`Delete alert on ${view.title}`}
+      >
+        Delete
+      </button>
+    </div>
+  );
+}
+
+// One SL/TP proximity row: `US100 long` / `SL · 0.5× ATR · now 0.8 ATR`.
+function PositionRow({ a, trades }: { a: PositionAlert; trades: { id: string; side: "buy" | "sell" }[] }) {
+  const view = positionRowView(a, trades);
+  return (
+    <div
+      className="m-alerts-row"
+      onClick={() =>
+        positionAlertRequest.set({ account: a.account, epic: a.epic, dealId: a.dealId, precision: a.precision ?? 2 })
+      }
+    >
+      <div className="m-alerts-row-main">
+        <span className="m-alerts-epic">{view.title}</span>
+        <span className="m-alerts-cond">{view.cond}</span>
+      </div>
+      {view.fired && (
+        <div className="m-alerts-badges">
+          <span className="m-alerts-tier fired">Fired</span>
+        </div>
+      )}
+      <button
+        className="m-alerts-delete"
+        onClick={(e) => {
+          e.stopPropagation();
+          requestConfirm({
+            message: `Delete this ${view.sideLabel} warning on ${a.epic}?`,
+            onConfirm: () => deletePositionAlert(a.id),
+          });
+        }}
+        aria-label={`Delete ${view.sideLabel} warning on ${a.epic}`}
+      >
+        Delete
+      </button>
     </div>
   );
 }
