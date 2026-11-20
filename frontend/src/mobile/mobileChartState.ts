@@ -216,19 +216,47 @@ export function openMobileAlert(epic: string, broker: string | undefined, precis
     title: "Switch broker?",
     message: `This alert is on ${brokerLabel(b)}. Switch from ${brokerLabel(from)} to open ${epic}?`,
     confirmLabel: "Switch",
-    onConfirm: () => {
-      alertJumpPending = true;
-      setMobileAccount(own ?? mobileAccountFor(b, accounts));
-      void showMobileEpic(epic, precision)
-        .catch(() => {})
-        .finally(() => {
-          alertJumpPending = false;
-          // The epic could not be opened: fall back to symbol search, as the
-          // boot would have.
-          if (!mobileSymbol.value) requestSymbolSearch();
-        });
-    },
+    onConfirm: () => jumpToAccount(own ?? mobileAccountFor(b, accounts), epic, precision),
   });
+}
+
+/** Switch account, then open `epic` there. A switch to another broker reboots
+ * the chart; the pending flag stops that boot from landing its own market
+ * over the jump. */
+function jumpToAccount(account: TradeAccount, epic: string, precision: number): void {
+  alertJumpPending = true;
+  setMobileAccount(account);
+  void showMobileEpic(epic, precision)
+    .catch(() => {})
+    .finally(() => {
+      alertJumpPending = false;
+      // The epic could not be opened: fall back to symbol search, as the
+      // boot would have.
+      if (!mobileSymbol.value) requestSymbolSearch();
+    });
+}
+
+/** An All accounts row's tap: the active account opens the chart at once;
+ * another account asks first, as desktop's App.openAccountPosition does. */
+export function openMobileAccountPosition(account: TradeAccount, epic: string, precision: number): void {
+  const from = mobileAccount.value;
+  if (account === from) {
+    void showMobileEpic(epic, precision);
+    return;
+  }
+  requestConfirm({
+    title: "Switch account?",
+    message: `This position is on ${accountName(account)}. Switch from ${accountName(from)} to open ${epic}?`,
+    confirmLabel: "Switch",
+    onConfirm: () => jumpToAccount(account, epic, precision),
+  });
+}
+
+function accountName(account: TradeAccount): string {
+  // Env as the Positions tab's account tabs name it: "Capital.com (demo) · Live".
+  const env = account.split(":")[1] ?? "";
+  const name = brokerLabel(brokerOf(account));
+  return env ? `${name} · ${env.charAt(0).toUpperCase()}${env.slice(1)}` : name;
 }
 
 /** The account a broker pick lands on, as desktop's tab-bar selector picks it

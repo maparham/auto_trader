@@ -33,6 +33,7 @@ import {
   isRealMoneyAccount,
   cachedBrokers,
   fetchBrokers,
+  isDataOnlyBroker,
   type BrokerAccount,
   type TradeView,
   type AccountSummary,
@@ -40,13 +41,22 @@ import {
 import { accountStats, enrichTrade, type EnrichedTrade } from "../lib/accountStats";
 import { groupPositions, type PositionGroup } from "../lib/positionGroups";
 import { loadSettings } from "../theme";
-import { mobileAccount, mobileSettingsVersion, setMobileAccount, showMobileEpic } from "./mobileChartState";
+import {
+  mobileAccount,
+  mobileSettingsVersion,
+  openMobileAccountPosition,
+  setMobileAccount,
+  showMobileEpic,
+} from "./mobileChartState";
 import { accountAlertRequest, alertsChanged, requestConfirm } from "../lib/signals";
 import { useSignalValue } from "../lib/signalHooks";
 import { isAccountMonitorable, loadAccountAlerts, METRIC_LABELS, type AccountMetric } from "../lib/alertsApi";
 import { toast } from "../lib/notify";
 import Sheet from "./Sheet";
 import HistoryPane from "../HistoryPane";
+import AllAccountsPane from "../AllAccountsPane";
+import { useAllAccounts } from "../app/useAllAccounts";
+import { dealingAccounts } from "../lib/allAccounts";
 import { PositionsHead } from "../PositionsTable";
 import {
   DEFAULT_SORT,
@@ -99,6 +109,9 @@ function rankRows(rows: EnrichedTrade[], sort: SortState, tab: TableTab, key: st
       .forEach((g, i) => rank.set(`group:${g.epic}`, i));
   return { key, rank };
 }
+
+// The view's tabs: the dock table's two, plus History and All accounts.
+type MobileTab = TableTab | "history" | "accounts";
 
 // Env tab label and risk tier, as the dock's account strip (PositionsPanel.tsx).
 function envLabel(env: string): string {
@@ -166,7 +179,7 @@ export default function MobilePositionsView() {
   const [trades, setTrades] = useState<TradeView[]>([]);
   const [summary, setSummary] = useState<AccountSummary | null>(null);
   const [selected, setSelected] = useState<TradeView | null>(null);
-  const [tab, setTab] = useState<TableTab>("positions");
+  const [tab, setTab] = useState<MobileTab>("positions");
   // Same-symbol positions fold under a roll-up header row, as in the dock.
   const [folded, setFolded] = useState<Set<string>>(() => new Set());
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
@@ -184,8 +197,6 @@ export default function MobilePositionsView() {
   );
   const account = getTradesAccount();
   const hasHistory = accountSupportsHistory(account);
-  // Switching to an account without history while its tab is open falls back.
-  const shownTab: TableTab = tab === "history" && !hasHistory ? "positions" : tab;
   // Re-render when the broker-reported history account list lands (GET /api/brokers),
   // so the History tab appears without a manual account switch.
   const [, setHistoryAccountsTick] = useState(0);
@@ -240,6 +251,24 @@ export default function MobilePositionsView() {
   const positions = trades.filter((t) => t.kind === "position");
   const orders = trades.filter((t) => t.kind === "order");
 
+  // All accounts: the dock's pane and polling. With one dealing account the
+  // tab would repeat Positions, so it needs two.
+  const allAccounts = useAllAccounts({
+    accounts,
+    active: account,
+    activePositions: positions,
+    activeSummary: summary,
+    open: tab === "accounts",
+    enabled: !isDataOnlyBroker(broker),
+  });
+  const hasAllAccounts = !isDataOnlyBroker(broker) && dealingAccounts(accounts).length >= 2;
+  // Switching to an account without history (or losing the second dealing
+  // account) while its tab is open falls back.
+  const shownTab: MobileTab =
+    (tab === "history" && !hasHistory) || (tab === "accounts" && !hasAllAccounts) ? "positions" : tab;
+  // The table's tab; only read while Positions or Orders is shown.
+  const tableTab: TableTab = shownTab === "orders" ? "orders" : "positions";
+
   const stats = accountStats({ positions, orders, summary, trading, broker, isLive: live });
   const { pnl, balance, available, accountMargin, ordersMargin, equity, marginBuffer, marginLevel, noBrokerData } = stats;
   const money = (n: number) => (noBrokerData ? "—" : `${cash(n)} ${cur}`);
@@ -268,14 +297,14 @@ export default function MobilePositionsView() {
   // of rows changes, never on a price tick: with P&L as the key a re-sort
   // under the finger would open the wrong row's detail sheet.
   const toggleSort = (key: SortKey) => setSort((s) => nextSort(s, key));
-  const unsorted = (shownTab === "positions" ? positions : orders).map(enrich);
-  const orderKey = [shownTab, sort.key, sort.dir, ...unsorted.map((r) => r.id).sort()].join("|");
-  const [order, setOrder] = useState(() => rankRows(unsorted, sort, shownTab, orderKey));
-  if (order.key !== orderKey) setOrder(rankRows(unsorted, sort, shownTab, orderKey));
+  const unsorted = (tableTab === "positions" ? positions : orders).map(enrich);
+  const orderKey = [tableTab, sort.key, sort.dir, ...unsorted.map((r) => r.id).sort()].join("|");
+  const [order, setOrder] = useState(() => rankRows(unsorted, sort, tableTab, orderKey));
+  if (order.key !== orderKey) setOrder(rankRows(unsorted, sort, tableTab, orderKey));
   const byRank = (k: string) => order.rank.get(k) ?? Number.MAX_SAFE_INTEGER;
   const rows = unsorted.sort((a, b) => byRank(a.id) - byRank(b.id));
   const groups: PositionGroup<EnrichedTrade>[] | null =
-    shownTab === "positions"
+    tableTab === "positions"
       ? groupPositions(rows).sort((a, b) => byRank(`group:${a.epic}`) - byRank(`group:${b.epic}`))
       : null;
   const toggleGroup = (epic: string) =>
@@ -341,9 +370,25 @@ export default function MobilePositionsView() {
             History
           </button>
         )}
+        {hasAllAccounts && (
+          <button className={`pp-tab${shownTab === "accounts" ? " on" : ""}`} onClick={() => setTab("accounts")}>
+            All accounts
+            {(allAccounts.count ?? 0) > 0 && <span className="pp-count">{allAccounts.count}</span>}
+          </button>
+        )}
       </nav>
 
-      {shownTab === "history" ? (
+      {shownTab === "accounts" ? (
+        <AllAccountsPane
+          data={allAccounts}
+          active={account}
+          trading={trading}
+          onOpen={(acct, epic, dealId) => {
+            const t = allAccounts.snaps[acct]?.positions?.find((p) => p.id === dealId);
+            openMobileAccountPosition(acct, epic, Math.max(2, t ? decimalsOf(t.priceLevel) : 0));
+          }}
+        />
+      ) : shownTab === "history" ? (
         <HistoryPane
           account={account}
           tips={false}
@@ -355,7 +400,7 @@ export default function MobilePositionsView() {
         <div className="pp-table-wrap">
           <table className="pp-table">
             <thead>
-              <PositionsHead tab={shownTab} sort={sort} onSort={toggleSort} tips={false} />
+              <PositionsHead tab={tableTab} sort={sort} onSort={toggleSort} tips={false} />
             </thead>
             <tbody>
               {groups == null

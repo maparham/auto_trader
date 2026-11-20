@@ -334,6 +334,15 @@ body.m-mobile {
   padding-top: 7px; margin-top: -7px;
 }
 .m-pos-view .pp-stat { align-items: flex-start; flex: 0 0 auto; }
+/* All accounts (AllAccountsPane, aa-* in App.css): the pane fills the column
+   instead of capping at a dock height, each account's figures wrap under its
+   name, and the wide position table scrolls sideways. */
+.m-pos-view .aa-pane { flex: 1; max-height: none; -webkit-overflow-scrolling: touch; }
+.m-pos-view .aa-head { flex-wrap: wrap; gap: 4px 12px; padding: 8px 10px 8px 6px; font-size: 13px; }
+.m-pos-view .aa-figs { order: 3; flex-basis: 100%; flex-wrap: wrap; gap: 4px 12px; margin-left: 22px; }
+.m-pos-view .aa-head > :last-child { margin-left: auto; }
+.m-pos-view .aa-acct { overflow-x: auto; }
+.m-pos-view .aa-table { min-width: 0; width: max-content; }
 .m-pos-detail { padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
 .m-pos-detail-row { display: flex; justify-content: space-between; font-size: 14px; color: var(--text); }
 .m-pos-chart-btn { margin-top: 8px; padding: 12px; border-radius: 8px; border: 1px solid var(--border); background: none; color: var(--text); font-size: 15px; font-weight: 600; }

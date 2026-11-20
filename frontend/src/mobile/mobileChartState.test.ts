@@ -34,6 +34,7 @@ import {
   mobileSymbol,
   mobileTabSignal,
   openMobileAlert,
+  openMobileAccountPosition,
   bootMobileMarket,
 } from "./mobileChartState";
 import { confirmRequest, symbolSearchRequest } from "../lib/signals";
@@ -110,5 +111,51 @@ describe("openMobileAlert", () => {
     await flush();
     expect(mobileSymbol.value?.epic).toBe("US500");
     expect(symbolSearchRequest.value).toBe(before);
+  });
+});
+
+describe("openMobileAccountPosition", () => {
+  beforeEach(() => {
+    accounts.exec = [
+      { key: "capital:demo", broker: "capital", env: "demo", isRealMoney: false },
+      { key: "capital:live", broker: "capital", env: "live", isRealMoney: true },
+      { key: "ig-demo:demo", broker: "ig-demo", env: "demo", isRealMoney: false },
+    ];
+    mobileAccount.set("capital:demo");
+    mobileSymbol.set(inst("DE40"));
+    mobileTabSignal.set("positions");
+    resolveInstrument.mockImplementation(async (epic: string) => inst(epic));
+    initialMarket.mockResolvedValue({ symbol: inst("HEARTBEAT"), resolution: "HOUR" });
+  });
+  afterEach(() => confirmRequest.set(null));
+
+  it("opens the active account's position at once", async () => {
+    openMobileAccountPosition("capital:demo", "US100", 2);
+    await flush();
+    expect(confirmRequest.value).toBeNull();
+    expect(mobileSymbol.value?.epic).toBe("US100");
+    expect(mobileTabSignal.value).toBe("chart");
+  });
+
+  it("asks before switching to another account of the same broker", async () => {
+    openMobileAccountPosition("capital:live", "US100", 2);
+    const req = confirmRequest.value!;
+    expect(req.title).toBe("Switch account?");
+    expect(req.confirmLabel).toBe("Switch");
+    expect(mobileAccount.value).toBe("capital:demo");
+    req.onConfirm();
+    await flush();
+    expect(mobileAccount.value).toBe("capital:live");
+    expect(mobileSymbol.value?.epic).toBe("US100");
+  });
+
+  it("lands on the epic after a switch to another broker, not the boot market", async () => {
+    openMobileAccountPosition("ig-demo:demo", "US500", 2);
+    confirmRequest.value!.onConfirm();
+    expect(mobileAccount.value).toBe("ig-demo:demo");
+    await bootMobileMarket("ig-demo");
+    await flush();
+    expect(mobileSymbol.value?.epic).toBe("US500");
+    expect(mobileTabSignal.value).toBe("chart");
   });
 });
