@@ -103,6 +103,31 @@ describe("TabBar search catalogue fallback", () => {
   // The closer runs on click, not mousedown, precisely so this works: closing
   // reflows the strip, which on mousedown would move the chip out from under
   // the cursor before its own click landed.
+  it("Enter switches to the matching tab; arrows step through matches", async () => {
+    const tabs = [
+      tab("t1", "EURUSD", "Euro / US Dollar"),
+      tab("t2", "GOLD", "Gold"),
+      tab("t3", "GOLDEUR", "Gold / Euro"),
+    ];
+    const onSelect = vi.fn();
+    const onSearchQuery = vi.fn();
+    const { view } = renderBar({ tabs, searchQuery: "gold", onSelect, onSearchQuery });
+    fireEvent.click(screen.getByLabelText("Find open symbol"));
+    const input = screen.getByPlaceholderText("Find symbol…");
+    const current = () =>
+      view.container.querySelector<HTMLElement>(".tab.search-current")?.dataset.tabId;
+    expect(current()).toBe("t2");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(current()).toBe("t3");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(current()).toBe("t2");
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    expect(current()).toBe("t3");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledWith("t3");
+    expect(onSearchQuery).toHaveBeenCalledWith("");
+  });
+
   it("clicking a tab chip selects it AND closes the search", async () => {
     const { props } = await openSearchWithQuery("eur");
     fireEvent.click(screen.getByText("EURUSD"));

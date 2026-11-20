@@ -662,6 +662,11 @@
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   outline: 1px solid var(--accent); outline-offset: -1px;
 }
+/* The match Enter opens (arrows move it). */
+.tab.search-current {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  outline-width: 2px; outline-offset: -2px;
+}
 
 /* Workspace actions in the tab bar (Backtest, split picker, theme). Compact,
    borderless, TV-style: transparent with a subtle gray rounded hover. Sized to

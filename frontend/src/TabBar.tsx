@@ -424,7 +424,12 @@ export default function TabBar({
   // A query that matches open tabs scrolls the first match into view: the
   // highlight is useless on a chip that sits off the edge of a scrolling
   // strip. In rows mode every chip is already visible, so this is a no-op.
-  const firstHit = tabs.find((t) => searchHits.has(t.id))?.id ?? null;
+  // Keyboard highlight: the dropdown row, or which matching tab Enter opens.
+  // Re-anchored to the first one on every query change (the list is new).
+  const [fallbackIdx, setFallbackIdx] = useState(0);
+  useEffect(() => setFallbackIdx(0), [searchQuery, searchOpen]);
+  const hitIds = tabs.filter((t) => searchHits.has(t.id)).map((t) => t.id);
+  const firstHit = hitIds[fallbackIdx] ?? hitIds[0] ?? null;
   useEffect(() => {
     if (firstHit == null) return;
     const bar = barRef.current;
@@ -443,11 +448,6 @@ export default function TabBar({
   const fallbackOpen =
     searchOpen && searchQuery.trim() !== "" && searchHits.size === 0;
   const fallbackHits = fallbackOpen ? catalogueMatches(catalogue, searchQuery) : [];
-  // Keyboard highlight in the dropdown; re-anchored to the top on every query
-  // change (the list under the cursor is new).
-  const [fallbackIdx, setFallbackIdx] = useState(0);
-  useEffect(() => setFallbackIdx(0), [searchQuery, searchOpen]);
-
   // An empty search lists the last visited tabs instead, newest first.
   const recentTabs =
     searchOpen && searchQuery.trim() === ""
@@ -652,6 +652,22 @@ export default function TabBar({
           onChange={(e) => onSearchQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Escape") closeSearch();
+            // Open tabs match: Enter switches to the marked one, the arrows
+            // step through the matches (wrapping).
+            if (hitIds.length > 0) {
+              const n = hitIds.length;
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setFallbackIdx((i) => (Math.min(i, n - 1) + 1) % n);
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setFallbackIdx((i) => (Math.min(i, n - 1) - 1 + n) % n);
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                if (firstHit != null) pickRecent(firstHit);
+              }
+              return;
+            }
             const rows = fallbackOpen ? fallbackHits.length : recentTabs.length;
             if (rows === 0) return;
             if (e.key === "ArrowDown") {
@@ -677,6 +693,7 @@ export default function TabBar({
         <Tooltip
           content={[
             "Find open symbol (Ctrl/Cmd+F)",
+            "Enter opens the match, ↑ / ↓ pick another",
             "Empty search lists recent tabs",
             "Back / forward: Ctrl+Option+← / →",
           ]}
@@ -883,6 +900,7 @@ export default function TabBar({
             t.id === activeId ? "on" : "",
             dragId === t.id ? "dragging" : "",
             searchHits.has(t.id) ? "search-hit" : "",
+            searchOpen && t.id === firstHit ? "search-current" : "",
           ]
             .filter(Boolean)
             .join(" ")}
