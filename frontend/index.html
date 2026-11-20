@@ -23,9 +23,11 @@
       // Show the static home page (below) instead of the app only for a
       // signed-out visitor on chartkar.app's bare "/". Runs before first paint
       // so neither view flashes. Clerk keeps a non-zero __client_uat cookie
-      // while signed in. "/?landing" forces the page for local checks.
+      // while signed in. "/?landing" forces the page for local checks. An app
+      // shell (Android ChartkarAndroid, Tauri) always boots the app itself.
       (function () {
         var l = location
+        if (window.ChartkarAndroid || window.__TAURI__) return
         var force = l.search === '?landing'
         var site = /(^|\.)chartkar\.app$/.test(l.hostname)
         var signedIn = /(?:^|;\s*)__client_uat(?:_[^=]*)?=(?!0(?:;|$))[^;]+/.test(document.cookie)
