@@ -107,7 +107,9 @@ export default function BrokerSelector({ accounts, activeBroker, onChange }: Pro
             return (
               <button
                 key={broker}
-                className={`broker-menu-item${isActive ? " active" : ""}`}
+                className={`broker-menu-item${isActive ? " active" : ""}${
+                  status[broker]?.state === "down" ? " is-down" : ""
+                }`}
                 role="menuitemradio"
                 aria-checked={isActive}
                 onClick={() => {

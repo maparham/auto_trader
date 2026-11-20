@@ -4764,6 +4764,12 @@
 .broker-status-dot.is-ok { background: var(--pos); }
 .broker-status-dot.is-down { background: var(--danger); }
 .broker-status-dot.is-unknown { border: 1.5px solid var(--text-dim); opacity: 0.7; }
+.broker-status-badge {
+  flex: none; padding: 2px 6px; border-radius: 4px;
+  font-size: 10px; font-weight: 600; line-height: 1.2; white-space: nowrap;
+  color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+.broker-menu .broker-menu-item.is-down .broker-menu-label { color: var(--text-dim); }
 .broker-status-dot.is-checking { animation: broker-status-pulse 1s ease-in-out infinite; }
 @keyframes broker-status-pulse { 50% { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) { .broker-status-dot.is-checking { animation: none; } }
