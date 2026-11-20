@@ -21,7 +21,7 @@
 //   __perf.reset()
 
 /** On in dev, and in a production build only when explicitly asked for — the
- * same convention the agent bridge uses (see CLAUDE.md). */
+ * same convention the agent bridge uses (see docs/features/agent-ui-bridge.md). */
 export const PERF_DIAG_ON =
   import.meta.env.DEV || import.meta.env.VITE_PERF_DIAG === "1";
 
