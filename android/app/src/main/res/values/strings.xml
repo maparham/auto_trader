@@ -1,0 +1,4 @@
+<resources>
+    <string name="channel_alerts">Alerts</string>
+    <string name="channel_alerts_desc">Price, indicator, account and position alerts</string>
+</resources>
