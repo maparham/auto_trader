@@ -246,6 +246,13 @@ describe("MobileAlertsView History like the desktop", () => {
     await userEvent.click(screen.getByRole("button", { name: "History" }));
   }
 
+  it("caps the unseen count at 99+", () => {
+    loadTriggeredSeen.mockReturnValue(0);
+    loadTriggered.mockReturnValue(Array.from({ length: 120 }, (_, k) => fired({ time: 1000 + k })));
+    render(<MobileAlertsView />);
+    expect(document.querySelector(".m-seg-count")?.textContent).toBe("99+");
+  });
+
   it("shows relative times", async () => {
     loadTriggered.mockReturnValue([fired()]);
     await openHistory();

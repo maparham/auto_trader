@@ -172,7 +172,7 @@ export default function MobileAlertsView() {
             onClick={() => setTab("history")}
           >
             History
-            {tab !== "history" && unseen > 0 && <span className="m-seg-count">{unseen}</span>}
+            {tab !== "history" && unseen > 0 && <span className="m-seg-count">{unseen > 99 ? "99+" : unseen}</span>}
           </button>
         </div>
         <button className="m-alerts-add" onClick={() => void handleCreate()} aria-label="Create alert">
