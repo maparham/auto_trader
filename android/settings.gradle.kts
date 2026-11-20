@@ -1,4 +1,13 @@
 pluginManagement {
+    // dl.google.com serves no plugin markers from this network; resolve the
+    // google-services plugin by its module, which the Google mirror has.
+    resolutionStrategy {
+        eachPlugin {
+            if (requested.id.id == "com.google.gms.google-services") {
+                useModule("com.google.gms:google-services:${requested.version}")
+            }
+        }
+    }
     repositories {
         google()
         mavenCentral()

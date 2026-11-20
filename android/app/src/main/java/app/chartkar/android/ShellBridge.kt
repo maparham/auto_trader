@@ -29,9 +29,21 @@ class ShellBridge(private val host: Host) {
                 "true"
             }
             "read_clipboard" -> readClipboard()
+            "fcm_token" -> fcmToken()
             else -> "null"
         }
     } catch (_: Exception) {
+        "null"
+    }
+
+    /** This device's FCM token, or null when Firebase is not set up (no
+     *  google-services.json) or Play services cannot answer in time. Blocks
+     *  the bridge's own thread, never the UI thread. */
+    private fun fcmToken(): String = try {
+        val task = com.google.firebase.messaging.FirebaseMessaging.getInstance().token
+        val token = com.google.android.gms.tasks.Tasks.await(task, 10, java.util.concurrent.TimeUnit.SECONDS)
+        if (token.isNullOrEmpty()) "null" else JSONObject.quote(token)
+    } catch (_: Throwable) {
         "null"
     }
 

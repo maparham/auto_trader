@@ -5,6 +5,13 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// FCM push needs the Firebase config (app/google-services.json, gitignored,
+// from the Firebase console). Without it the app builds and runs with push
+// off: the bridge's fcm_token answers null and nothing registers.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 // Release signing reads the upload key from android/keystore.properties
 // (gitignored; password, keyAlias, storeFile). Without it a release build is
 // left unsigned, so a checkout with no key still builds. Debug builds use the
@@ -79,5 +86,7 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("com.google.android.material:material:1.12.0")
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-messaging")
     testImplementation("junit:junit:4.13.2")
 }

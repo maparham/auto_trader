@@ -61,6 +61,37 @@ object Notifications {
         }
     }
 
+    /** An FCM alert: tap opens its page in the app; a position alert adds
+     *  its Remove SL / Remove TP button. */
+    fun postAlert(ctx: Context, note: AlertPush.Note, alertId: String) {
+        ensureChannel(ctx)
+        if (!canPost(ctx)) return
+        val id = if (alertId.isEmpty()) nextId() else AlertPush.notificationId(note.tag)
+        val b = NotificationCompat.Builder(ctx, CHANNEL_ALERTS)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(note.title)
+            .setContentText(note.body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(note.body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(openIntent(ctx, note.tapUrl, id * 2))
+        note.action?.let { b.addAction(0, it.label, openIntent(ctx, it.url, id * 2 + 1)) }
+        try {
+            NotificationManagerCompat.from(ctx).notify(id, b.build())
+        } catch (_: SecurityException) {
+            // Permission revoked between the check and the post.
+        }
+    }
+
+    private fun openIntent(ctx: Context, url: String, requestCode: Int): PendingIntent {
+        val open = Intent(ctx, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .putExtra(MainActivity.EXTRA_OPEN_URL, url)
+        return PendingIntent.getActivity(
+            ctx, requestCode, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
     private var counter = 0
     @Synchronized
     private fun nextId(): Int = (System.currentTimeMillis() / 1000).toInt() * 16 + (counter++ and 15)

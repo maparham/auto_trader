@@ -40,3 +40,23 @@ updates the installed Tauri app in place: same id, same keys.
 
 Gradle repositories are settings-only on purpose:
 `~/.gradle/init.d/google-maven-mirror.gradle` adds its Google mirror there.
+
+## Push (FCM)
+
+The backend sends every alert fire to the app as a data-only FCM message
+(`backend/auto_trader/core/fcm_notify.py`); `ChartkarMessagingService` shows
+it on the "Alerts" channel. A tap opens the alert's chart
+(`?alertEpic=`); a position alert's Remove SL / Remove TP opens
+`?removeLevel=<token>`, where the page asks first
+(`frontend/src/lib/appPush.ts`). The page sends this phone's token to
+`/api/alerts/fcm/register` on every boot (bridge command `fcm_token`).
+
+Push stays off until Firebase is set up:
+
+1. Firebase console: create a project, add Android apps
+   `app.chartkar.android` and `app.chartkar.android.dev`, and download
+   `google-services.json` into `android/app/` (gitignored).
+2. Project settings > Service accounts > Generate new private key. Put the
+   JSON on the API host and set `FCM_SERVICE_ACCOUNT_FILE=/path/to/it`.
+3. Hosted API (Iran VPS): add `fcm.googleapis.com` and
+   `oauth2.googleapis.com` to the claude-gateway Xray allowlist.
