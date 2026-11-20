@@ -3,9 +3,21 @@
 // before switching account). Data and polling come from app/useAllAccounts.
 import { useEffect, useRef, useState } from "react";
 import Tooltip from "./components/Tooltip";
+import { PositionsHead } from "./PositionsTable";
 import type { AllAccountsData } from "./app/useAllAccounts";
-import { orderSections, sectionFigures, slTpDistancePct } from "./lib/allAccounts";
-import { pnlClass } from "./lib/positionsTable";
+import { orderSections, sectionFigures } from "./lib/allAccounts";
+import { enrichTrade, type EnrichedTrade } from "./lib/accountStats";
+import { groupPositions } from "./lib/positionGroups";
+import {
+  DEFAULT_SORT,
+  groupCells,
+  nextSort,
+  pnlClass,
+  positionCells,
+  sortCompare,
+  type SortKey,
+  type SortState,
+} from "./lib/positionsTable";
 import { brokerLabel, type BrokerAccount, type TradeAccount, type TradeView } from "./lib/trading";
 import type { TradingSettings } from "./theme";
 
@@ -18,10 +30,8 @@ interface Props {
 
 const decimalsOf = (n: number | null | undefined) =>
   n == null ? 0 : Math.min(6, (String(n).split(".")[1] ?? "").length);
-const price = (n: number | null | undefined, d: number) => (n == null ? "-" : n.toFixed(d));
 const money = (n: number | null) =>
   n == null ? "-" : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const pct = (label: string, n: number | null) => (n == null ? "-" : `${label} ${n.toFixed(1)}%`);
 
 function ago(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -33,6 +43,9 @@ export default function AllAccountsPane({ data, active, trading, onOpen }: Props
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const decided = useRef(new Set<string>());
   const [showHidden, setShowHidden] = useState(false);
+  // One sort for every account's table, as in the Positions tab.
+  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
+  const onSort = (key: SortKey) => setSort((s) => nextSort(s, key));
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 5_000);
@@ -77,6 +90,8 @@ export default function AllAccountsPane({ data, active, trading, onOpen }: Props
           onToggle={() => toggle(a.key)}
           trading={trading}
           onOpen={onOpen}
+          sort={sort}
+          onSort={onSort}
         />
       ))}
       {data.hidden.length > 0 && (
@@ -109,6 +124,8 @@ function AccountSection({
   onToggle,
   trading,
   onOpen,
+  sort,
+  onSort,
 }: {
   acct: BrokerAccount;
   data: AllAccountsData;
@@ -117,7 +134,17 @@ function AccountSection({
   onToggle: () => void;
   trading: TradingSettings;
   onOpen: Props["onOpen"];
+  sort: SortState;
+  onSort: (key: SortKey) => void;
 }) {
+  const [folded, setFolded] = useState<Set<string>>(() => new Set());
+  const toggleGroup = (epic: string) =>
+    setFolded((s) => {
+      const next = new Set(s);
+      if (next.has(epic)) next.delete(epic);
+      else next.add(epic);
+      return next;
+    });
   const snap = data.snaps[acct.key];
   const name = brokerLabel(acct.broker);
   const positions = snap?.positions ?? [];
@@ -152,50 +179,108 @@ function AccountSection({
         ) : positions.length === 0 ? (
           <div className="pp-empty">No open positions</div>
         ) : (
-          <table className="pp-table aa-table">
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th>Side</th>
-                <th className="pp-c-num">Size</th>
-                <th className="pp-c-num">Entry</th>
-                <th className="pp-c-num">Price</th>
-                <th className="pp-c-num">P&amp;L</th>
-                <th className="pp-c-num">SL</th>
-                <th className="pp-c-num">TP</th>
-                <th className="pp-c-num">To SL</th>
-                <th className="pp-c-num">To TP</th>
-              </tr>
-            </thead>
-            <tbody>
-              {positions.map((t) => (
-                <Row key={t.id} t={t} onClick={() => onOpen(acct.key, t.epic, t.id)} />
-              ))}
-            </tbody>
-          </table>
+          <PositionsTable
+            positions={positions}
+            trading={trading}
+            sort={sort}
+            onSort={onSort}
+            folded={folded}
+            onToggleGroup={toggleGroup}
+            onOpen={(t) => onOpen(acct.key, t.epic, t.id)}
+          />
         ))}
     </section>
   );
 }
 
-function Row({ t, onClick }: { t: TradeView; onClick: () => void }) {
-  // The other broker's market precision is unknown here: use the most decimals
-  // any of the row's prices carries.
-  const d = Math.max(decimalsOf(t.priceLevel), decimalsOf(t.mark), decimalsOf(t.stop), decimalsOf(t.takeProfit));
-  const dist = slTpDistancePct(t);
+// The broker's own figures throughout: the chart price cache belongs to the
+// active broker, so P&L is the broker's and "Last" is its mark.
+const brokerFigures = (trading: TradingSettings) => ({
+  lev: trading.defaultLeverage > 0 ? trading.defaultLeverage : 1,
+  liveUpnl: (t: TradeView) => t.upnl,
+});
+
+// Another broker's market precision is unknown here: use the most decimals any
+// of the rows' prices carries.
+function levelFormat(rows: TradeView[]): (n: number | null) => string {
+  const d = Math.max(0, ...rows.flatMap((t) => [t.priceLevel, t.mark, t.stop, t.takeProfit].map(decimalsOf)));
+  return (n) => (n == null ? "—" : n.toFixed(d));
+}
+
+// The Positions tab's table, read-only: same columns, cells, sort and symbol groups.
+function PositionsTable({
+  positions,
+  trading,
+  sort,
+  onSort,
+  folded,
+  onToggleGroup,
+  onOpen,
+}: {
+  positions: TradeView[];
+  trading: TradingSettings;
+  sort: SortState;
+  onSort: (key: SortKey) => void;
+  folded: Set<string>;
+  onToggleGroup: (epic: string) => void;
+  onOpen: (t: TradeView) => void;
+}) {
+  const stats = brokerFigures(trading);
+  const compare = sortCompare(sort);
+  const rows = positions.map((t) => enrichTrade(t, stats, true, () => undefined)).sort(compare);
+  const groups = groupPositions(rows).sort(compare);
+  const row = (t: EnrichedTrade, inGroup: boolean) => (
+    <Tooltip key={t.id} asChild content="Click: open this position.">
+      <tr
+        className={`pp-row pp-dir-${t.side === "buy" ? "long" : "short"}${inGroup ? " pp-member" : ""}`}
+        onClick={() => onOpen(t)}
+      >
+        {positionCells(t, levelFormat([t]))}
+      </tr>
+    </Tooltip>
+  );
   return (
-    <tr className={`pp-row pp-dir-${t.side === "buy" ? "long" : "short"}`} onClick={onClick}>
-      <td className="pp-c-sym">{t.epic}</td>
-      <td>{t.side === "buy" ? "Buy" : "Sell"}</td>
-      <td className="pp-c-num">{t.quantity}</td>
-      <td className="pp-c-num">{price(t.priceLevel, d)}</td>
-      <td className="pp-c-num">{price(t.mark, d)}</td>
-      <td className={`pp-c-num ${pnlClass(t.upnl)}`}>{money(t.upnl)}</td>
-      <td className="pp-c-num">{price(t.stop, d)}</td>
-      <td className="pp-c-num">{price(t.takeProfit, d)}</td>
-      <td className="pp-c-num">{pct("SL", dist.sl)}</td>
-      <td className="pp-c-num">{pct("TP", dist.tp)}</td>
-    </tr>
+    <table className="pp-table aa-table">
+      <thead>
+        <PositionsHead tab="positions" sort={sort} onSort={onSort} />
+      </thead>
+      <tbody>
+        {groups.flatMap((g) => {
+          if (g.positions.length < 2) return g.positions.map((t) => row(t, false));
+          const isFolded = folded.has(g.epic);
+          const dir = g.side === "buy" ? "long" : g.side === "sell" ? "short" : "mixed";
+          const header = (
+            <Tooltip key={`group:${g.epic}`} asChild content={isFolded ? "Click to show positions" : "Click to hide positions"}>
+              <tr
+                className={`pp-row pp-group pp-dir-${dir}${isFolded ? " pp-folded" : ""}`}
+                onClick={() => onToggleGroup(g.epic)}
+              >
+                {groupCells(
+                  g,
+                  <td className="pp-c-sym">
+                    <button
+                      className="pp-group-toggle"
+                      aria-expanded={!isFolded}
+                      aria-label={isFolded ? "Show positions" : "Hide positions"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleGroup(g.epic);
+                      }}
+                    >
+                      <span className="pp-group-chevron" aria-hidden="true">›</span>
+                    </button>
+                    {g.epic}
+                    <span className="pp-group-count">{g.positions.length}</span>
+                  </td>,
+                  levelFormat(g.positions),
+                )}
+              </tr>
+            </Tooltip>
+          );
+          return isFolded ? [header] : [header, ...g.positions.map((t) => row(t, true))];
+        })}
+      </tbody>
+    </table>
   );
 }
 

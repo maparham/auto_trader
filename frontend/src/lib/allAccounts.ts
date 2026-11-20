@@ -107,14 +107,6 @@ export function sectionFigures(
   return { pnl: s.pnl, equity: s.equity, marginLevel: s.marginLevel, currency: snap.summary.currency };
 }
 
-/** Distance from the current price to SL and TP, in percent of the price. */
-export function slTpDistancePct(t: TradeView): { sl: number | null; tp: number | null } {
-  const mark = t.mark;
-  const dist = (level: number | null) =>
-    mark == null || mark === 0 || level == null ? null : (Math.abs(level - mark) / mark) * 100;
-  return { sl: dist(t.stop), tp: dist(t.takeProfit) };
-}
-
 const HIDDEN_KEY = `${PREFIX}.allAccounts.hidden`;
 
 export function loadHiddenAccounts(): string[] {

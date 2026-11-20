@@ -71,7 +71,7 @@ describe("AllAccountsPane", () => {
     expect(within(demo).getByText("No open positions")).toBeTruthy();
   });
 
-  it("shows the row values, SL/TP distance and dashes for missing values", () => {
+  it("shows the Positions tab's columns and dashes for missing values", () => {
     mount(
       data({
         snaps: {
@@ -81,13 +81,29 @@ describe("AllAccountsPane", () => {
         },
       }),
     );
-    const row = within(section("ig-live:live")).getByText("US100").closest("tr")!;
+    const s = section("ig-live:live");
+    for (const h of ["Symbol", "Side", "Qty", "P&L", "Avg fill", "TP", "SL", "Last", "Lev", "Margin", "Time"]) {
+      expect(within(s).getByRole("button", { name: h })).toBeTruthy();
+    }
+    const row = within(s).getByText("US100").closest("tr")!;
     const text = row.textContent!;
-    expect(text).toContain("Buy");
+    expect(text).toContain("Long");
     expect(text).toContain("100.5");
-    expect(text).toContain("12.50");
-    expect(text).toContain("SL 0.4%");
-    expect(within(row).getAllByText("-").length).toBeGreaterThanOrEqual(2); // TP level and TP distance
+    expect(text).toContain("+12.50");
+    expect(text).toContain("99.6");
+    expect(within(row).getAllByText("—").length).toBeGreaterThanOrEqual(2); // TP level and time
+  });
+
+  it("groups several positions of one symbol under a fold row", () => {
+    mount(
+      data({
+        snaps: { "ig-live:live": snap("ig-live:live", { positions: [pos("D1"), pos("D2", { upnl: 1 })] }) },
+      }),
+    );
+    const s = section("ig-live:live");
+    expect(within(s).getAllByText("US100").length).toBe(3);
+    fireEvent.click(within(s).getByRole("button", { name: "Hide positions" }));
+    expect(within(s).getAllByText("US100").length).toBe(1);
   });
 
   it("shows an account's error with its last positions", () => {
@@ -139,6 +155,7 @@ describe("AllAccountsPane", () => {
     const row = within(section("ig-live:live")).getByText("US100").closest("tr")!;
     expect(row.textContent).toContain("18001.37");
     expect(row.textContent).toContain("18000.00");
+    expect(row.textContent).toContain("17950.00");
   });
 
   it("says not loaded, not empty, for an account that never loaded", () => {

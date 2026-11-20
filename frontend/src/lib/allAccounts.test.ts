@@ -17,7 +17,6 @@ import {
   otherOpenCount,
   saveHiddenAccounts,
   sectionFigures,
-  slTpDistancePct,
   visibleAndHidden,
   waitForTrade,
   type AccountSnapshot,
@@ -135,19 +134,6 @@ describe("orderSections", () => {
       "ig-demo:demo",
       "capital:demo",
     ]);
-  });
-});
-
-describe("slTpDistancePct", () => {
-  it("gives the absolute percent of the mark", () => {
-    const d = slTpDistancePct(pos("a", { mark: 100, stop: 99.6, takeProfit: 102 }));
-    expect(d.sl).toBeCloseTo(0.4);
-    expect(d.tp).toBeCloseTo(2);
-  });
-  it("is null with no mark, a zero mark or no level", () => {
-    expect(slTpDistancePct(pos("a", { mark: null, stop: 99 }))).toEqual({ sl: null, tp: null });
-    expect(slTpDistancePct(pos("a", { mark: 0, stop: 99 }))).toEqual({ sl: null, tp: null });
-    expect(slTpDistancePct(pos("a", { mark: 100, stop: 99 })).tp).toBeNull();
   });
 });
 
