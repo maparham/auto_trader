@@ -253,19 +253,20 @@ export default function MobilePositionsView() {
 
   // All accounts: the dock's pane and polling. With one dealing account the
   // tab would repeat Positions, so it needs two.
-  const allAccounts = useAllAccounts({
-    accounts,
-    active: account,
-    activePositions: positions,
-    activeSummary: summary,
-    open: tab === "accounts",
-    enabled: !isDataOnlyBroker(broker),
-  });
   const hasAllAccounts = !isDataOnlyBroker(broker) && dealingAccounts(accounts).length >= 2;
   // Switching to an account without history (or losing the second dealing
   // account) while its tab is open falls back.
   const shownTab: MobileTab =
     (tab === "history" && !hasHistory) || (tab === "accounts" && !hasAllAccounts) ? "positions" : tab;
+  // No tab, no polling; the fast rate only while the tab is on screen.
+  const allAccounts = useAllAccounts({
+    accounts,
+    active: account,
+    activePositions: positions,
+    activeSummary: summary,
+    open: shownTab === "accounts",
+    enabled: hasAllAccounts,
+  });
   // The table's tab; only read while Positions or Orders is shown.
   const tableTab: TableTab = shownTab === "orders" ? "orders" : "positions";
 

@@ -77,6 +77,7 @@ describe("MobilePositionsView All accounts tab", () => {
     render(<MobilePositionsView />);
     await waitFor(() => expect(hookArgs.last).not.toBeNull());
     expect(screen.queryByRole("button", { name: /^All accounts/ })).toBeNull();
+    expect(hookArgs.last?.enabled).toBe(false);
   });
 
   it("shows the count, polls fast only while open, and opens a tapped row", async () => {
