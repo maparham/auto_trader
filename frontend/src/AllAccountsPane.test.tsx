@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import AllAccountsPane from "./AllAccountsPane";
 import type { AllAccountsData } from "./app/useAllAccounts";
 import type { AccountSnapshot } from "./lib/allAccounts";
@@ -104,6 +104,28 @@ describe("AllAccountsPane", () => {
     expect(within(s).getAllByText("US100").length).toBe(3);
     fireEvent.click(within(s).getByRole("button", { name: "Hide positions" }));
     expect(within(s).getAllByText("US100").length).toBe(1);
+  });
+
+  it("drops row and header tooltips with tips off", () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <AllAccountsPane
+          data={data({ snaps: { "ig-live:live": snap("ig-live:live", { positions: [pos("D1")] }) } })}
+          active="capital:demo"
+          trading={DEFAULT_SETTINGS.trading}
+          onOpen={vi.fn()}
+          tips={false}
+        />,
+      );
+      const s = section("ig-live:live");
+      fireEvent.mouseEnter(within(s).getByText("US100").closest("tr")!);
+      fireEvent.mouseEnter(within(s).getByRole("button", { name: "Qty" }));
+      act(() => vi.advanceTimersByTime(500));
+      expect(screen.queryByRole("tooltip")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows an account's error with its last positions", () => {

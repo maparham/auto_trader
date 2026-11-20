@@ -384,6 +384,7 @@ export default function MobilePositionsView() {
           data={allAccounts}
           active={account}
           trading={trading}
+          tips={false}
           onOpen={(acct, epic, dealId) => {
             const t = allAccounts.snaps[acct]?.positions?.find((p) => p.id === dealId);
             openMobileAccountPosition(acct, epic, Math.max(2, t ? decimalsOf(t.priceLevel) : 0));

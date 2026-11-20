@@ -26,6 +26,8 @@ interface Props {
   active: TradeAccount;
   trading: TradingSettings;
   onOpen: (account: TradeAccount, epic: string, dealId: string) => void;
+  /** Off on the phone: a tap would open a row or header tooltip with the tap's action. */
+  tips?: boolean;
 }
 
 const decimalsOf = (n: number | null | undefined) =>
@@ -38,7 +40,7 @@ function ago(ms: number): string {
   return s < 60 ? `Updated ${s} s ago` : `Updated ${Math.floor(s / 60)} min ago`;
 }
 
-export default function AllAccountsPane({ data, active, trading, onOpen }: Props) {
+export default function AllAccountsPane({ data, active, trading, onOpen, tips = true }: Props) {
   // Expanded per account: decided when its positions first load, then the user's.
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const decided = useRef(new Set<string>());
@@ -92,6 +94,7 @@ export default function AllAccountsPane({ data, active, trading, onOpen }: Props
           onOpen={onOpen}
           sort={sort}
           onSort={onSort}
+          tips={tips}
         />
       ))}
       {data.hidden.length > 0 && (
@@ -126,6 +129,7 @@ function AccountSection({
   onOpen,
   sort,
   onSort,
+  tips,
 }: {
   acct: BrokerAccount;
   data: AllAccountsData;
@@ -136,6 +140,7 @@ function AccountSection({
   onOpen: Props["onOpen"];
   sort: SortState;
   onSort: (key: SortKey) => void;
+  tips: boolean;
 }) {
   const [folded, setFolded] = useState<Set<string>>(() => new Set());
   const toggleGroup = (epic: string) =>
@@ -187,6 +192,7 @@ function AccountSection({
             folded={folded}
             onToggleGroup={toggleGroup}
             onOpen={(t) => onOpen(acct.key, t.epic, t.id)}
+            tips={tips}
           />
         ))}
     </section>
@@ -216,6 +222,7 @@ function PositionsTable({
   folded,
   onToggleGroup,
   onOpen,
+  tips,
 }: {
   positions: TradeView[];
   trading: TradingSettings;
@@ -224,25 +231,26 @@ function PositionsTable({
   folded: Set<string>;
   onToggleGroup: (epic: string) => void;
   onOpen: (t: TradeView) => void;
+  tips: boolean;
 }) {
   const stats = brokerFigures(trading);
   const compare = sortCompare(sort);
   const rows = positions.map((t) => enrichTrade(t, stats, true, () => undefined)).sort(compare);
   const groups = groupPositions(rows).sort(compare);
   const row = (t: EnrichedTrade, inGroup: boolean) => (
-    <Tooltip key={t.id} asChild content="Click: open this position.">
+    <Tooltip key={t.id} asChild content={tips ? "Click: open this position." : undefined}>
       <tr
         className={`pp-row pp-dir-${t.side === "buy" ? "long" : "short"}${inGroup ? " pp-member" : ""}`}
         onClick={() => onOpen(t)}
       >
-        {positionCells(t, levelFormat([t]))}
+        {positionCells(t, levelFormat([t]), { tips })}
       </tr>
     </Tooltip>
   );
   return (
     <table className="pp-table aa-table">
       <thead>
-        <PositionsHead tab="positions" sort={sort} onSort={onSort} />
+        <PositionsHead tab="positions" sort={sort} onSort={onSort} tips={tips} />
       </thead>
       <tbody>
         {groups.flatMap((g) => {
@@ -250,7 +258,7 @@ function PositionsTable({
           const isFolded = folded.has(g.epic);
           const dir = g.side === "buy" ? "long" : g.side === "sell" ? "short" : "mixed";
           const header = (
-            <Tooltip key={`group:${g.epic}`} asChild content={isFolded ? "Click to show positions" : "Click to hide positions"}>
+            <Tooltip key={`group:${g.epic}`} asChild content={!tips ? undefined : isFolded ? "Click to show positions" : "Click to hide positions"}>
               <tr
                 className={`pp-row pp-group pp-dir-${dir}${isFolded ? " pp-folded" : ""}`}
                 onClick={() => onToggleGroup(g.epic)}
