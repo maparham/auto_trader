@@ -13,6 +13,7 @@ from typing import Any
 
 from auto_trader.core.alert_bars import candle_ms
 from auto_trader.core.candle_aggregate import resolution_seconds
+from auto_trader.core.line_level import line_level
 from auto_trader.core.models import Candle
 from auto_trader.indicators.alert_specs import ALERT_SPECS
 from auto_trader.indicators.registry import SERIES_INDICATORS
@@ -27,12 +28,15 @@ class IndicatorKey:
     config: str = ""             # config_json of the parsed config
     output: str = "value"
     bar_hours: float = 0.0
-    calc: tuple[float, ...] = ()  # LINE only: (tRef, pRef, slope)
+    calc: tuple[float, ...] = ()  # LINE only: (tRef, pRef, slope), plus 1.0 for a log line
 
 
-def line_key(t_ref: int, p_ref: float, slope: float) -> IndicatorKey:
-    """The hub need for a `line` alert: a straight line in bars from tRef."""
-    return IndicatorKey("LINE", calc=(float(t_ref), float(p_ref), float(slope)))
+def line_key(t_ref: int, p_ref: float, slope: float, log: bool = False) -> IndicatorKey:
+    """The hub need for a `line` alert: a straight line in bars from tRef (in
+    ln price for a Log Scale line, see line_level). A linear line keeps the
+    3-tuple, so its key is unchanged."""
+    calc = (float(t_ref), float(p_ref), float(slope))
+    return IndicatorKey("LINE", calc=calc + (1.0,) if log else calc)
 
 
 def config_json(cfg: Any) -> str:
@@ -89,13 +93,14 @@ def key_of(params: dict) -> IndicatorKey:
 
 def compute(key: IndicatorKey, candles: Sequence[Candle]) -> dict[str, list[float | None]]:
     if key.indicator == "LINE":
-        t_ref, p_ref, slope = key.calc
+        t_ref, p_ref, slope = key.calc[:3]
+        log = len(key.calc) > 3 and key.calc[3] == 1.0
         times = [candle_ms(c) for c in candles]
         try:
             j = times.index(int(t_ref))
         except ValueError:
             return {"value": [None] * len(candles)}
-        return {"value": [None if k < j else p_ref + slope * (k - j) for k in range(len(candles))]}
+        return {"value": [None if k < j else line_level(p_ref, slope, k - j, log) for k in range(len(candles))]}
     cfg = config_of(key.indicator, key.config)
     side = ALERT_SPECS[key.indicator].side_series
     if side is not None:

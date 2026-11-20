@@ -17,7 +17,7 @@ import {
 import { MAX_MAX_LINES, parseTrendlinesConfig, type TrendlinesConfig } from "./trendlinesOutputs";
 import { runDebugAsync, type DebugRunInput } from "./trendlinesDebug";
 import { explain, type DebugCandidate, type Verdict } from "./trendlinesDebugExplain";
-import { forcedPairsFor, lookup, targetToIdx, type SimLimits, type TargetLine } from "./trendlinesDebugLookup";
+import { forcedPairsFor, lookup, targetInSpace, type SimLimits, type TargetLine } from "./trendlinesDebugLookup";
 
 export interface SettingChange {
   field: keyof TrendlinesConfig;
@@ -142,10 +142,8 @@ export async function findFix(
   const times = (base.starts ?? base.bars.map((b) => b.timestamp)).slice(0, base.evalIdx + 1);
   // Under a pin (starts set) the compute bars are not the chart's: a point
   // snaps to the bar CONTAINING it, not the nearest bar start.
-  const tgt = targetToIdx(times, target, base.starts ? "containing" : "nearest");
+  const { tgt, highs, lows } = targetInSpace(times, target, base.starts ? "containing" : "nearest", base.bars, base.cfg);
   if ("error" in tgt) return { changes: [], covered: false, viaKey: null, blockers: [], attempted: [], error: tgt.error };
-  const highs = base.bars.map((b) => b.high);
-  const lows = base.bars.map((b) => b.low);
   const applied = new Map<keyof TrendlinesConfig, SettingChange>();
   let cfg = base.cfg;
   let blockers: Verdict[] = [];

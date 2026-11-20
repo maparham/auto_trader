@@ -168,6 +168,11 @@ export interface TrendlinesConfig {
   // Max lines per pivot ranks the levels at each bar by STRENGTH (rankLines)
   // instead of the walk order (nearest first): 0 = nearest, 1 = strongest.
   pivotStrong: number;
+  // Log Scale: 1 runs the detector on ln prices (tlLogMath.ts), so a line is
+  // straight on a logarithmic price axis and every ATR setting reads as a
+  // share of price. The percent settings become a fixed log band. Outputs are
+  // prices again (tlExp). 0 = linear prices, as before.
+  logScale: number;
 }
 
 /** KEY ORDER IS THE calcParams ORDER (mtfCoordinator builds HTF params from
@@ -207,6 +212,7 @@ export const TRENDLINES_DEFAULTS: TrendlinesConfig = {
   fanPct: 0,
   fanKeep: 0,
   pivotStrong: 0,
+  logScale: 0,
 };
 
 /** Balanced: the recipe 12 of the 33 hand-tuned 1D/1W panes on chartkar.app
@@ -308,7 +314,8 @@ export const TRENDLINES_EXTEND_DEFAULTS = {
  * maxSpanBars, maxSlopeAtr, minSlopeAtr, maxTouchSpacing, minTouchSpacing,
  * minCrossings, maxCrossings, pierceMult, minBackBars, maxDistAtr,
  * maxDistPct, mergeAtr, maxPerPivot, mergePct, majorPivots, majorLen,
- * majorSizeAtr, lookbackBars, extendLeft, fanAtr, fanPct, fanKeep, pivotStrong]. Mirrored by backend parse_trendlines_config.
+ * majorSizeAtr, lookbackBars, extendLeft, fanAtr, fanPct, fanKeep, pivotStrong,
+ * logScale]. Mirrored by backend parse_trendlines_config.
  *
  * `extendData` is read ONLY to migrate panes saved before slots 19 to 22
  * existed, and only while the slot in question is ABSENT (a present slot, 0
@@ -390,6 +397,7 @@ export function parseTrendlinesConfig(
     fanPct: numAt(30, d.fanPct, true),
     fanKeep: Math.min(1, zeroInt(31, d.fanKeep)),
     pivotStrong: Math.min(1, zeroInt(32, d.pivotStrong)),
+    logScale: Math.min(1, zeroInt(33, d.logScale)),
   };
 }
 
@@ -400,7 +408,7 @@ const TL_SLOT_KEYS: ReadonlyArray<keyof TrendlinesConfig> = [
   "maxSlopeAtr", "minSlopeAtr", "maxTouchSpacing", "minTouchSpacing", "minCrossings",
   "maxCrossings", "pierceMult", "minBackBars", "maxDistAtr", "maxDistPct", "mergeAtr",
   "maxPerPivot", "mergePct", "majorPivots", "majorLen", "majorSizeAtr", "lookbackBars",
-  "extendLeft", "fanAtr", "fanPct", "fanKeep", "pivotStrong",
+  "extendLeft", "fanAtr", "fanPct", "fanKeep", "pivotStrong", "logScale",
 ];
 
 /** Every slot, resolved (legacy extendData migrations included): what an

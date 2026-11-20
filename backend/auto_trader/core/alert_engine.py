@@ -38,6 +38,7 @@ import logging
 import time
 from typing import Any, Awaitable, Callable
 
+from auto_trader.core.line_level import line_level
 from auto_trader.core import timeframe as _tf
 from auto_trader.core.alert_bars import Sample, candle_ms, period_start
 from auto_trader.core.alert_eval import Pair, evaluate_alert
@@ -954,7 +955,7 @@ class AlertEngine:
     async def _apply_line_rebase(self, user_id: str, row: dict, last: Candle, n: int) -> None:
         p = row["params"]
         assert self._store is not None and self._broadcast is not None
-        patch = {"tRef": candle_ms(last), "pRef": p["pRef"] + p["slope"] * n}
+        patch = {"tRef": candle_ms(last), "pRef": line_level(p["pRef"], p["slope"], n, p.get("log") is True)}
         saved = await self._store.update(user_id, row["id"], {"params": patch})
         if saved is None:
             return

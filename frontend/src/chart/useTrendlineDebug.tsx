@@ -8,7 +8,7 @@ import type { OverlayManager } from "../lib/overlays";
 import { applyTrendlinesTimeframe } from "../lib/mtfCoordinator";
 import { loadIndicatorConfigs, saveIndicatorConfig } from "../lib/persist";
 import { parseTrendlinesConfig, type TrendlinesConfig } from "../lib/indicators/trendlinesOutputs";
-import type { TrendlinesExtend } from "../lib/indicators/trendlines";
+import { tlPrice, type TrendlinesExtend } from "../lib/indicators/trendlines";
 import { findTrendlineSegment, type TrendlineHit } from "../lib/indicators/trendlineMarks";
 import {
   cycleDebugGroup, debugLookup, debugState, debugTarget, resetDebug, setDebugSim, setDebugTarget, subscribeDebugAny,
@@ -199,7 +199,8 @@ export function useTrendlineDebug({ chartRef, containerRef, overlays, scope, epi
       setFixBusy(false);
       return;
     }
-    findFix(input, { t1, p1: cand.line.p1, t2, p2: cand.line.p2 }, sim, ctl.signal)
+    // The target is in chart prices; the line's anchors are detector-space.
+    findFix(input, { t1, p1: tlPrice(input.cfg, cand.line.p1), t2, p2: tlPrice(input.cfg, cand.line.p2) }, sim, ctl.signal)
       .then((r) => {
         if (ctl.signal.aborted) return;
         setFix(r);

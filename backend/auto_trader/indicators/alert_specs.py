@@ -12,7 +12,7 @@ from auto_trader.core.alert_bars import candle_ms
 from auto_trader.core.models import Candle
 from auto_trader.indicators.candle_patterns_pane import PATTERN_LABELS
 from auto_trader.indicators.registry import SERIES_INDICATORS
-from auto_trader.indicators.trendlines import TL_NEAREST, TrendLine, compute_trendlines, project_at
+from auto_trader.indicators.trendlines import TL_NEAREST, TrendLine, compute_trendlines, project_at, tl_price
 
 EVENT_LEVEL = 0.5  # a 0/1 event crosses up through this on the bar it fires
 
@@ -119,6 +119,15 @@ _ATR = AlertSpec(
 # ---- TRENDLINES (nearest line only, see plan ruling 7) ----
 
 
+def _tl_step(cfg: Any, ln: TrendLine, i: int) -> float:
+    """The line's price change from bar i to bar i + 1: its slope, or under
+    Log Scale (p1/p2 are ln prices) the step to the next bar's projection, so
+    value + slope is still the line one bar on."""
+    if cfg.log_scale != 1:
+        return (ln.p2 - ln.p1) / (ln.i2 - ln.i1)
+    return tl_price(cfg, project_at(ln, i + 1)) - tl_price(cfg, project_at(ln, i))
+
+
 def _tl_side(cfg: Any, output: str, candles: Sequence[Candle]) -> dict[str, list[float | None]]:
     """value: the nearest line at bar i. held: the line nearest at bar i-1,
     projected to bar i (a close-mode cross is judged against it). slope /
@@ -131,11 +140,11 @@ def _tl_side(cfg: Any, output: str, candles: Sequence[Candle]) -> dict[str, list
     for i in range(1, n):
         prev = nearest[i - 1]
         if prev is not None:
-            held[i] = project_at(prev, i)
+            held[i] = tl_price(cfg, project_at(prev, i))
     return {
         "value": [p.get(TL_NEAREST) for p in points],
         "held": held,
-        "slope": [None if ln is None else (ln.p2 - ln.p1) / (ln.i2 - ln.i1) for ln in nearest],
+        "slope": [None if ln is None else _tl_step(cfg, ln, i) for i, ln in enumerate(nearest)],
         "a1": [None if ln is None else float(candle_ms(candles[ln.i1])) for ln in nearest],
         "a2": [None if ln is None else float(candle_ms(candles[ln.i2])) for ln in nearest],
     }

@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Sequence
 
+from auto_trader.core.line_level import line_level
 from auto_trader.core.candle_aggregate import resolution_seconds
 from auto_trader.core.timeframe import is_native
 from auto_trader.strategy.expr.tfs import tf_resolution
@@ -42,6 +43,7 @@ class PickedLine:
     slope: float
     tRef: int
     pRef: float
+    log: bool = False  # Log Scale: slope in ln per bar (core.line_level)
 
 
 def _canonical_native(tf: str) -> str | None:
@@ -64,6 +66,7 @@ def parse_lines(raw: dict[str, dict] | None) -> dict[str, PickedLine]:
                 epic=str(d["epic"]), broker=str(d["broker"]), timeframe=str(d["timeframe"]),
                 t1=int(d["t1"]), p1=float(d["p1"]), t2=int(d["t2"]), p2=float(d["p2"]),
                 slope=float(d["slope"]), tRef=int(d["tRef"]), pRef=float(d["pRef"]),
+                log=d.get("log") is True,
             )
         except (KeyError, TypeError, ValueError):
             raise LineSpecError("bad_line", f"{lid} is missing part of its geometry.") from None
@@ -97,7 +100,7 @@ def line_series(line: PickedLine | None, candles: Sequence) -> list[float | None
         if jr >= n or line.tRef < times[0]:
             return [None] * n                   # no anchor inside: the rebase pre-pass failed
         j, q = jr, line.pRef
-    return [None if k < start else q + line.slope * (k - j) for k in range(n)]
+    return [None if k < start else line_level(q, line.slope, k - j, line.log) for k in range(n)]
 
 
 class _NoPinSpec:

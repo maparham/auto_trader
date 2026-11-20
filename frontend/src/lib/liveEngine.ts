@@ -1,4 +1,5 @@
 import { openLive, fetchRecent } from "./feed";
+import { lineLevel } from "./lineLevel";
 import { buildSeries as realBuildSeries } from "./backtestSeries";
 import { evaluateStrategy as realEvaluateStrategy } from "../api";
 import { fetchOpenPositions as realFetchOpenPositions } from "./trading";
@@ -35,7 +36,7 @@ export function rebaseLines(
     const j = times.indexOf(l.tRef);
     if (j < 0 || last - j <= REBASE_AGE_BARS) continue;
     out ??= { ...lines };
-    out[id] = { ...l, tRef: times[last], pRef: l.pRef + l.slope * (last - j) };
+    out[id] = { ...l, tRef: times[last], pRef: lineLevel(l.pRef, l.slope, last - j, l.log) };
   }
   return out;
 }

@@ -28,6 +28,7 @@ import { vwapFrom } from "./indicators/vwap";
 import { computeSrLevels } from "./indicators/srLevels";
 import { computeFvg } from "./indicators/fvg";
 import { computeTrendlines } from "./indicators/trendlines";
+import { tlExp, tlLog } from "./indicators/tlLogMath";
 import { autoFibSeries } from "./indicators/autoFib";
 import { defaultFibConfig } from "./fibConfig";
 
@@ -133,7 +134,7 @@ describe("indicator parity golden fixture", () => {
       majorPivots: 0, majorLen: 30, majorSizeAtr: 0,
       lookbackBars: 0,
       extendLeft: 0,
-      fanAtr: 0, fanPct: 0, fanKeep: 0, pivotStrong: 0,
+      fanAtr: 0, fanPct: 0, fanKeep: 0, pivotStrong: 0, logScale: 0,
     };
     const tlPoints = computeTrendlines(candles, TL_CFG).points;
     // One variant per gate, each against its own off state in TL_CFG, so a port
@@ -182,6 +183,10 @@ describe("indicator parity golden fixture", () => {
       // must differ from its nearest-ranked twin (checked below).
       PIVOT_STRONG: { maxPerPivot: 1, pivotStrong: 1 },
       PIVOT_STRONG_MERGE: { maxPerPivot: 2, mergeAtr: 1, pivotStrong: 1 },
+      // Log Scale: the detector on ln prices, then the percent settings as a
+      // fixed log band (checked against LOG below).
+      LOG: { logScale: 1 },
+      LOG_PCT: { logScale: 1, maxDistPct: 3, mergePct: 1 },
     };
     const tlVariantSeries: Record<string, Array<number | null>> = {};
     for (const [name, patch] of Object.entries(TL_VARIANTS)) {
@@ -200,6 +205,18 @@ describe("indicator parity golden fixture", () => {
       .not.toBe(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, maxPerPivot: 2, mergeAtr: 1 }).points));
     expect(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, fanAtr: 0.05, fanKeep: 1 }).points))
       .not.toBe(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, fanAtr: 0.05 }).points));
+    expect(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, logScale: 1, maxDistPct: 3, mergePct: 1 }).points))
+      .not.toBe(JSON.stringify(computeTrendlines(candles, { ...TL_CFG, logScale: 1 }).points));
+    // tl_log / tl_exp must match tlLog / tlExp BIT FOR BIT (the Python test
+    // compares with ==). Inputs span tiny to huge prices, the floor and the
+    // reduction's edges (near 1, sqrt 2 and its half).
+    const logRnd = lcg(7);
+    const logIn = candles.map((_, i) =>
+      i < 8 ? [0, 1e-12, 1, 1.4142135623730951, 0.7071067811865476, 1 + 2 ** -40, 2, 1e15][i]
+        : 10 ** (logRnd() * 16 - 6) * (1 + logRnd()),
+    );
+    const logOut = logIn.map(tlLog);
+    const expIn = candles.map((_, i) => (i < 4 ? [0, -20.7, 1e-14, 35][i] : logRnd() * 60 - 25));
 
     // AUTO_FIB: configs mirrored by test_indicator_parity.test_auto_fib.
     const AF_FIB = { ...defaultFibConfig(), extend: "right" as const };
@@ -264,6 +281,15 @@ describe("indicator parity golden fixture", () => {
     for (const key of ["ATR_14", "ATR_14_SMA", "ATR_14_EMA", "ATR_14_WMA"] as const)
       for (const v of series[key]) if (v !== null) expect(v).toBeGreaterThan(0);
 
+    series.TL_LOG_IN = logIn;
+    series.TL_LOG = logOut;
+    series.TL_EXP_IN = expIn;
+    series.TL_EXP = expIn.map(tlExp);
+    for (let i = 0; i < logIn.length; i++) {
+      // Within 1 ULP-ish of the platform functions: the algorithm is right.
+      expect(Math.abs(logOut[i] - Math.log(Math.max(logIn[i], 1e-9)))).toBeLessThanOrEqual(1e-15 * Math.max(1, Math.abs(logOut[i])) + 1e-15);
+      expect(Math.abs(tlExp(expIn[i]) - Math.exp(expIn[i]))).toBeLessThanOrEqual(4e-16 * Math.exp(expIn[i]));
+    }
     mkdirSync(dirname(OUT), { recursive: true });
     writeFileSync(OUT, JSON.stringify(fixture));
   });

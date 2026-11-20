@@ -113,8 +113,10 @@ export interface LineAlertParams {
    * forward, the client never sends them after create. */
   tRef: number;
   pRef: number;
-  /** Price per bar of `timeframe`. */
+  /** Price per bar of `timeframe` (ln price per bar when `log`). */
   slope: number;
+  /** A Log Scale trendline: level = pRef * e^(slope * bars) (lineLevel). */
+  log?: true;
   anchors: { t1: number; p1: number; t2: number; p2: number };
   link: { scope: string; instanceId: string; lineKey: string } | null;
 }
@@ -449,6 +451,7 @@ function rowToLineAlert(row: AlertRow): LineAlert {
       tRef: p.tRef as number,
       pRef: p.pRef as number,
       slope: p.slope as number,
+      ...(p.log === true ? { log: true as const } : {}),
       anchors: p.anchors as LineAlertParams["anchors"],
       link: (p.link as LineAlertParams["link"]) ?? null,
     },

@@ -10,6 +10,7 @@ import bisect
 import time
 
 from auto_trader.core.candle_aggregate import resolution_seconds
+from auto_trader.core.line_level import line_level
 from auto_trader.strategy.expr.lines import line_active, parse_lines
 
 from . import deps
@@ -53,7 +54,7 @@ async def rebase_lines(lines, *, first_ms: int, last_ms: int, broker: str, side:
         if degraded or not times or times[0] > oldest or i_first >= len(times) or not ref_ok:
             warnings.append(_warning(lid))
             continue
-        ln.pRef = ln.pRef + ln.slope * (i_first - i_ref)
+        ln.pRef = line_level(ln.pRef, ln.slope, i_first - i_ref, getattr(ln, "log", False))
         ln.tRef = times[i_first]
     return warnings
 

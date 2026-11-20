@@ -64,12 +64,85 @@ KINDS: tuple[PivotKind, ...] = ("high", "low")
 #  max_slope_atr, min_slope_atr, max_touch_spacing, min_touch_spacing,
 #  min_crossings, max_crossings, pierce_mult, min_back_bars, max_dist_atr,
 #  max_dist_pct, merge_atr, max_per_pivot, merge_pct, major_pivots,
-#  major_len, major_size_atr, lookback_bars, extend_left]: TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
-_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, MAJOR_SIZE_ATR, 0, 0, 0.0, 0.0, 0, 0)
+#  major_len, major_size_atr, lookback_bars, extend_left, fan_atr, fan_pct,
+#  fan_keep, pivot_strong, log_scale]: TRENDLINES_DEFAULTS in trendlinesOutputs.ts.
+_DEFAULTS = (5, 0.0, 2, 20, 250, 3, 0.0, 0, MAX_PAIR_PIVOTS, 0, 0, 0.0, 0.0, 0, 0, 0, 0, 0.25, 0, 0.0, 0.0, 0.25, 0, 0.0, MAJOR_PIVOTS, MAJOR_LEN, MAJOR_SIZE_ATR, 0, 0, 0.0, 0.0, 0, 0, 0)
 # The distance "Only lines near price" drew at, in ATR(14): what a pane saved
 # with that retired rule migrates onto as max_dist_atr. TL_NEAR_PRICE_ATR in
 # trendlinesOutputs.ts.
 TL_NEAR_PRICE_ATR = 5.0
+
+
+# ---- Log Scale math. tl_log / tl_exp mirror frontend tlLogMath.ts operation
+# for operation (fdlibm e_log.c / e_exp.c, range reduction by scaling by 2 in
+# a loop): math.log and Math.log may differ in the last bit, and a gate here
+# deletes a line on a 1-ULP disagreement. Do NOT swap in math.log/math.exp.
+
+_SQRT2 = 1.4142135623730951
+_SQRT2_HALF = 0.7071067811865476
+_LN2_HI = 6.93147180369123816490e-01
+_LN2_LO = 1.90821492927058770002e-10
+_INV_LN2 = 1.44269504088896338700e00
+_LG1 = 6.666666666666735130e-01
+_LG2 = 3.999999999940941908e-01
+_LG3 = 2.857142874366239149e-01
+_LG4 = 2.222219843214978396e-01
+_LG5 = 1.818357216161805012e-01
+_LG6 = 1.531383769920937332e-01
+_LG7 = 1.479819860511658591e-01
+_P1 = 1.66666666666666019037e-01
+_P2 = -2.77777777770155933842e-03
+_P3 = 6.61375632143793436117e-05
+_P4 = -1.65339022054652515390e-06
+_P5 = 4.13813679705723846039e-08
+# A price at or below this (or not finite) reads as this. TL_LOG_FLOOR in TS.
+TL_LOG_FLOOR = 1e-9
+
+
+def tl_log(x: float) -> float:
+    """ln(x). Mirrors TS tlLog."""
+    m = x if math.isfinite(x) and x > TL_LOG_FLOOR else TL_LOG_FLOOR
+    # frexp is exact and lands where the TS loop's halving/doubling lands:
+    # m in [0.5, 1), then one doubling below sqrt(1/2) gives [sqrt(1/2), sqrt 2).
+    m, k = math.frexp(m)
+    if m < _SQRT2_HALF:
+        m *= 2
+        k -= 1
+    f = m - 1
+    s = f / (2 + f)
+    z = s * s
+    w = z * z
+    t1 = w * (_LG2 + w * (_LG4 + w * _LG6))
+    t2 = z * (_LG1 + w * (_LG3 + w * (_LG5 + w * _LG7)))
+    r = t2 + t1
+    hfsq = 0.5 * f * f
+    return k * _LN2_HI - ((hfsq - (s * (hfsq + r) + k * _LN2_LO)) - f)
+
+
+def tl_exp(x: float) -> float:
+    """e^x for a log price. Mirrors TS tlExp."""
+    if not math.isfinite(x):
+        return math.inf if x > 0 else 0.0 if x < 0 else math.nan
+    k = math.floor(x * _INV_LN2 + 0.5)
+    hi = x - k * _LN2_HI
+    lo = k * _LN2_LO
+    r = hi - lo
+    t = r * r
+    c = r - t * (_P1 + t * (_P2 + t * (_P3 + t * (_P4 + t * _P5))))
+    y = 1 - ((lo - (r * c) / (2 - c)) - hi)
+    # ldexp is exact, the same bits as the TS loop of *2 (or *0.5) steps.
+    return math.ldexp(y, k)
+
+
+def tl_log_candle(c: Candle) -> Candle:
+    """The bar with ln prices: what the detector reads under Log Scale. Only
+    high, low and close are read, so `open` stays raw. Mirrors TS tlLogBar."""
+    return Candle(c.time, c.open, tl_log(c.high), tl_log(c.low), tl_log(c.close), c.volume)
+
+
+def tl_price(cfg: TrendlinesConfig, v: float) -> float:
+    """A detector-space value as a chart price. Mirrors TS tlPrice."""
+    return tl_exp(v) if cfg.log_scale == 1 else v
 
 
 def tl_output_name(rank: int) -> str:
@@ -148,6 +221,11 @@ class TrendlinesConfig:
     # Max lines per pivot ranks the levels at each bar by strength (rank_key)
     # instead of walk order: 0 = nearest, 1 = strongest. Mirrors TS.
     pivot_strong: int = 0
+    # Log Scale: 1 runs the detector on ln prices (tl_log), so a line is
+    # straight on a logarithmic price axis and every ATR setting reads as a
+    # share of price; the percent settings become a fixed log band and the
+    # outputs are prices again (tl_exp). Mirrors TS logScale.
+    log_scale: int = 0
     timeframe: str | None = None
 
 
@@ -257,6 +335,7 @@ def parse_trendlines_config(calc_params: object, extend_data: object) -> Trendli
         fan_pct=num_at(30, d[30], True),
         fan_keep=min(1, zero_int(31, d[31])),
         pivot_strong=min(1, zero_int(32, d[32])),
+        log_scale=min(1, zero_int(33, d[33])),
         timeframe=tf if isinstance(tf, str) and tf and tf != "chart" else None,
     )
 
@@ -270,7 +349,7 @@ TL_SLOT_FIELDS: tuple[str, ...] = (
     "min_touch_spacing", "min_crossings", "max_crossings", "pierce_mult",
     "min_back_bars", "max_dist_atr", "max_dist_pct", "merge_atr", "max_per_pivot",
     "merge_pct", "major_pivots", "major_len", "major_size_atr", "lookback_bars",
-    "extend_left", "fan_atr", "fan_pct", "fan_keep", "pivot_strong",
+    "extend_left", "fan_atr", "fan_pct", "fan_keep", "pivot_strong", "log_scale",
 )
 
 
@@ -305,7 +384,8 @@ def merge_tolerance(cfg: TrendlinesConfig, atr_i: float | None, close: float) ->
     if cfg.merge_atr > 0 and atr_i is not None and math.isfinite(atr_i):
         tol = cfg.merge_atr * atr_i
     if cfg.merge_pct > 0:
-        pct = abs(close) * (cfg.merge_pct / 100)
+        # A fixed log band under Log Scale, as in max_distance_tol.
+        pct = tl_log(1 + cfg.merge_pct / 100) if cfg.log_scale == 1 else abs(close) * (cfg.merge_pct / 100)
         if pct < tol:
             tol = pct
     return 0.0 if tol == math.inf else tol
@@ -520,7 +600,9 @@ def max_distance_tol(cfg: TrendlinesConfig, atr_i: float | None, close: float) -
     if cfg.max_dist_atr > 0 and atr_i is not None and math.isfinite(atr_i):
         tol = cfg.max_dist_atr * atr_i
     if cfg.max_dist_pct > 0:
-        pct = abs(close) * (cfg.max_dist_pct / 100)
+        # Under Log Scale `close` is a log price: the band is the fixed log
+        # distance of that percent. Mirrors TS maxDistanceTol.
+        pct = tl_log(1 + cfg.max_dist_pct / 100) if cfg.log_scale == 1 else abs(close) * (cfg.max_dist_pct / 100)
         if pct < tol:
             tol = pct
     return tol
@@ -917,10 +999,12 @@ def compute_trendlines(
     if n == 0:
         return points, []
 
-    atr = atr_series(candles, TL_ATR_LEN)
-    highs = [c.high for c in candles]
-    lows = [c.low for c in candles]
-    closes = [c.close for c in candles]
+    log = cfg.log_scale == 1
+    src = [tl_log_candle(c) for c in candles] if log else candles
+    atr = atr_series(src, TL_ATR_LEN)
+    highs = [c.high for c in src]
+    lows = [c.low for c in src]
+    closes = [c.close for c in src]
     pool_idxs: list[int] = []
     pool_kinds: list[str] = []
     # The major tier as POOL POSITIONS (ascending) with their strengths.
@@ -1114,11 +1198,12 @@ def compute_trendlines(
         shown = min(len(drawn), cfg.max_lines)
         for r in range(shown):
             v = project_at(drawn[r], i)
-            point[tl_output_name(r + 1)] = v
+            out = tl_exp(v) if log else v
+            point[tl_output_name(r + 1)] = out
             d = abs(v - close)
             if d < nearest_d:
                 nearest_d = d
-                nearest_v = v
+                nearest_v = out
                 nearest_line = drawn[r]
         if shown:
             point[TL_NEAREST] = nearest_v

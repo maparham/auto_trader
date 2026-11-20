@@ -36,7 +36,11 @@ Trendline alerts come in two forms. The `line` kind is a frozen straight line
 in bars of its timeframe (`tRef`, `pRef`, `slope`), made from a right-clicked
 Trendlines line; the engine rolls `tRef` forward every 1000 bars
 (`LINE_REBASE_BARS`) so it stays inside the 2000-bar seed, and create 422s
-when the chart's reference bar is not one the server holds. Nearest-line
+when the chart's reference bar is not one the server holds. A line from a
+Trendlines pane with Log Scale on carries `log: true`: its `slope` is ln
+price per bar and the level is `pRef * e^(slope * bars)`
+(`core/line_level.py`, `frontend/src/lib/lineLevel.ts`). Picked lines `L<n>`
+use the same geometry and flag. Nearest-line
 alerts are `indicator` alerts on `TRENDLINES`, output `tl_nearest` (the only
 alertable Trendlines output); the hub runs the full Trendlines compute once
 per close, in a worker thread (the series is not ready for it until the

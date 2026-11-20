@@ -10,7 +10,7 @@ import type { TrendlinesConfig } from "./trendlinesOutputs";
 import { runDebugAsync, type DebugRun, type DebugRunInput } from "./trendlinesDebug";
 import { DEBUG_SAMPLE, explain, type TlDebugResult } from "./trendlinesDebugExplain";
 import {
-  forcedPairsFor, lookup, SIM_DEFAULTS, targetToIdx, type Match, type SimLimits, type TargetIdx, type TargetLine,
+  forcedPairsFor, lookup, SIM_DEFAULTS, targetInSpace, type Match, type SimLimits, type TargetIdx, type TargetLine,
 } from "./trendlinesDebugLookup";
 import type { ForcedPair } from "./trendlinesDebug";
 
@@ -46,7 +46,7 @@ export interface DebugEntry {
    * bars key, eval index, target or Min Length change, never per frame
    * (chart draw perf rule: no whole-series allocations in the draw). */
   tmemo: {
-    bars: string; evalIdx: number; target: TargetLine; pivotLen: number;
+    bars: string; evalIdx: number; target: TargetLine; pivotLen: number; logScale: number;
     tgt: TargetIdx | { error: string }; forced: ForcedPair[];
   } | null;
   /** The target's lookup against `result`: once per (result, target, sim),
@@ -224,19 +224,22 @@ export function debugTarget(
   if (!target) return null;
   const m = e.tmemo;
   const kb = keySig(input);
-  if (m && m.bars === kb && m.evalIdx === input.evalIdx && m.target === target && m.pivotLen === input.cfg.pivotLen)
+  // logScale: the target is converted into the detector's space, so a
+  // toggle must rebuild it.
+  if (
+    m && m.bars === kb && m.evalIdx === input.evalIdx && m.target === target &&
+    m.pivotLen === input.cfg.pivotLen && m.logScale === input.cfg.logScale
+  )
     return m;
   const times: number[] = new Array(input.evalIdx + 1);
   for (let j = 0; j <= input.evalIdx; j++) times[j] = input.starts?.[j] ?? input.bars[j].timestamp;
   // Pinned (starts set): a click belongs to the HTF bar that contains it.
-  const tgt = targetToIdx(times, target, input.starts ? "containing" : "nearest");
+  const { tgt, highs, lows } = targetInSpace(times, target, input.starts ? "containing" : "nearest", input.bars, input.cfg);
   let forced: ForcedPair[] = [];
   if (!("error" in tgt)) {
-    const highs = input.bars.map((b) => b.high);
-    const lows = input.bars.map((b) => b.low);
     forced = forcedPairsFor(highs, lows, tgt, input.cfg.pivotLen);
   }
-  e.tmemo = { bars: kb, evalIdx: input.evalIdx, target, pivotLen: input.cfg.pivotLen, tgt, forced };
+  e.tmemo = { bars: kb, evalIdx: input.evalIdx, target, pivotLen: input.cfg.pivotLen, logScale: input.cfg.logScale, tgt, forced };
   return e.tmemo;
 }
 

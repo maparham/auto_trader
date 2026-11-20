@@ -13,6 +13,7 @@
 // trendline while that is drawn and still shows what the alert watches once
 // the trendline is gone; the bell past its end (useChartPaint/
 // AlertCurveBells) marks it.
+import { lineLevel } from "../lineLevel";
 import type { Chart, KLineData } from "klinecharts";
 import { alertTimeframeOf } from "../indicatorAlertInstance";
 import { firedLineAlerts, loadIndicatorAlerts, loadLineAlerts, patchIndicatorAlert, type LineAlertParams } from "../alertsApi";
@@ -60,7 +61,7 @@ type Ray = {
  * Exported for the unit test.
  */
 export function loadedLinePoints(
-  p: Pick<LineAlertParams, "tRef" | "pRef" | "slope" | "anchors">,
+  p: Pick<LineAlertParams, "tRef" | "pRef" | "slope" | "anchors" | "log">,
   times: readonly number[],
   dataList: readonly KLineData[],
 ): RayPoints | null {
@@ -79,7 +80,7 @@ export function loadedLinePoints(
   let b = times.length - 1;
   while (b >= 0 && times[b] > lastT) b--;
   if (b <= a) return null;
-  const at = (j: number) => ({ timestamp: times[j], value: pAt + p.slope * (j - jRef) });
+  const at = (j: number) => ({ timestamp: times[j], value: lineLevel(pAt, p.slope, j - jRef, p.log) });
   return [at(a), at(b)];
 }
 
@@ -112,14 +113,14 @@ export function alertRef(
 export function alertStepPoints(
   dataList: readonly KLineData[],
   mtf: TrendlinesMtf,
-  p: Pick<LineAlertParams, "tRef" | "pRef" | "slope" | "anchors">,
+  p: Pick<LineAlertParams, "tRef" | "pRef" | "slope" | "anchors" | "log">,
 ): { steps: Array<{ timestamp: number; value: number }>; bell: RayPoints } | null {
   const n = dataList.length;
   const starts = mtf.htfStarts ?? [];
   const map = n >= 2 ? stepMapFor(dataList, mtf) : null;
   const ref = map ? alertRef(p, starts) : null;
   if (!map || !ref) return null;
-  const valueAt = (j: number) => ref.pAt + p.slope * (j - ref.jRef);
+  const valueAt = (j: number) => lineLevel(ref.pAt, p.slope, j - ref.jRef, p.log);
   const j1 = starts.lastIndexOf(p.anchors.t1);
   const jNow = map.barOf(n - 1);
   const steps: Array<{ timestamp: number; value: number }> = [];

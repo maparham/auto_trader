@@ -341,8 +341,9 @@ class IndicatorKind:
 
 class LineKind:
     """A frozen straight line in bars of `timeframe` (a right-clicked
-    trendline): level = pRef + slope * (bars since tRef). tRef/pRef roll
-    forward (engine rebase), so they are not part of `sig`."""
+    trendline): level = pRef + slope * (bars since tRef), or with `log: true`
+    (a Log Scale trendline) pRef * e^(slope * bars), see line_level. tRef/pRef
+    roll forward (engine rebase), so they are not part of `sig`."""
 
     def validate(self, params: dict, streams: Callable[[], bool]) -> None:
         t_ref = params.get("tRef")
@@ -352,6 +353,11 @@ class LineKind:
         for f in ("pRef", "slope"):
             if not _finite_number(params.get(f)):
                 raise ValueError(f"params.{f} must be a finite number")
+        if "log" in params:
+            if params["log"] is not True and params["log"] is not False:
+                raise ValueError("params.log must be a boolean")
+            if not params["log"]:
+                del params["log"]  # absent means linear: one spelling for sig
         a = params.get("anchors")
         if not isinstance(a, dict) or not all(_finite_number(a.get(k)) for k in ("t1", "p1", "t2", "p2")):
             raise ValueError("params.anchors must be {t1, p1, t2, p2} numbers")
@@ -373,7 +379,7 @@ class LineKind:
         return params["evalOn"]
 
     def indicator_key(self, params: dict) -> IndicatorKey:
-        return line_key(params["tRef"], params["pRef"], params["slope"])
+        return line_key(params["tRef"], params["pRef"], params["slope"], params.get("log") is True)
 
     def resolve(self, params, price, values):
         level = (values or {}).get("value")
@@ -391,7 +397,7 @@ class LineKind:
         return f"Trendline ({_tf.label(params['timeframe'])})"
 
     def sig(self, params: dict) -> str:
-        keys = ("slope", "anchors", "timeframe", "evalOn", "condition", "trigger")
+        keys = ("slope", "log", "anchors", "timeframe", "evalOn", "condition", "trigger")
         return json.dumps({k: params.get(k) for k in keys}, sort_keys=True)
 
     def payload_extras(self, params: dict, pair: Pair) -> dict:

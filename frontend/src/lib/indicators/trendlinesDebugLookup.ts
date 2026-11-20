@@ -3,7 +3,9 @@
 // 2026-09-24), not one with the same anchors, so matching is by similarity:
 // within `priceAtr` ATR(14) of it over its span, covering `spanPct` of it.
 import { isPivotAt } from "./pivots";
-import { lineStart, projectAt, type PivotKind, type TrendLine } from "./trendlines";
+import type { KLineData } from "klinecharts";
+import { lineStart, projectAt, tlSpace, type PivotKind, type TrendLine } from "./trendlines";
+import type { TrendlinesConfig } from "./trendlinesOutputs";
 import type { ForcedPair } from "./trendlinesDebug";
 import type { DebugCandidate, TlDebugResult } from "./trendlinesDebugExplain";
 
@@ -48,16 +50,21 @@ function containingIdx(times: readonly number[], ts: number): number {
 
 /** `mode` "containing" is for a compute space that is not the chart's own
  * bars (a pinned timeframe): a click inside an HTF bar belongs to that bar,
- * never to the next one because its start happens to be nearer. */
+ * never to the next one because its start happens to be nearer. `space` maps
+ * the target's chart prices into the detector's (tlSpace: ln under Log
+ * Scale), so the result compares with projectAt directly. */
 export function targetToIdx(
   times: readonly number[], t: TargetLine, mode: "nearest" | "containing" = "nearest",
+  space: (p: number) => number = (p) => p,
 ): TargetIdx | { error: string } {
   const at = mode === "containing" ? containingIdx : nearestIdx;
   const a = at(times, t.t1);
   const b = at(times, t.t2);
   if (a < 0 || b < 0) return { error: "A point is outside the loaded bars." };
   if (a === b) return { error: "Pick two points on different bars." };
-  return a < b ? { x1: a, p1: t.p1, x2: b, p2: t.p2 } : { x1: b, p1: t.p2, x2: a, p2: t.p1 };
+  const p1 = space(t.p1);
+  const p2 = space(t.p2);
+  return a < b ? { x1: a, p1, x2: b, p2 } : { x1: b, p1: p2, x2: a, p2: p1 };
 }
 
 const targetAt = (t: TargetIdx, x: number) => t.p1 + ((t.p2 - t.p1) * (x - t.x1)) / (t.x2 - t.x1);
@@ -83,6 +90,22 @@ function anchorsNear(
 }
 
 /** The exact snapped pair first, then pairs of nearby pivots: at most 9. */
+/** The target and the bars' highs and lows in the detector's space (ln
+ * under Log Scale), so lookup and forcedPairsFor compare like with like.
+ * The ONE place a debug caller converts: the target is picked in chart
+ * prices, the replayed lines are not. */
+export function targetInSpace(
+  times: readonly number[], target: TargetLine, mode: "nearest" | "containing",
+  bars: readonly KLineData[], cfg: Pick<TrendlinesConfig, "logScale">,
+): { tgt: TargetIdx | { error: string }; highs: number[]; lows: number[] } {
+  const space = (p: number) => tlSpace(cfg, p);
+  return {
+    tgt: targetToIdx(times, target, mode, space),
+    highs: bars.map((b) => space(b.high)),
+    lows: bars.map((b) => space(b.low)),
+  };
+}
+
 export function forcedPairsFor(
   highs: readonly number[], lows: readonly number[], tgt: TargetIdx, pivotLen: number,
 ): ForcedPair[] {

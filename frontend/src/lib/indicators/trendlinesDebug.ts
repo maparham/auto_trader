@@ -264,7 +264,7 @@ function* steps(input: DebugRunInput, st: TlState, sink: RecordingSink, chunk: n
 }
 
 function prepare(input: DebugRunInput): { st: TlState; sink: RecordingSink } {
-  const st = initTlState(input.bars, input.evalIdx + 1, input.startIdx);
+  const st = initTlState(input.bars, input.evalIdx + 1, input.startIdx, input.cfg);
   const sink = createSink(input.window[0], input.window[1], input.forced, input.maxStepping ?? DEBUG_MAX_STEPPING);
   return { st, sink };
 }

@@ -315,6 +315,15 @@ describe("loadedLinePoints", () => {
   it("is null when no reference bar is in the alert's bars", () => {
     expect(loadedLinePoints(params(500, 1500), times, loaded)).toBeNull();
   });
+
+  it("follows a Log Scale line multiplicatively", () => {
+    // 100 at the reference bar (3000), doubling every bar.
+    const p = { tRef: 3000, pRef: 100, slope: Math.LN2, log: true as const, anchors: { t1: 2000, p1: 50, t2: 3000, p2: 100 } };
+    const pts = loadedLinePoints(p, times, loaded)!;
+    expect(pts[0].timestamp).toBe(5000);
+    expect(pts[0].value).toBeCloseTo(400, 9);
+    expect(pts[1].value).toBeCloseTo(6400, 7);
+  });
 });
 
 describe("alertStepPoints", () => {

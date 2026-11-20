@@ -2,8 +2,9 @@
 // (bolder than the instance's style), plus the session-only selection and the
 // line-body hit targets the right-click / long-press menu reads.
 //
-// A LEAF with no runtime imports, so the draw path, ChartCore and the tests can
-// all pull it in without klinecharts' runtime.
+// A LEAF with no klinecharts runtime import (tlLogMath is itself one), so
+// the draw path, ChartCore and the tests can all pull it in without
+// klinecharts' runtime.
 //
 // Marks are RENDER-ONLY. They never reach parseTrendlinesConfig, never change
 // which lines are selected for drawing (the chart still draws exactly what an
@@ -12,6 +13,8 @@
 // so they follow the user across reloads and devices. Keyed by EPIC first:
 // lineKey is two anchor timestamps, and two symbols share bar timestamps, so a
 // bare key would restyle a different symbol's line that happens to share them.
+
+import { tlExp } from "./tlLogMath";
 
 export interface LineMarks {
   hidden?: string[];
@@ -178,6 +181,9 @@ export interface TrendlineAlertLine {
   /** Open time of the reference bar (newest closed) and the line there. */
   tRef: number;
   pRef: number;
+  /** A Log Scale line: `slope` is ln price per bar and the level is
+   * pRef * e^(slope * bars) (lineLevel). pRef and the anchors are prices. */
+  log?: true;
   /** Anchors as bar open times, for drawing. */
   t1: number;
   p1: number;
@@ -189,18 +195,26 @@ export interface TrendlineAlertLine {
  * indices live in (chart bars, or HTF starts under a pin); `refIdx` the
  * newest closed bar there. Null before the second anchor or off the series.
  * Same arithmetic as trendlines.ts projectAt (not imported: that module
- * imports this one). */
+ * imports this one).
+ *
+ * `log` is set for a Log Scale line, whose p1/p2 are ln prices. The slope
+ * stays in ln per bar and the result says `log: true`, so every reader
+ * (lineLevel) follows the trendline exactly; pRef and the anchors become
+ * prices. */
 export function alertLineOf(
   line: { i1: number; p1: number; i2: number; p2: number },
   times: readonly number[],
   refIdx: number,
+  log = false,
 ): TrendlineAlertLine | null {
   const t1 = times[line.i1];
   const t2 = times[line.i2];
   const tRef = times[refIdx];
   if (t1 == null || t2 == null || tRef == null || line.i2 <= line.i1 || refIdx < line.i2) return null;
   const pRef = line.p1 + ((line.p2 - line.p1) * (refIdx - line.i1)) / (line.i2 - line.i1);
-  return { slope: (line.p2 - line.p1) / (line.i2 - line.i1), tRef, pRef, t1, p1: line.p1, t2, p2: line.p2 };
+  const slope = (line.p2 - line.p1) / (line.i2 - line.i1);
+  if (!log) return { slope, tRef, pRef, t1, p1: line.p1, t2, p2: line.p2 };
+  return { slope, tRef, pRef: tlExp(pRef), log: true, t1, p1: tlExp(line.p1), t2, p2: tlExp(line.p2) };
 }
 
 /** Recorded by the draw, per chart then "paneId:name": hit targets are what

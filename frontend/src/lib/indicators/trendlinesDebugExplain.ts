@@ -24,6 +24,7 @@ import {
   sideSign,
   strongCapNeeds,
   swingStrength,
+  tlIsLog,
   trendlineGate,
   withinLookback,
   withinSlope,
@@ -31,6 +32,7 @@ import {
   type TrendLine,
 } from "./trendlines";
 import type { TrendlinesConfig } from "./trendlinesOutputs";
+import { tlExp, tlLog } from "./tlLogMath";
 import type { DebugRecord, DebugRun, RejectedPivot } from "./trendlinesDebug";
 
 export type Gate =
@@ -326,8 +328,19 @@ export function lineVerdicts(
   if (cfg.maxDistAtr > 0 && atrI !== null)
     add("distanceAtr", "maxDistAtr", atrI > 0 ? d / atrI : null, cfg.maxDistAtr, d <= cfg.maxDistAtr * atrI);
   if (cfg.maxDistPct > 0)
-    add("distancePct", "maxDistPct", (d / Math.abs(close)) * 100, cfg.maxDistPct, d <= Math.abs(close) * (cfg.maxDistPct / 100));
+    add("distancePct", "maxDistPct", gapPct(cfg, d, close), cfg.maxDistPct, d <= pctBand(cfg, cfg.maxDistPct, close));
   return v;
+}
+
+/** A detector-space gap as a percent of price: under Log Scale a log gap d
+ * is e^d - 1 of price, else d over the close. */
+function gapPct(cfg: TrendlinesConfig, d: number, close: number): number {
+  return tlIsLog(cfg) ? (tlExp(d) - 1) * 100 : (d / Math.abs(close)) * 100;
+}
+
+/** The percent band in detector space, as maxDistanceTol builds it. */
+function pctBand(cfg: TrendlinesConfig, pct: number, close: number): number {
+  return tlIsLog(cfg) ? tlLog(1 + pct / 100) : Math.abs(close) * (pct / 100);
 }
 
 function fateVerdict(f: Fate, cfg: TrendlinesConfig, atrI: number | null, close: number): Verdict | null {
@@ -335,7 +348,7 @@ function fateVerdict(f: Fate, cfg: TrendlinesConfig, atrI: number | null, close:
     const useAtr = cfg.mergeAtr > 0 && atrI !== null && atrI > 0;
     return useAtr
       ? { gate: "merged", field: "mergeAtr", measured: f.gap / (atrI as number), limit: cfg.mergeAtr, pass: false }
-      : { gate: "merged", field: "mergePct", measured: (f.gap / Math.abs(close)) * 100, limit: cfg.mergePct, pass: false };
+      : { gate: "merged", field: "mergePct", measured: gapPct(cfg, f.gap, close), limit: cfg.mergePct, pass: false };
   }
   if (f.kind === "fanMerged") {
     const useAtr = cfg.fanAtr > 0 && atrI !== null && atrI > 0;

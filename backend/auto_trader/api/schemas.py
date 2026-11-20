@@ -860,6 +860,9 @@ class PickedLineDTO(BaseModel):
     slope: float
     tRef: int
     pRef: float
+    # A Log Scale trendline: slope in ln price per bar, level pRef * e^(slope
+    # * bars) (core.line_level).
+    log: bool = False
 
 
 class ExprBacktestRequest(BaseModel):

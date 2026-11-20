@@ -195,7 +195,21 @@ _TL_VARIANTS = {
     "FAN_NEAR": dict(fan_atr=0.05, fan_keep=1),
     "PIVOT_STRONG": dict(max_per_pivot=1, pivot_strong=1),
     "PIVOT_STRONG_MERGE": dict(max_per_pivot=2, merge_atr=1, pivot_strong=1),
+    "LOG": dict(log_scale=1),
+    "LOG_PCT": dict(log_scale=1, max_dist_pct=3, merge_pct=1),
 }
+
+
+def test_trendlines_log_math_bits(golden):
+    """tl_log / tl_exp reproduce TS tlLog / tlExp BIT FOR BIT, not just
+    closely: Log Scale gates read ln prices, and a 1-ULP drift there deletes a
+    line on one side only."""
+    from auto_trader.indicators.trendlines import tl_exp, tl_log
+
+    _, _, series = golden
+    for name, fn, src in (("TL_LOG", tl_log, "TL_LOG_IN"), ("TL_EXP", tl_exp, "TL_EXP_IN")):
+        for i, (x, want) in enumerate(zip(series[src], series[name])):
+            assert fn(x) == want, f"{name}[{i}]: {fn(x)!r} != {want!r} for {x!r}"
 
 
 def test_trendlines(golden):

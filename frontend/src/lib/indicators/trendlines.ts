@@ -38,6 +38,7 @@ import type {
   KLineData,
 } from "klinecharts";
 import { isPivotAt } from "./pivots";
+import { tlExp, tlLog, tlLogBar } from "./tlLogMath";
 import { atrSeries, rmaNext, trueRangeAt } from "../atr";
 import { alignHtfToChart, type MtfSeriesBase } from "../mtf";
 import { minPositiveGap } from "../barInterval";
@@ -804,15 +805,35 @@ export interface TlSink {
   afterConfirm(st: TlState, i: number, cfg: TrendlinesConfig): void;
 }
 
+/** True when the detector runs on ln prices (the Log Scale setting). Every
+ * price inside the detector, a line's p1/p2 and the pivot arrays included,
+ * is then a LOG price; tlPrice turns one back into a price. */
+export function tlIsLog(cfg: Pick<TrendlinesConfig, "logScale"> | undefined): boolean {
+  return cfg?.logScale === 1;
+}
+
+/** A chart price in the detector's space: ln(price) under Log Scale. */
+export function tlSpace(cfg: Pick<TrendlinesConfig, "logScale"> | undefined, price: number): number {
+  return tlIsLog(cfg) ? tlLog(price) : price;
+}
+
+/** A detector-space value as a chart price: exp(v) under Log Scale. */
+export function tlPrice(cfg: Pick<TrendlinesConfig, "logScale"> | undefined, v: number): number {
+  return tlIsLog(cfg) ? tlExp(v) : v;
+}
+
 /** The empty detector state for the first `m` bars: per-bar arrays filled,
  * no bar stepped yet. buildTlState steps it; the debug run steps it with a
- * sink attached. */
+ * sink attached. `cfg` is read only for Log Scale, which fills the arrays
+ * (and the ATR) from ln prices. */
 export function initTlState(
   dataList: KLineData[],
   m: number,
   startIdx = 0,
+  cfg?: Pick<TrendlinesConfig, "logScale">,
 ): TlState {
-  const prefix = m === dataList.length ? dataList : dataList.slice(0, m);
+  const raw = m === dataList.length ? dataList : dataList.slice(0, m);
+  const prefix = tlIsLog(cfg) ? raw.map(tlLogBar) : raw;
   const atr: Array<number | null> =
     startIdx > 0 ? new Array(m).fill(null) : atrSeries(prefix, TL_ATR_LEN);
   if (startIdx > 0) {
@@ -841,7 +862,7 @@ export function buildTlState(
   cfg: TrendlinesConfig,
   startIdx = 0,
 ): TlState {
-  const st = initTlState(dataList, m, startIdx);
+  const st = initTlState(dataList, m, startIdx, cfg);
   for (let i = startIdx; i < m; i++) stepTrendlinesBar(st, i, cfg);
   return st;
 }
@@ -885,7 +906,9 @@ export function maxDistanceTol(
   if (cfg.maxDistAtr > 0 && typeof atrI === "number" && Number.isFinite(atrI))
     tol = cfg.maxDistAtr * atrI;
   if (cfg.maxDistPct > 0) {
-    const pct = Math.abs(close) * (cfg.maxDistPct / 100);
+    // Under Log Scale `close` is a log price: the band is the fixed log
+    // distance of that percent. Mirrors Python max_distance_tol.
+    const pct = tlIsLog(cfg) ? tlLog(1 + cfg.maxDistPct / 100) : Math.abs(close) * (cfg.maxDistPct / 100);
     if (pct < tol) tol = pct;
   }
   return tol;
@@ -1172,8 +1195,9 @@ export function stepTrendlinesBar(
 }
 
 /** The tl_1..tl_maxLines and tl_nearest outputs of bar i, measured at
- * `close`: the emit step's selectDrawnLines call, which the draw path makes
- * too. The detector passes bar i's own close; a timeframe pin's newest chart
+ * `close` (a DETECTOR-space close: ln under Log Scale, see tlSpace): the emit
+ * step's selectDrawnLines call, which the draw path makes too. The outputs
+ * are chart prices (tlPrice). The detector passes bar i's own close; a timeframe pin's newest chart
  * row passes the chart's latest close (alignMtfTrendlines), so Max Distance
  * and the nearest-first order there judge the live price, as the draw does. */
 export function emitTrendlinesPoint(
@@ -1199,11 +1223,12 @@ export function emitTrendlinesPoint(
   const shown = Math.min(drawn.length, cfg.maxLines);
   for (let r = 0; r < shown; r++) {
     const v = projectAt(drawn[r], i);
-    point[tlOutputName(r + 1) as `tl_${number}`] = v;
+    const out = tlPrice(cfg, v);
+    point[tlOutputName(r + 1) as `tl_${number}`] = out;
     const d = Math.abs(v - close);
     if (d < nearestD) {
       nearestD = d;
-      nearestV = v;
+      nearestV = out;
     }
   }
   if (shown) point.tl_nearest = nearestV;
@@ -1226,12 +1251,26 @@ function tlAtrAt(
   dataList: KLineData[],
   j: number,
   startIdx = 0,
+  logSt: Pick<TlState, "highs" | "lows" | "closes"> | null = null,
 ): number | null {
+  const log = logSt !== null;
   if (j < startIdx + TL_ATR_LEN - 1) return null;
   const prev = j > 0 ? atr[j - 1] : null;
-  if (j === startIdx + TL_ATR_LEN - 1 || prev === null)
-    return atrSeries(dataList.slice(startIdx, j + 1), TL_ATR_LEN)[j - startIdx];
-  return rmaNext(prev, trueRangeAt(dataList, j), TL_ATR_LEN);
+  if (j === startIdx + TL_ATR_LEN - 1 || prev === null) {
+    const win = dataList.slice(startIdx, j + 1);
+    return atrSeries(log ? win.map(tlLogBar) : win, TL_ATR_LEN)[j - startIdx];
+  }
+  // Log Scale: the true range from the ln prices advanceTlBar already
+  // stored, with trueRangeAt's operations in its order, so it equals what
+  // initTlState's atrSeries reads off tlLogBar.
+  let tr: number;
+  if (logSt) {
+    const h = logSt.highs[j];
+    const l = logSt.lows[j];
+    const pc = logSt.closes[j - 1];
+    tr = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+  } else tr = trueRangeAt(dataList, j);
+  return rmaNext(prev, tr, TL_ATR_LEN);
 }
 
 /** Fold bar i into the state: fill its high/low/ATR slots, then run the
@@ -1242,10 +1281,12 @@ function advanceTlBar(
   i: number,
   cfg: TrendlinesConfig,
 ): void {
-  st.highs[i] = dataList[i].high;
-  st.lows[i] = dataList[i].low;
-  st.closes[i] = dataList[i].close;
-  st.atr[i] = tlAtrAt(st.atr, dataList, i, st.startIdx);
+  const log = tlIsLog(cfg);
+  const d = dataList[i];
+  st.highs[i] = log ? tlLog(d.high) : d.high;
+  st.lows[i] = log ? tlLog(d.low) : d.low;
+  st.closes[i] = log ? tlLog(d.close) : d.close;
+  st.atr[i] = tlAtrAt(st.atr, dataList, i, st.startIdx, log ? st : null);
   stepTrendlinesBar(st, i, cfg);
 }
 
@@ -1924,7 +1965,8 @@ export function mergeTolerance(
   let tol = Infinity;
   if (cfg.mergeAtr > 0 && typeof atr === "number" && Number.isFinite(atr)) tol = cfg.mergeAtr * atr;
   if (cfg.mergePct > 0) {
-    const pct = Math.abs(close) * (cfg.mergePct / 100);
+    // A fixed log band under Log Scale, as in maxDistanceTol.
+    const pct = tlIsLog(cfg) ? tlLog(1 + cfg.mergePct / 100) : Math.abs(close) * (cfg.mergePct / 100);
     if (pct < tol) tol = pct;
   }
   return tol === Infinity ? 0 : tol;
@@ -2869,7 +2911,7 @@ export function alignMtfTrendlines(
   // newest HTF bar only.
   const live =
     cfg && j >= 0 && mtf.htfLines?.length
-      ? emitTrendlinesPoint(mtf.htfLines, j, dataList[dataList.length - 1].close, mtf.htfAtr, cfg)
+      ? emitTrendlinesPoint(mtf.htfLines, j, tlSpace(cfg, dataList[dataList.length - 1].close), mtf.htfAtr, cfg)
       : null;
   out[out.length - 1] = {
     ...(live ?? out[out.length - 1]),
@@ -3482,6 +3524,12 @@ function drawTrendlines(
   const stepMap = coarserPin && mtf ? stepMapFor(dataList, mtf) : null;
   const xAtPivot = (j: number, kind: PivotKind) =>
     snap ? xAxis.convertToPixel(snap(j, kind)) : xAt(j);
+  // A DETECTOR-space value (a line's projection, a pivot's price) to a pixel.
+  // Under Log Scale those are ln prices, so they go back through exp first.
+  // Every stroke joins two such points with a straight pixel segment, which is
+  // exact on the axis the lines were found on: a linear axis for linear lines,
+  // the logarithmic one for Log Scale lines.
+  const yLine = (v: number) => yAxis.convertToPixel(tlPrice(cfg, v));
   // A CLOSURE called on every exit, not a call in one place, and that is the
   // point twice over:
   //
@@ -3509,7 +3557,7 @@ function drawTrendlines(
         ctx,
         last.pivots,
         xAtPivot,
-        (price) => yAxis.convertToPixel(price),
+        yLine,
         tagRight,
         bounding.height,
         used,
@@ -3522,7 +3570,7 @@ function drawTrendlines(
         ctx,
         last.pivots,
         xAtPivot,
-        (price) => yAxis.convertToPixel(price),
+        yLine,
         tagRight,
         bounding.height,
         depths,
@@ -3546,7 +3594,7 @@ function drawTrendlines(
       ? { ...ext, mtf: { ...mtf, htfBars: trendlinesHtfBars(chart, indicator.name, mtf.htfStarts) } }
       : ext;
     const inp = evalIdx >= 0
-      ? debugInputFor(dataList, cfg, dext, evalIdx, debugWindow(vr.from, vr.to, toLine), dataList[dataList.length - 1].close)
+      ? debugInputFor(dataList, cfg, dext, evalIdx, debugWindow(vr.from, vr.to, toLine), tlSpace(cfg, dataList[dataList.length - 1].close))
       : { error: "No bars loaded." };
     if (!("error" in inp)) {
       const res = requestDebug(chart, indicator.paneId, indicator.name, inp);
@@ -3564,7 +3612,7 @@ function drawTrendlines(
         const closest = lk && !lk.covered ? lk.matches[0] : undefined;
         debugSegs = paintDebug({
           ctx, lineColor, xAt, xAtPivot,
-          yPx: (price) => yAxis.convertToPixel(price),
+          yPx: yLine,
           width: bounding.width, height: bounding.height, tagRight,
           selectedKey: sel, hoveredKey: ext.hoveredLine,
           winnerKey: selCand?.fate?.kind === "merged" || selCand?.fate?.kind === "fanMerged" ? res.keyOf(selCand.fate.into) : undefined,
@@ -3589,7 +3637,9 @@ function drawTrendlines(
             const ts = dataList.map((d) => d.timestamp);
             const ta = tsAtIndex(ts, ra);
             const tb = tsAtIndex(ts, rb);
-            return ta === null || tb === null ? null : [{ timestamp: ta, value: at(ra) }, { timestamp: tb, value: at(rb) }];
+            return ta === null || tb === null
+              ? null
+              : [{ timestamp: ta, value: tlPrice(cfg, at(ra)) }, { timestamp: tb, value: tlPrice(cfg, at(rb)) }];
           },
           show: {
             failed: ext.debugShowFailed !== false,
@@ -3616,8 +3666,10 @@ function drawTrendlines(
     return true;
   }
   // The CHART's newest close either way: it is the current price, and the price
-  // is the price whatever timeframe the lines were found on.
-  const lastClose = dataList[dataList.length - 1].close;
+  // is the price whatever timeframe the lines were found on. In the
+  // detector's space (ln under Log Scale), since every gate below compares
+  // it with a line's projection.
+  const lastClose = tlSpace(cfg, dataList[dataList.length - 1].close);
   // Forming pin: stopping modes draw through "now" (see trendlineDrawEdge).
   // When Wait is off the line must always cover to the live edge, even before
   // the forming stash has landed — otherwise a 1D pin on a 1H chart leaves a
@@ -3777,7 +3829,7 @@ function drawTrendlines(
       stops && ext?.extendedLines?.includes(key)
         ? lineExtent(line, mode, cfg, drawn, extentEdge, edgeIdx, forceToLastBar).jRight
         : jRight;
-    const yPx = (price: number) => yAxis.convertToPixel(price);
+    const yPx = yLine;
     const endY = (jR: number, xR: number): { y0: number; y1: number } =>
       mtf
         ? pinnedEndY(line, jLeft, jR, x0, xR, toLine(0), toLine(lastChartIdx), xAt, yPx)
@@ -3930,7 +3982,10 @@ function drawTrendlines(
         const timestamp = tsAtIndex(timestamps, cc);
         return timestamp === null || !stepMap
           ? null
-          : { timestamp, value: rampValueAt(stepMap, (j) => projectAt(line, j), stepMap.candlePos(cc), flatSteps) };
+          : {
+              timestamp,
+              value: tlPrice(cfg, rampValueAt(stepMap, (j) => projectAt(line, j), stepMap.candlePos(cc), flatSteps)),
+            };
       };
       const toPoint = (x: number): { timestamp: number; value: number } | null => {
         timestamps ??= dataList.map((d) => d.timestamp);
@@ -3980,6 +4035,7 @@ function drawTrendlines(
                 ? lastIdx - 1
                 : lastIdx
               : lastIdx - 1,
+            tlIsLog(cfg),
           ),
       });
     }
@@ -4030,8 +4086,9 @@ function drawTrendlines(
       // Side of the DRAWN segment, in pixels (y grows downward), so the
       // chosen candle is one whose close visibly sits across the line.
       const lineYAt = (c: number): number => (pieces ? stepY(c) : onSegment(xAxis.convertToPixel(c)));
+      // `price` is a chart close, so it takes the axis as is (not yLine).
       const sideDrawn = (c: number, price: number): number => {
-        const d = yPx(price) - lineYAt(c);
+        const d = yAxis.convertToPixel(price) - lineYAt(c);
         return d < 0 ? 1 : d > 0 ? -1 : 0;
       };
       // Sides alternate with every counted crossing and the last one ended on
@@ -4076,7 +4133,7 @@ function drawTrendlines(
     // meeting in cross) and scattered the tags across the chart, while the
     // newest bar lines them up in one column beside price.
     let xEnd = xAt(drawEdge);
-    let yEnd = yAxis.convertToPixel(projectAt(line, drawEdge));
+    let yEnd = yLine(projectAt(line, drawEdge));
     if (pieces) {
       // On the flat piece under the newest candle when the line reaches it,
       // else where the stroke stops.

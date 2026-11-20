@@ -52,11 +52,14 @@ function Body({ request, existing, defaults, now, onClose }: Props & { existing?
       ok = await patchLineAlert(existing!.id, { ...fields, params: { evalOn } });
     } else {
       const d = (request as Extract<LineAlertRequest, { mode: "create" }>).draft;
-      const { slope, tRef, pRef, t1, p1, t2, p2 } = d.line;
+      const { slope, tRef, pRef, t1, p1, t2, p2, log } = d.line;
       ok = await addLineAlert({
         kind: "line", id: newAlertId(), epic: d.epic, broker: d.broker, precision: d.precision,
         createdAt: Date.now(), ...fields,
-        params: { timeframe: d.timeframe, evalOn, tRef, pRef, slope, anchors: { t1, p1, t2, p2 }, link: d.link },
+        params: {
+          timeframe: d.timeframe, evalOn, tRef, pRef, slope, ...(log ? { log } : {}),
+          anchors: { t1, p1, t2, p2 }, link: d.link,
+        },
       });
     }
     if (ok) onClose();

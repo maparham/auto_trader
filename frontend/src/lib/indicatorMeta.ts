@@ -272,11 +272,16 @@ export function padTrendlinesParams(cp: number[], upTo: number, extendData?: unk
 // The slope band's two slots, owned by the Direction picker.
 const TL_SLOPE_SLOTS = [TL_SLOT_KEYS.indexOf("maxSlopeAtr"), TL_SLOT_KEYS.indexOf("minSlopeAtr")];
 
+// Log Scale is a choice of price axis, not part of a recipe: a preset keeps it.
+const TL_LOG_SLOT = TL_SLOT_KEYS.indexOf("logScale");
+
 // The Preset picker: each preset is a FULL recipe (every slot but the slope
-// band), so picking one is deterministic, and a manual edit to any of those
-// slots reads as Custom. The Direction picker sets the band on its own, so a
-// direction change keeps the preset.
-const TL_PRESET_SLOTS = TL_DEFAULT_PARAMS.map((_, k) => k).filter((k) => !TL_SLOPE_SLOTS.includes(k));
+// band and Log Scale), so picking one is deterministic, and a manual edit to
+// any of those slots reads as Custom. The Direction picker sets the band on
+// its own, so a direction change keeps the preset.
+const TL_PRESET_SLOTS = TL_DEFAULT_PARAMS.map((_, k) => k).filter(
+  (k) => !TL_SLOPE_SLOTS.includes(k) && k !== TL_LOG_SLOT,
+);
 const TRENDLINES_PRESETS: IndicatorPresets = {
   base: TL_DEFAULT_PARAMS,
   slots: TL_PRESET_SLOTS,
@@ -1447,6 +1452,20 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         tip: [
           "Off: at each swing, Lines per Pivot keeps the lines nearest to price.",
           "On: it keeps the strongest (most pivots, then span, then fewest crossings).",
+        ],
+      },
+      {
+        key: "p33",
+        label: "Log Scale",
+        type: "boolean",
+        source: "calcParam",
+        index: 33,
+        default: false,
+        tip: [
+          "Finds lines on a logarithmic price scale, so they are straight on the chart's L scale.",
+          "Equal percent moves count the same at any price.",
+          "ATR settings then measure a share of price, so the same values fit any price level.",
+          "Use with the chart's L scale on.",
         ],
       },
       {

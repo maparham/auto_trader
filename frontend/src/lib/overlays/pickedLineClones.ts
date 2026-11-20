@@ -190,7 +190,10 @@ export class PickedLineClones {
         const raw: RayPoints =
           (l.timeframe === this.resolution
             ? loadedLinePoints(
-            { tRef: l.tRef, pRef: l.pRef, slope: l.slope, anchors: { t1: l.t1, p1: l.p1, t2: l.t2, p2: l.p2 } },
+            {
+              tRef: l.tRef, pRef: l.pRef, slope: l.slope, log: l.log,
+              anchors: { t1: l.t1, p1: l.p1, t2: l.t2, p2: l.p2 },
+            },
                 times,
                 dataList,
               )

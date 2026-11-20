@@ -15,6 +15,8 @@ export interface PickedLine {
   t2: number; p2: number;
   slope: number;
   tRef: number; pRef: number;
+  /** A Log Scale line: slope in ln per bar, level pRef * e^(slope * bars). */
+  log?: true;
 }
 export type Lines = Record<string, PickedLine>;
 
@@ -68,7 +70,7 @@ export function trimLines(lines: Lines | undefined, rows: readonly string[]): Li
 }
 
 export function lineGeoKey(l: PickedLine): string {
-  return [l.epic, l.broker, l.timeframe, l.t1, l.p1, l.t2, l.p2, l.slope].join("|");
+  return [l.epic, l.broker, l.timeframe, l.t1, l.p1, l.t2, l.p2, l.slope, l.log ? "log" : ""].join("|");
 }
 
 export function pickedLineFromSeg(args: {

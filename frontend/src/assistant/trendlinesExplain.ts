@@ -6,6 +6,7 @@
 import type { Chart, KLineData } from "klinecharts";
 import { getIndicatorsByPane, liveExprInstances } from "../lib/indicators";
 import {
+  tlSpace,
   trendlinesHtfBars,
   type TrendlinesCalcPoint,
   type TrendlinesExtend,
@@ -13,7 +14,7 @@ import {
 import { parseTrendlinesConfig, type TrendlinesConfig } from "../lib/indicators/trendlinesOutputs";
 import { runDebugAsync, type DebugRunInput } from "../lib/indicators/trendlinesDebug";
 import { explain, type Verdict } from "../lib/indicators/trendlinesDebugExplain";
-import { forcedPairsFor, lookup, SIM_DEFAULTS, targetToIdx, type TargetLine } from "../lib/indicators/trendlinesDebugLookup";
+import { forcedPairsFor, lookup, SIM_DEFAULTS, targetInSpace, type TargetLine } from "../lib/indicators/trendlinesDebugLookup";
 import { findFix, sideEffects } from "../lib/indicators/trendlinesDebugFix";
 import { debugInputFor } from "../lib/indicators/trendlinesDebugStore";
 import { describeIndicator } from "./describe";
@@ -109,16 +110,14 @@ export async function explainTrendline(
   const dext = mtf
     ? { ...ext, mtf: { ...mtf, htfBars: trendlinesHtfBars(deps.chart, ind.name, mtf.htfStarts) } }
     : ext;
-  const base = debugInputFor(dataList, cfg, dext, lastIdx, [0, lastIdx], dataList[dataList.length - 1].close);
+  const base = debugInputFor(dataList, cfg, dext, lastIdx, [0, lastIdx], tlSpace(cfg, dataList[dataList.length - 1].close));
   if ("error" in base) return { error: `NOT_READY: ${base.error}` };
   const full: DebugRunInput = { ...base, window: [0, base.evalIdx] };
 
   // Now: the closest candidate along the target and what blocks it.
   const times = (full.starts ?? full.bars.map((b) => b.timestamp)).slice(0, full.evalIdx + 1);
-  const tgt = targetToIdx(times, target, full.starts ? "containing" : "nearest");
+  const { tgt, highs, lows } = targetInSpace(times, target, full.starts ? "containing" : "nearest", full.bars, cfg);
   if ("error" in tgt) return { error: `INVALID_ARGS: ${tgt.error}` };
-  const highs = full.bars.map((b) => b.high);
-  const lows = full.bars.map((b) => b.low);
   const run = await runDebugAsync(
     { ...full, window: [tgt.x1, full.evalIdx], forced: forcedPairsFor(highs, lows, tgt, cfg.pivotLen) },
     signal,

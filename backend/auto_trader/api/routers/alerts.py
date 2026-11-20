@@ -556,7 +556,7 @@ async def describe_alert(request: Request, body: DescribeBody) -> dict[str, Any]
 # an id.
 
 
-_LINE_GEOMETRY = frozenset({"tRef", "pRef", "slope", "anchors"})
+_LINE_GEOMETRY = frozenset({"tRef", "pRef", "slope", "log", "anchors"})
 
 
 @router.patch("/api/alerts/{alert_id}")
