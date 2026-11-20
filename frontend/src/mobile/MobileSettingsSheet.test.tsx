@@ -106,4 +106,29 @@ describe("MobileSettingsSheet", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("switches Time gaps and bumps the chart's settings version", async () => {
+    const { mobileSettingsVersion } = await import("./mobileChartState");
+    const { loadSettings } = await import("../theme");
+    render(<MobileSettingsSheet onClose={() => {}} />);
+    const sw = screen.getByRole("switch", { name: /time gaps/i });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    const before = mobileSettingsVersion.value;
+    await userEvent.click(sw);
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    expect(loadSettings().equalWidthDays).toBe(true);
+    expect(mobileSettingsVersion.value).toBe(before + 1);
+  });
+
+  it("says alerts come as app notifications inside the Android app", async () => {
+    pushSupported.mockReturnValue(false);
+    (window as unknown as Record<string, unknown>).ChartkarAndroid = { invoke: () => "null" };
+    try {
+      render(<MobileSettingsSheet onClose={() => {}} />);
+      expect(screen.getByText(/alerts arrive as notifications from this app/i)).toBeTruthy();
+      expect(screen.queryByText(/aren't supported/)).toBeNull();
+    } finally {
+      delete (window as unknown as Record<string, unknown>).ChartkarAndroid;
+    }
+  });
 });

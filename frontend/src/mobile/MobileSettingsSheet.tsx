@@ -13,6 +13,7 @@ import { toast } from "../lib/notify";
 import { openSettings } from "../lib/signals";
 import { mobileSettingsVersion } from "./mobileChartState";
 import { isDemoMode } from "../lib/demoMode";
+import { inAndroidApp } from "../lib/shellBridge";
 
 const THEMES: { value: Theme; label: string }[] = [
   { value: "light", label: "Light" },
@@ -80,6 +81,14 @@ export default function MobileSettingsSheet({ onClose }: { onClose: () => void }
     mobileSettingsVersion.set(mobileSettingsVersion.value + 1);
   }
 
+  // Desktop's Appearance > "Time gaps" (Settings.equalWidthDays).
+  function toggleTimeGaps() {
+    const next = { ...settings, equalWidthDays: !settings.equalWidthDays };
+    saveSettings(next);
+    setSettings(next);
+    mobileSettingsVersion.set(mobileSettingsVersion.value + 1);
+  }
+
   function switchToDesktop() {
     localStorage.setItem("auto-trader.mobileBoot", "0");
     location.assign("/?m=0");
@@ -92,6 +101,9 @@ export default function MobileSettingsSheet({ onClose }: { onClose: () => void }
         <div className="m-set-hint">
           <a href="/?sign_in=1">Sign up free</a> to get price alerts on this phone.
         </div>
+      ) : inAndroidApp() ? (
+        // The Android app gets alerts through FCM (lib/appPush.ts), not Web Push.
+        <div className="m-set-hint">Alerts arrive as notifications from this app.</div>
       ) : supported ? (
         <button
           className={`m-set-toggle${subscribed ? " on" : ""}`}
@@ -123,6 +135,17 @@ export default function MobileSettingsSheet({ onClose }: { onClose: () => void }
           </button>
         ))}
       </div>
+
+      <div className="m-set-label">Chart</div>
+      <button
+        className={`m-set-toggle${settings.equalWidthDays ? " on" : ""}`}
+        role="switch"
+        aria-checked={settings.equalWidthDays}
+        onClick={toggleTimeGaps}
+      >
+        Time gaps
+      </button>
+      <div className="m-set-hint">Every day the same width; missing bars show as gaps.</div>
 
       {/* Full chart-settings modal (timezone, price side, crosshair, alert and
           trading defaults). The chart context menu's Settings item opens the
