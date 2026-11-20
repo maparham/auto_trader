@@ -111,7 +111,7 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
         self._password = password or settings.password
         self._base_url = base_url or settings.base_url
 
-        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=30.0)
+        self._client = self._new_client()
         self._cst: str | None = None
         self._security_token: str | None = None
         self._authed_at: datetime | None = None
@@ -135,9 +135,6 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
         fires where marketStatus is trustworthy."""
         host = (self._base_url or "").lower()
         return "api-capital" in host and "demo-api-capital" not in host
-
-    async def aclose(self) -> None:
-        await self._client.aclose()
 
     async def __aenter__(self) -> "CapitalComBroker":
         return self
@@ -183,14 +180,14 @@ class CapitalComBroker(SessionAuthBroker, MarketDataBroker):
             with candle_timing.span("ratelimit"):
                 await self._rate.acquire()
             sent_cst = self._cst  # the token this request carries; compared on 401
-            resp = await self._client.request(
+            resp = await self._send(
                 method, path, params=params, json=json, headers=self._auth_headers()
             )
             if resp.status_code == 401:  # token rejected mid-flight; re-auth once
                 candle_timing.note("401, re-login")
                 await self._reauth(sent_cst)
                 await self._rate.acquire()
-                resp = await self._client.request(
+                resp = await self._send(
                     method, path, params=params, json=json, headers=self._auth_headers()
                 )
             if resp.status_code == 429 and attempt < _RATE_LIMIT_RETRIES:

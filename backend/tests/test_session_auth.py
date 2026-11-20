@@ -267,3 +267,139 @@ def test_html_429_is_neither_blocked_nor_down(monkeypatch: pytest.MonkeyPatch) -
             await broker.aclose()
 
     asyncio.run(run())
+
+
+# --- a wedged client is replaced --------------------------------------------
+#
+# Incident 2026-11-19: the hosted capital-live client stopped answering. Every
+# login POST hung until the breaker's 8 s budget cancelled it, for 15 hours,
+# while a fresh curl login from the same box took 1 s. The process held 51
+# dead pooled sockets; a restart fixed it. These pin the self-heal: calls cut
+# off with no answer are counted, and after enough in a row the next call
+# gets a new client.
+
+
+def _stuck_transport() -> httpx.MockTransport:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.Event().wait()  # never answers
+        raise AssertionError("unreachable")
+
+    return httpx.MockTransport(handler)
+
+
+def _ok_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        base_url="http://t", transport=httpx.MockTransport(lambda r: _session_ok())
+    )
+
+
+async def _cut_off_logins(broker: CapitalComBroker, n: int) -> None:
+    """n logins, each cancelled by a short budget as BrokerHealth.run does."""
+    for _ in range(n):
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(broker._ensure_session(), 0.01)
+
+
+def test_client_rebuilt_after_calls_cut_off_in_a_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    import auto_trader.brokers._session as session_mod
+
+    monkeypatch.setattr(session_mod, "_OLD_CLIENT_CLOSE_DELAY", 0.0)
+    monkeypatch.setattr(session_mod, "_STALL_MIN_WAIT_S", 0.0)
+    broker = _make_broker(_stuck_transport())
+    broker._new_client = _ok_client  # type: ignore[method-assign]
+    stuck = broker._client
+
+    async def run() -> None:
+        try:
+            await _cut_off_logins(broker, session_mod._STALL_REBUILD_AFTER)
+            await asyncio.wait_for(broker._ensure_session(), 1.0)
+            assert broker._client is not stuck
+            assert broker._cst == "cst-1"
+            await asyncio.gather(*broker._close_tasks)  # the deferred close
+            assert stuck.is_closed
+        finally:
+            await broker.aclose()
+
+    asyncio.run(run())
+
+
+def test_an_answer_resets_the_cut_off_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    import auto_trader.brokers._session as session_mod
+
+    monkeypatch.setattr(session_mod, "_STALL_MIN_WAIT_S", 0.0)
+
+    answers = {"on": False}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if not answers["on"]:
+            await asyncio.Event().wait()
+        return _session_ok()
+
+    broker = _make_broker(httpx.MockTransport(handler))
+    first = broker._client
+    broker._new_client = _ok_client  # type: ignore[method-assign]
+
+    async def run() -> None:
+        try:
+            await _cut_off_logins(broker, session_mod._STALL_REBUILD_AFTER - 1)
+            answers["on"] = True
+            await broker._ensure_session()  # an answer: the client is fine
+            broker._cst = None  # force the next call to log in again
+            answers["on"] = False
+            await _cut_off_logins(broker, session_mod._STALL_REBUILD_AFTER - 1)
+            assert broker._client is first
+        finally:
+            await broker.aclose()
+
+    asyncio.run(run())
+
+
+def test_quick_cancels_do_not_count() -> None:
+    """A fetch cancelled at once (a closed chart) says nothing about the client."""
+    import auto_trader.brokers._session as session_mod
+
+    broker = _make_broker(_stuck_transport())
+    first = broker._client
+
+    async def run() -> None:
+        try:
+            await _cut_off_logins(broker, session_mod._STALL_REBUILD_AFTER + 2)
+            assert broker._stalls == 0
+            assert broker._client is first
+        finally:
+            await broker.aclose()
+
+    asyncio.run(run())
+
+
+def test_late_cut_offs_on_the_old_client_do_not_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Calls still hung on a replaced client must not count against the new one."""
+    import auto_trader.brokers._session as session_mod
+
+    monkeypatch.setattr(session_mod, "_STALL_MIN_WAIT_S", 0.0)
+    broker = _make_broker(_stuck_transport())
+    broker._new_client = _ok_client  # type: ignore[method-assign]
+    stuck = broker._client
+
+    async def run() -> None:
+        try:
+            # Hung data calls on the stuck client, cut off only after the swap.
+            hung = [
+                asyncio.ensure_future(broker._send("GET", "/x"))
+                for _ in range(session_mod._STALL_REBUILD_AFTER)
+            ]
+            await asyncio.sleep(0)
+            broker._stalls = session_mod._STALL_REBUILD_AFTER
+            await broker._send("POST", "/api/v1/session")  # swaps, then answers
+            fresh = broker._client
+            assert fresh is not stuck
+            for t in hung:
+                t.cancel()
+            await asyncio.gather(*hung, return_exceptions=True)
+            assert broker._stalls == 0
+            assert broker._client is fresh
+        finally:
+            await broker.aclose()
+        assert stuck.is_closed  # aclose closes the replaced client too
+
+    asyncio.run(run())

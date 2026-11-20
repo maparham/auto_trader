@@ -25,6 +25,8 @@ Per-broker seams (must be overridden by subclasses):
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -40,7 +42,26 @@ _RATE_LIMIT_RETRIES = 3
 # growing backoff before giving up.
 _SESSION_MAX_RETRIES = 4
 _SESSION_RETRY_BACKOFF = 1.0  # seconds; multiplied by the attempt number
+# A call cut off before any answer (cancelled by BrokerHealth's budget, or an
+# httpx timeout) can leave its pooled connection held for good, and enough of
+# those wedge the client: every later call hangs while the broker itself is
+# fine (2026-11-19, 15 h of capital-live timeouts that only a restart fixed).
+# After this many cut-off calls with no answer in between, the next call gets
+# a fresh client.
+_STALL_REBUILD_AFTER = 5
+# Only a call that waited this long counts as cut off: a fetch cancelled at
+# once (a closed chart, a dropped browser request) says nothing about the
+# client. BrokerHealth's budget (8 s) and the pool timeout (5 s) both pass it.
+_STALL_MIN_WAIT_S = 4.0
+# The replaced client is closed this much later, so calls still in flight on
+# it can end; `aclose()` closes any still waiting.
+_OLD_CLIENT_CLOSE_DELAY = 300.0
+# Connect and pool waits end before BrokerHealth's 8 s budget, so httpx gives
+# up on a dead connection itself instead of being cancelled from outside;
+# reads keep 30 s for long history pages.
+_CLIENT_TIMEOUT = httpx.Timeout(30.0, connect=5.0, pool=5.0)
 
+log = logging.getLogger(__name__)
 
 def raise_if_waf_blocked(resp: httpx.Response) -> None:
     """Classify an HTML error response: a blocked network path or a broker outage.
@@ -81,6 +102,10 @@ class SessionAuthBroker:
     """
 
     SESSION_TTL: "object"  # timedelta; set per-subclass
+    # Cut-off calls in a row on the current client (see _send). Class defaults
+    # so a broker built without __init__ (tests) has them too.
+    _stalls: int = 0
+    _close_tasks: "frozenset[asyncio.Task] | set[asyncio.Task]" = frozenset()
 
     # --- seams (override per broker) ---------------------------------------
 
@@ -102,6 +127,61 @@ class SessionAuthBroker:
 
     def _auth_headers(self) -> dict:
         raise NotImplementedError
+
+    def _new_client(self) -> httpx.AsyncClient:
+        """The HTTP client for this broker; `__init__` and the rebuild both use it."""
+        return httpx.AsyncClient(base_url=self._base_url, timeout=_CLIENT_TIMEOUT)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+        for task in list(self._close_tasks):
+            task.cancel()  # its `finally` closes the replaced client now
+        await asyncio.gather(*self._close_tasks, return_exceptions=True)
+
+    # --- every upstream call --------------------------------------------------
+
+    async def _send(self, method: str, url: str, **kwargs) -> httpx.Response:
+        """`self._client.request`, replacing the client first when it looks
+        wedged (see _STALL_REBUILD_AFTER). Every Capital/IG call goes here."""
+        if self._stalls >= _STALL_REBUILD_AFTER:
+            self._replace_client()
+        client = self._client
+        started = time.monotonic()
+        try:
+            resp = await client.request(method, url, **kwargs)
+        except (asyncio.CancelledError, httpx.TimeoutException):
+            # A call on a client already replaced says nothing about the new one.
+            if client is self._client and time.monotonic() - started >= _STALL_MIN_WAIT_S:
+                self._stalls += 1
+            raise
+        if client is self._client:
+            self._stalls = 0
+        return resp
+
+    def _replace_client(self) -> None:
+        old = self._client
+        self._client = self._new_client()
+        log.warning(
+            "%s: %d calls in a row got no answer, using a new HTTP client",
+            type(self).__name__, self._stalls,
+        )
+        self._stalls = 0
+
+        async def close_old() -> None:
+            try:
+                await asyncio.sleep(_OLD_CLIENT_CLOSE_DELAY)
+            finally:
+                try:
+                    await old.aclose()
+                except Exception:  # a wedged client may not close cleanly
+                    log.debug("closing the replaced HTTP client failed", exc_info=True)
+
+        # Per instance, never shared: a class-level set would mix brokers.
+        if "_close_tasks" not in self.__dict__:
+            self._close_tasks = set()
+        task = asyncio.get_running_loop().create_task(close_old())
+        self._close_tasks.add(task)
+        task.add_done_callback(self._close_tasks.discard)
 
     # --- shared lifecycle ----------------------------------------------------
 
@@ -133,7 +213,8 @@ class SessionAuthBroker:
             # instead of failing the caller (which, for a live stream, turns
             # into a reconnect that just tries the session endpoint again).
             for attempt in range(_SESSION_MAX_RETRIES):
-                resp = await self._client.post(
+                resp = await self._send(
+                    "POST",
                     self._login_path(),
                     headers=self._login_headers(),
                     json=self._login_json(),

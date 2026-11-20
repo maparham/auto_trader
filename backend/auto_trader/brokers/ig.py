@@ -159,7 +159,7 @@ class IGBroker(SessionAuthBroker, MarketDataBroker):
         self._api_key, self._identifier, self._password = ig_settings.creds(side)
         self._base_url = ig_settings.base_url(side)
 
-        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=30.0)
+        self._client = self._new_client()
         self._cst: str | None = None
         self._security_token: str | None = None
         self._account_id: str | None = None  # derived from the login response
@@ -171,9 +171,6 @@ class IGBroker(SessionAuthBroker, MarketDataBroker):
     @property
     def is_real_money(self) -> bool:
         return self._side == "live"
-
-    async def aclose(self) -> None:
-        await self._client.aclose()
 
     # --- auth (shared lifecycle lives in SessionAuthBroker) -----------------
 
@@ -238,13 +235,13 @@ class IGBroker(SessionAuthBroker, MarketDataBroker):
             await self._ensure_session()
             await self._rate.acquire()
             sent_cst = self._cst
-            resp = await self._client.request(
+            resp = await self._send(
                 method, path, params=params, json=json, headers=_headers()
             )
             if resp.status_code == 401:  # token rejected mid-flight; re-auth once
                 await self._reauth(sent_cst)
                 await self._rate.acquire()
-                resp = await self._client.request(
+                resp = await self._send(
                     method, path, params=params, json=json, headers=_headers()
                 )
             if resp.status_code == 429 and attempt < _RATE_LIMIT_RETRIES:
