@@ -2679,6 +2679,19 @@ export interface TrendlineTagBox {
   x: number;
   y: number;
   w: number;
+  /** The row opens with a slot for this line's alert bell: the instance,
+   * the lineKey and the slot's center x (pane pixels). */
+  bell?: { name: string; key: string; x: number };
+}
+
+// Which lines of an instance carry an alert bell, per chart. The chart's
+// paint hook sets it; the painter opens those lines' end tag rows with a
+// slot for the bell, so the bell comes first and the note after it.
+const BELL_KEYS = new WeakMap<object, (name: string) => ReadonlySet<string>>();
+const NO_BELLS: ReadonlySet<string> = new Set();
+
+export function setTrendlineBellSource(chart: object, fn: (name: string) => ReadonlySet<string>): void {
+  BELL_KEYS.set(chart, fn);
 }
 
 // The end tags each instance painted, so DOM furniture placed at a line's end
@@ -3672,6 +3685,7 @@ function drawTrendlines(
   // Per-line user marks (Hide / Highlight) for THIS symbol, and the picked
   // line. Render-only: they restyle lines already chosen above, never choose.
   const marks = marksFor(ext?.lineMarks, chart.getSymbol?.()?.ticker);
+  const bellKeys = BELL_KEYS.get(chart)?.(indicator.name) ?? NO_BELLS;
   const selectedKey = ext?.selectedLine;
   const hoveredKey = ext?.hoveredLine;
   const emphasized = ext?.emphasized === true;
@@ -4077,14 +4091,17 @@ function drawTrendlines(
     if (!showStats && rank === undefined && !note) continue;
     const label = showStats ? trendlineStatsLabel(line.touches, line.crossings, rank) : rank !== undefined ? `#${rank}` : "";
     const wLabel = label ? ctx.measureText(label).width : 0;
+    // A line with an alert bell opens its row with the bell's slot.
+    const hasBell = bellKeys.has(key);
+    const wBell = hasBell ? TL_BELL_W + TL_BELL_GAP : 0;
     // The room right of the tag, but never under TL_NOTE_MIN_W: near the
     // pane's edge the row shifts left (the clamp below), as the tag alone does.
-    const wLead = label ? wLabel + TL_NOTE_GAP : 0;
+    const wLead = wBell + (label ? wLabel + TL_NOTE_GAP : 0);
     const noteRoom = Math.min(tagRight - wLead, Math.max(TL_NOTE_MIN_W, tagRight - xEnd - TL_TAG_GAP - wLead));
     const noteText = note ? fitNote(ctx, note, noteRoom) : "";
     const wNote = noteText ? ctx.measureText(noteText).width : 0;
     if (!label && !noteText) continue;
-    const wTag = label && noteText ? wLabel + TL_NOTE_GAP + wNote : wLabel || wNote;
+    const wTag = wBell + (label && noteText ? wLabel + TL_NOTE_GAP + wNote : wLabel || wNote);
     const xTag = Math.min(xEnd + TL_TAG_GAP, tagRight - wTag);
     let yTag =
       pieces || xEnd === x0
@@ -4092,7 +4109,10 @@ function drawTrendlines(
         : y0 + ((yEnd - y0) * (xTag - x0)) / (xEnd - x0);
     yTag = clearTagRow(placedTags, xTag, yTag, wTag, bounding.height);
     placedTags.push({ x: xTag, y: yTag, w: wTag });
-    myTags.push({ x: xTag, y: yTag, w: wTag });
+    myTags.push({
+      x: xTag, y: yTag, w: wTag,
+      ...(hasBell ? { bell: { name: indicator.name, key, x: xTag + TL_BELL_W / 2 } } : {}),
+    });
     ctx.fillStyle = ctx.strokeStyle;
     const paint = (text: string, x: number) => {
       ctx.save();
@@ -4103,8 +4123,9 @@ function drawTrendlines(
       ctx.restore();
       ctx.fillText(text, x, yTag);
     };
-    if (label) paint(label, xTag);
-    if (noteText) paint(noteText, label ? xTag + wLabel + TL_NOTE_GAP : xTag);
+    const xText = xTag + wBell;
+    if (label) paint(label, xText);
+    if (noteText) paint(noteText, label ? xText + wLabel + TL_NOTE_GAP : xText);
   }
   ctx.restore();
   // Last, so the marks sit over the strokes, and keyed on the set the pane
@@ -4124,6 +4145,10 @@ function drawTrendlines(
 
 /** Pixels between a line's end tag and its note. */
 const TL_NOTE_GAP = 6;
+/** The alert bell's slot at the front of a tag row (.tl-alert-bell is 14px),
+ * and the air after it. */
+const TL_BELL_W = 16;
+const TL_BELL_GAP = 2;
 /** Width a note always gets, shifting its row left near the pane's edge. */
 const TL_NOTE_MIN_W = 90;
 

@@ -40,7 +40,7 @@ import {
 import { buildLegendRows, buildSubPaneLegends, buildInsetLegend, type LegendRow, type SubPaneLegendData, type ChartLegendHandle } from "../ChartLegend";
 import { insetBandBox, type InsetBandBox } from "../lib/indicators/inset";
 import { slopeMaLines } from "../lib/indicators/slope";
-import { getTrendlineTags } from "../lib/indicators/trendlines";
+import { getTrendlineTags, setTrendlineBellSource } from "../lib/indicators/trendlines";
 import { getIndicatorById, getIndicatorsByPane } from "../lib/indicators";
 import {
   firedIndicatorAlerts, firedLineAlerts, firedPriceAlerts, loadIndicatorAlerts, loadLineAlerts,
@@ -83,6 +83,7 @@ const TRADE_HANDLE_R = 4.5;
 const LINE_BELL_GAP = 24;
 // .tl-alert-bell is 14px; 2px of air between stacked bells.
 const LINE_BELL_SIZE = 16;
+const NO_BELL_KEYS: ReadonlySet<string> = new Set();
 
 // The alert-tag element type (mirrors ChartCore's setAlertTags state element).
 type AlertTag = {
@@ -254,6 +255,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
   } = deps;
   // The latest alert curve bells (chart-absolute), so curve-end labels can step past them.
   const lineBellsRef = useRef<AlertCurveBellTag[]>([]);
+  // The last set of Trendlines lines given a bell slot (see setTrendlineBellSource).
+  const bellSigRef = useRef("");
 
   const {
     chartRef,
@@ -912,22 +915,56 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     // not the indicator itself is shown.
     // Picked-line clones end at the last bar too; not gated by the alert eye.
     controller.pickedLineClones.refresh();
+    // Line alerts linked to a Trendlines line of this cell: that line's end
+    // tag row (×N, #rank, note) opens with the bell, so the note reads after
+    // it. The painter reads the set on its draw; when the set changes, the
+    // pane's main layer repaints at once (an alert's overlay alone repaints
+    // only the overlay layer), so the rows below already hold the slots.
+    const bellKeys = new Map<string, Set<string>>();
     if (!overlays.getAlertsHidden()) {
       // The lines first: their end follows the last bar, and this also
       // refreshes rayPoints() for a pinned stroke moving with new bars and
       // history.
       controller.indicatorAlerts.refreshRays();
+      for (const a of [
+        ...loadLineAlerts(epicRef.current, brokerIdRef.current),
+        ...firedLineAlerts(epicRef.current, brokerIdRef.current),
+      ]) {
+        const l = a.params.link;
+        if (!l || l.scope !== scope || !controller.indicatorAlerts.rayPoints(a.id)) continue;
+        const keys = bellKeys.get(l.instanceId) ?? new Set<string>();
+        keys.add(l.lineKey);
+        bellKeys.set(l.instanceId, keys);
+      }
+    }
+    const bellSig = [...bellKeys].map(([n, ks]) => `${n}\u0000${[...ks].sort().join("\u0000")}`).sort().join("\u0001");
+    setTrendlineBellSource(chart, (name) => bellKeys.get(name) ?? NO_BELL_KEYS);
+    if (bellSig !== bellSigRef.current) {
+      bellSigRef.current = bellSig;
+      (chart as { updatePane?: (level: number, paneId?: string) => void }).updatePane?.(0, "candle_pane");
+    }
+    if (!overlays.getAlertsHidden()) {
       // Fired "once" line alerts drew a gray ray too (refreshRays): same bell, gray.
       const lineBellAlerts: Array<LineAlert & { firedAt?: number }> = [
         ...loadLineAlerts(epicRef.current, brokerIdRef.current),
         ...firedLineAlerts(epicRef.current, brokerIdRef.current),
       ];
+      const rowTags = getTrendlineTags(chart, "candle_pane");
+      const rowTop = chart.getSize("candle_pane")?.top ?? 0;
       for (const a of lineBellAlerts) {
         // Wherever refreshRays drew the alert's line (any cell of this
         // symbol, on its timeframe or under a pin to it), the bell follows.
         const pts = controller.indicatorAlerts.rayPoints(a.id);
         const dl = chart.getDataList();
         if (!pts || dl.length === 0) continue;
+        const link = a.params.link;
+        const slot = link && link.scope === scope
+          ? rowTags.find((t) => t.bell?.name === link.instanceId && t.bell.key === link.lineKey)
+          : undefined;
+        if (slot?.bell) {
+          lineBells.push({ id: a.id, x: Math.round(slot.bell.x), y: Math.round(slot.y + rowTop), kind: "line", ...(a.firedAt != null ? { firedAt: a.firedAt } : {}) });
+          continue;
+        }
         // The line's extension just past the chart's last bar, extrapolated
         // in pixel space through the ray's two points.
         const px = chart.convertToPixel(
