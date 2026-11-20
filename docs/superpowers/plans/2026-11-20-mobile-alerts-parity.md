@@ -81,11 +81,11 @@
 
 **Interfaces:**
 - Consumes: `useAlertTick`, `historyRowView`, `unseenCount` (Task 1); `ago`, `clearTriggered`, `loadTriggeredSeen`, `pushTriggeredSeen`, `brokerLabel`.
-- Produces: `MobileAlertsView` renders each History row as `.m-alerts-row.m-alerts-hist` with `.m-alerts-epic` (title), `.m-alerts-broker` (badge text `brokerLabel(foreignBroker)`), `.m-alerts-time` (`ago(t.time, now)`), and calls `openAlertRow(t)` on tap for non-account rows (Task 3 supplies the function; here the row calls a prop-less import `openMobileAlert` from `./mobileChartState`, stubbed in tests).
+- Produces: `MobileAlertsView` renders each History row as `.m-alerts-row.m-alerts-hist` with `.m-alerts-epic` (title), `.m-alerts-broker` (badge text `brokerLabel(foreignBroker)`), `.m-alerts-time` (`ago(t.time, now)`). Rows get no tap handler in this task; Task 3 adds it.
 
 - [ ] **Step 1: Write the failing tests** in `MobileAlertsView.test.tsx`:
   - History row shows `"5m ago"` for `time = Date.now() - 5*60_000`.
-  - An account row shows the account label and tapping it does not call `openMobileAlert`.
+  - An account row shows the account label.
   - A row with `broker:"ig"` while the mobile broker is `capital` shows the badge `brokerLabel("ig")`; a row with no `broker` shows none.
   - "Clear history" calls `clearTriggered` and the list shows "No alerts have triggered yet."; the button is absent when History is empty.
   - With `loadTriggeredSeen` returning 0 and two rows, the History button shows `2`; opening History calls `pushTriggeredSeen(newestTime)`.
@@ -118,7 +118,7 @@
   - `broker: "capital:demo"` while on `capital`: same as above, no confirm.
   - Unknown broker with accounts cached: `toast` called with the exact text, `confirmRequest` stays null, `mobileAccount` unchanged.
   - Other broker: confirm shown with title "Switch broker?"; its `onConfirm` sets `mobileAccount` to that broker's account, and after `bootMobileMarket` (mocked `initialMarket` returning another symbol) and `resolveInstrument` settle, `mobileSymbol.value.epic` is the alert's epic.
-  - In `MobileAlertsView.test.tsx`: tapping a symbol row calls `openMobileAlert(t.epic, t.broker, precision)`.
+  - In `MobileAlertsView.test.tsx`: tapping a symbol row calls `openMobileAlert(t.epic, t.broker, precision)`; tapping an account row calls nothing.
 
 - [ ] **Step 2: Run, expect FAIL**
   Run: `cd frontend && npx vitest run src/mobile/mobileChartState.test.ts src/mobile/MobileAlertsView.test.tsx`
