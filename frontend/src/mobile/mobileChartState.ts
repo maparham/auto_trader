@@ -28,6 +28,8 @@ import { getDemoSnapshot } from "../lib/demoSnapshot";
 export interface MobileChartCtx {
   chart: Chart;
   controller: ChartController;
+  /** The symbol this chart was mounted for (ChartCore remounts per epic). */
+  epic?: string;
 }
 export const mobileChartCtx = new Signal<MobileChartCtx | null>(null);
 export const mobileSymbol = new Signal<Instrument | null>(null);

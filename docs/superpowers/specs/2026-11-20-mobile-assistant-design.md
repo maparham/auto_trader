@@ -24,16 +24,18 @@ typing.
   `market.select`; no backtest, sweep, dealing or tab actions, so the
   assistant's tool list (built from registered actions) has none of them.
   Sets the focused chart and drawings providers from `mobileChartCtx`,
-  `mobileSymbol`, `mobileChartScope` and `mobilePeriod`, with cell id
-  `"mobile"`, and only while the chart shown is the one the scope names.
+  `mobileSymbol`, `mobileChartScope` and `mobilePeriod`, and only while the
+  mounted chart is the one for the symbol shown (`mobileChartCtx.epic`).
+  The cell id names the chart (`mobileCellId(scope, epic)`): each chart has
+  its own chat and undo, and a chip tap mid-turn makes the chat wait, as a
+  cell switch does on desktop. Chats are not pruned.
   Fetches the assistant status.
-- Phone `market.select`: `showMobileEpic`, then waits (up to 10 s) for the
-  new chart to mount, so the next tool acts on it.
+- Phone `market.select`: `showMobileEpic`, then waits (up to 10 s, or until
+  Stop) for the new chart to mount, so the next tool acts on it.
 - `mobile/MobileAssistant.tsx`: the sparkle button (only when
   `assistantConfigured`, never in demo) and the desktop `AssistantPanel`
   in a `.m-assistant` box over the lower part of the chart body. Back closes
   it.
 - Server side unchanged: admin only, as on desktop.
 
-**Non-goals:** backtest tools on the phone; a chat per chart tab (the phone
-has one chart, so one chat).
+**Non-goals:** backtest tools on the phone.

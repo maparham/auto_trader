@@ -1,18 +1,23 @@
 // The phone's AI assistant (spec: 2026-11-20-mobile-assistant-design.md): a
 // sparkle button above the pencil opens the desktop AssistantPanel over the
-// lower part of the chart, so the chart stays in view while it changes. One
-// chat, since the phone has one chart (cell id "mobile"). Shown only when the
+// lower part of the chart, so the chart stays in view while it changes. Each
+// chart has its own chat (currentMobileCellId), as each cell does on desktop;
+// chats are never pruned, since the phone has no list of its open cells and a
+// chat waiting on another chart must survive. Shown only when the
 // server says the assistant is set up (admin only, never in the demo).
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { assistantConfigured } from "../assistant/api";
 import { lazyChunk } from "../components/lazyChunk";
 import { isDemoMode } from "../lib/demoMode";
 import { useBackClose } from "./backStack";
-import { mobilePeriod, mobileSymbol } from "./mobileChartState";
-import { installMobileAssistant, MOBILE_CELL_ID } from "./assistantSetup";
+import { mobileChartCtx, mobileChartScope, mobilePeriod, mobileSymbol } from "./mobileChartState";
+import { currentMobileCellId, installMobileAssistant } from "./assistantSetup";
 
 const AssistantPanel = lazyChunk(() => import("../AssistantPanel"));
-const CELL_IDS = [MOBILE_CELL_ID];
+const subscribeChart = (fn: () => void) => {
+  const offs = [mobileChartCtx.subscribe(fn), mobileChartScope.subscribe(fn), mobileSymbol.subscribe(fn)];
+  return () => offs.forEach((off) => off());
+};
 // The phone registers no backtest tools, so its suggestions stay on the chart.
 const MOBILE_EXAMPLES = [
   "Add rising trendlines on the daily",
@@ -33,6 +38,7 @@ export default function MobileAssistant() {
     (fn) => mobileSymbol.subscribe(fn),
     () => mobileSymbol.value,
   );
+  const cellId = useSyncExternalStore(subscribeChart, currentMobileCellId);
   const period = useSyncExternalStore(
     (fn) => mobilePeriod.subscribe(fn),
     () => mobilePeriod.value,
@@ -49,8 +55,7 @@ export default function MobileAssistant() {
   return (
     <div className="m-assistant">
       <AssistantPanel
-        cellId={MOBILE_CELL_ID}
-        cellIds={CELL_IDS}
+        cellId={cellId}
         examples={MOBILE_EXAMPLES}
         chart={symbol && period ? { epic: symbol.epic, resolution: period.resolution } : null}
         onClose={() => setOpen(false)}

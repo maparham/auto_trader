@@ -240,7 +240,7 @@ export default function MobileChartView({ active = true }: { active?: boolean })
             syncCrosshair={false}
             syncTime={false}
             locked={false}
-            onReady={(_id, chart, controller) => mobileChartCtx.set({ chart, controller })}
+            onReady={(_id, chart, controller) => mobileChartCtx.set({ chart, controller, epic: symbol!.epic })}
             onPeriod={(_id, p) => {
               if (p.resolution !== mobilePeriod.value?.resolution) mobilePeriod.set(p);
             }}

@@ -15,7 +15,7 @@ vi.mock("../lib/feed", async (orig) => ({
   resolveInstrument: (...a: unknown[]) => resolveInstrument(...a),
 }));
 
-import { installMobileAssistant, MARKET_SELECT_WAIT_MS } from "./assistantSetup";
+import { installMobileAssistant, mobileCellId, MARKET_SELECT_WAIT_MS } from "./assistantSetup";
 import { listActions, invokeAction } from "../agent/registry";
 import { focusedChart } from "../agent/actions/chart";
 import { focusedDrawings } from "../agent/actions/drawings";
@@ -29,12 +29,13 @@ import {
 } from "./mobileChartState";
 
 const inst = (epic: string) => ({ epic, name: epic, pricePrecision: 2 }) as never;
-const ctxFor = (scope: string) => ({ chart: { id: scope }, controller: { scope, overlays: { id: scope } } }) as never;
+const ctxFor = (scope: string, epic: string) =>
+  ({ chart: { id: scope }, controller: { scope, overlays: { id: scope } }, epic }) as never;
 
-function showChart(epic: string) {
+function showChart(epic: string, scope = `mobile:${epic}`) {
   mobileSymbol.set(inst(epic));
-  mobileChartScope.set({ scope: `mobile:${epic}`, epic } as never);
-  mobileChartCtx.set(ctxFor(`mobile:${epic}`));
+  mobileChartScope.set({ scope, epic } as never);
+  mobileChartCtx.set(ctxFor(scope, epic));
 }
 
 beforeEach(() => {
@@ -63,11 +64,11 @@ describe("installMobileAssistant", () => {
   it("points the focused chart and drawings at the phone's chart", () => {
     const f = focusedChart();
     expect(f.epic).toBe("US100");
-    expect(f.cellId).toBe("mobile");
+    expect(f.cellId).toBe(mobileCellId("mobile:US100", "US100"));
     expect(f.resolution).toBe("HOUR");
     expect(f.broker).toBe("capital");
     expect(f.scope).toBe("mobile:US100");
-    expect(focusedDrawings().cellId).toBe("mobile");
+    expect(focusedDrawings().cellId).toBe(f.cellId);
   });
 
   it("has no focused chart while the mounted one is for another symbol", () => {
@@ -83,7 +84,7 @@ describe("installMobileAssistant", () => {
     expect(mobileSymbol.value?.epic).toBe("DE40");
     expect(done).toBe(false);
     mobileChartScope.set({ scope: "mobile:DE40", epic: "DE40" } as never);
-    mobileChartCtx.set(ctxFor("mobile:DE40"));
+    mobileChartCtx.set(ctxFor("mobile:DE40", "DE40"));
     await expect(p).resolves.toMatchObject({ epic: "DE40" });
     expect(focusedChart().epic).toBe("DE40");
   });
@@ -98,5 +99,32 @@ describe("installMobileAssistant", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("gives each chart its own cell: another scope or another symbol is another chat", () => {
+    const a = focusedChart().cellId;
+    showChart("US100", "layout-cell-2");
+    const b = focusedChart().cellId;
+    showChart("DE40", "mobile-fallback");
+    const c = focusedChart().cellId;
+    showChart("JP225", "mobile-fallback");
+    const d = focusedChart().cellId;
+    expect(new Set([a, b, c, d]).size).toBe(4);
+  });
+
+  it("does not take the old chart for the new symbol when both share a scope", () => {
+    showChart("DE40", "mobile-fallback");
+    mobileSymbol.set(inst("JP225"));
+    mobileChartScope.set({ scope: "mobile-fallback", epic: "JP225" } as never);
+    expect(() => focusedChart()).toThrow(/no focused chart/);
+  });
+
+  it("market.select stops waiting when the turn is stopped", async () => {
+    const ac = new AbortController();
+    const p = invokeAction("market.select", { epic: "FR40" }, { progress: () => {}, signal: ac.signal } as never);
+    const check = expect(p).rejects.toThrow(/stopped/i);
+    await new Promise((r) => setTimeout(r, 20));
+    ac.abort();
+    await check;
   });
 });

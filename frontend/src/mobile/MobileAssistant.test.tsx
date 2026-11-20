@@ -5,7 +5,7 @@ import { render, screen, cleanup, fireEvent, act } from "@testing-library/react"
 const installMobileAssistant = vi.fn();
 vi.mock("./assistantSetup", () => ({
   installMobileAssistant: () => installMobileAssistant(),
-  MOBILE_CELL_ID: "mobile",
+  currentMobileCellId: () => "mobile:scope-1|US100",
 }));
 const panelProps = vi.hoisted(() => ({ last: null as null | Record<string, unknown> }));
 vi.mock("../AssistantPanel", () => ({
@@ -45,10 +45,11 @@ describe("MobileAssistant", () => {
     fireEvent.click(screen.getByRole("button", { name: "Assistant" }));
     await screen.findByRole("button", { name: "close panel" });
     expect(panelProps.last).toMatchObject({
-      cellId: "mobile",
-      cellIds: ["mobile"],
+      cellId: "mobile:scope-1|US100",
       chart: { epic: "US100", resolution: "HOUR_4" },
     });
+    // No pruning: a chat left waiting on another chart must survive.
+    expect(panelProps.last!.cellIds).toBeUndefined();
     expect((panelProps.last!.examples as string[]).some((e) => /backtest/i.test(e))).toBe(false);
     expect(screen.queryByRole("button", { name: "Assistant" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "close panel" }));
