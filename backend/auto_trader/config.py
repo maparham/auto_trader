@@ -215,6 +215,26 @@ class TelegramSettings(BaseSettings):
 telegram_settings = TelegramSettings()
 
 
+# FCM push to the native Android app (core/fcm_notify.py). Off unless a
+# Firebase service-account JSON is given; the hosted box also needs
+# fcm.googleapis.com and oauth2.googleapis.com on the egress proxy allowlist.
+class FcmSettings(BaseSettings):
+    """Env-prefixed FCM_. `service_account_file` is the path to the Firebase
+    service-account key (Project settings > Service accounts)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="FCM_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    service_account_file: str = ""
+
+
+fcm_settings = FcmSettings()
+
+
 # In-app AI assistant (api/routers/assistant.py). The key comes from the
 # claude-gateway client file on a dev Mac, or ASSISTANT_API_KEY on a server.
 # Absent key = feature hidden (status reports configured: false), same

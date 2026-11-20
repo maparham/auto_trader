@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS alert_meta (
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   user_id TEXT NOT NULL, endpoint TEXT NOT NULL PRIMARY KEY,
   keys TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS fcm_tokens (
+  token TEXT NOT NULL PRIMARY KEY, user_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS telegram_links (
   user_id TEXT NOT NULL PRIMARY KEY, chat_id TEXT NOT NULL,
   linked_at INTEGER NOT NULL);
@@ -427,6 +430,48 @@ class AlertStore:
         try:
             conn.execute("DELETE FROM alert_meta WHERE user_id = ? AND key = ?", (user_id, key))
             conn.commit()
+        finally:
+            conn.close()
+
+    # ---- FCM device tokens (the Android app) ----
+    # One row per device token. A token belongs to whoever registered it last:
+    # one phone signed into a second account must stop getting the first
+    # account's alerts.
+
+    async def add_fcm_token(self, user_id: str, token: str) -> None:
+        await asyncio.to_thread(self._add_fcm_token_sync, user_id, token)
+
+    def _add_fcm_token_sync(self, user_id: str, token: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT INTO fcm_tokens (token, user_id, created_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id",
+                (token, user_id, int(time.time() * 1000)),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    async def delete_fcm_token(self, user_id: str, token: str) -> None:
+        await asyncio.to_thread(self._delete_fcm_token_sync, user_id, token)
+
+    def _delete_fcm_token_sync(self, user_id: str, token: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM fcm_tokens WHERE user_id = ? AND token = ?", (user_id, token))
+            conn.commit()
+        finally:
+            conn.close()
+
+    async def list_fcm_tokens(self, user_id: str) -> list[str]:
+        return await asyncio.to_thread(self._list_fcm_tokens_sync, user_id)
+
+    def _list_fcm_tokens_sync(self, user_id: str) -> list[str]:
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT token FROM fcm_tokens WHERE user_id = ?", (user_id,)).fetchall()
+            return [r["token"] for r in rows]
         finally:
             conn.close()
 

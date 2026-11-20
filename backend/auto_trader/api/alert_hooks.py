@@ -246,11 +246,19 @@ class PositionRemoval:
         return f"{what} removed ✓"
 
 
-def build_alert_hooks() -> AlertHooks:
-    removal = PositionRemoval(
+def position_removal() -> PositionRemoval:
+    """The Remove SL/TP flow over the app singletons, shared by the Telegram
+    buttons and the Android app's notification button
+    (`/api/alerts/position-removal/{token}`). The token lives in the position
+    watch, so a fire's one token works once, from whichever channel."""
+    return PositionRemoval(
         watch=POSITION_WATCH, get_exec=deps.get_exec, delete=_delete,
         can_deal=can_deal_from_telegram,
     )
+
+
+def build_alert_hooks() -> AlertHooks:
+    removal = position_removal()
     return AlertHooks(
         get_candles=_get_candles,
         get_positions=_get_positions,

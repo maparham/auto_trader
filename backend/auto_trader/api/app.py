@@ -151,11 +151,14 @@ async def lifespan(app: FastAPI):
         stored_key = None
     ASSISTANT.set_key_override(stored_key.api_key if stored_key else None)
     PUSH.configure(ALERT_STORE)
+    from auto_trader.config import fcm_settings
+    from auto_trader.core.fcm_notify import FCM, load_service_account
+    FCM.configure(ALERT_STORE, load_service_account(fcm_settings.service_account_file or None))
     ALERT_ENGINE.configure(
         store=ALERT_STORE,
         get_broker=deps.get_data,
         broadcast=state_router.broadcast_to_user,
-        notifiers=[TELEGRAM.notifier, PUSH.notifier],
+        notifiers=[TELEGRAM.notifier, PUSH.notifier, FCM.notifier],
         load_bars=deps.load_alert_bars,
     )
     from auto_trader.core.account_monitor import ACCOUNT_MONITOR
@@ -163,14 +166,14 @@ async def lifespan(app: FastAPI):
         store=ALERT_STORE,
         get_exec=deps.get_exec,
         broadcast=state_router.broadcast_to_user,
-        notifiers=[TELEGRAM.notifier, PUSH.notifier],
+        notifiers=[TELEGRAM.notifier, PUSH.notifier, FCM.notifier],
     )
     from auto_trader.core.position_watch import POSITION_WATCH
     POSITION_WATCH.configure(
         store=ALERT_STORE,
         get_exec=deps.get_exec,
         broadcast=state_router.broadcast_to_user,
-        notifiers=[TELEGRAM.notifier, PUSH.notifier],
+        notifiers=[TELEGRAM.notifier, PUSH.notifier, FCM.notifier],
         load_bars=deps.load_alert_bars,
         engine=ALERT_ENGINE,
     )

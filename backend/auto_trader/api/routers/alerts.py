@@ -17,7 +17,7 @@ from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from auto_trader.core import timeframe as _tf
 from auto_trader.core.account_alert_kind import ACCOUNT_KIND, is_monitorable
@@ -218,6 +218,10 @@ class PushSubscribeBody(BaseModel):
 
 class PushUnsubscribeBody(BaseModel):
     endpoint: str
+
+
+class FcmTokenBody(BaseModel):
+    token: str = Field(min_length=1, max_length=4096)
 
 
 class DescribeBody(BaseModel):
@@ -446,6 +450,52 @@ async def push_unsubscribe(request: Request, body: PushUnsubscribeBody) -> None:
     await ALERT_STORE.delete_push_sub(user, body.endpoint)
 
 
+@router.post("/api/alerts/fcm/register", status_code=204)
+async def fcm_register(request: Request, body: FcmTokenBody) -> None:
+    """The Android app's FCM device token, sent by the page once signed in."""
+    user = current_user(request)
+    await ALERT_STORE.add_fcm_token(user, body.token)
+
+
+@router.delete("/api/alerts/fcm/register", status_code=204)
+async def fcm_unregister(request: Request, body: FcmTokenBody) -> None:
+    user = current_user(request)
+    await ALERT_STORE.delete_fcm_token(user, body.token)
+
+
+def _position_removal():
+    """The Remove SL/TP flow Telegram uses (same single-use token from the
+    fire, same safety checks, same dealing gate). Imported lazily: the hooks
+    module reaches into the engine and broker layers."""
+    from auto_trader.api.alert_hooks import position_removal
+
+    return position_removal()
+
+
+@router.get("/api/alerts/position-removal/{token}")
+async def position_removal_question(request: Request, token: str) -> dict[str, Any]:
+    """The confirm question for an app notification's Remove button. Never
+    consumes the token."""
+    from auto_trader.core.telegram_notify import RemovalRefused
+
+    user = current_user(request)
+    try:
+        question = await _position_removal().describe(user, token)
+    except RemovalRefused as refused:
+        raise HTTPException(403, str(refused)) from None
+    if question is None:
+        raise HTTPException(404, "This warning was already used or has expired")
+    return {"question": question}
+
+
+@router.post("/api/alerts/position-removal/{token}")
+async def position_removal_confirm(request: Request, token: str) -> dict[str, Any]:
+    """The Yes: removes the level after every safety check, consuming the
+    token, and answers with the outcome text."""
+    user = current_user(request)
+    return {"answer": await _position_removal().remove(user, token)}
+
+
 @router.get("/api/alerts/indicators")
 async def alertable_indicators() -> dict[str, Any]:
     return {"types": sorted(ALERT_SPECS)}
@@ -498,7 +548,8 @@ async def describe_alert(request: Request, body: DescribeBody) -> dict[str, Any]
 
 
 # The fixed-path /api/alerts/triggered*, /api/alerts/telegram*,
-# /api/alerts/push*, /api/alerts/indicators and /api/alerts/describe routes
+# /api/alerts/push*, /api/alerts/fcm*, /api/alerts/position-removal*,
+# /api/alerts/indicators and /api/alerts/describe routes
 # above must be registered BEFORE these {alert_id} routes — FastAPI matches
 # path operations in registration order, and a {alert_id} route would
 # otherwise swallow "triggered"/"telegram"/"push"/"indicators"/"describe" as
