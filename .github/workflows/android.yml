@@ -1,0 +1,94 @@
+name: Android
+
+# Builds the native Android app (android/) on GitHub instead of the laptop:
+# JVM unit tests, a debug APK ("Chartkar dev"), and, when the signing secrets
+# are set, a signed release APK and AAB. Each run's files are under the run's
+# "Artifacts" section.
+#
+# Secrets (Settings > Secrets and variables > Actions), all optional:
+#   ANDROID_KEYSTORE_B64   base64 of ~/keys/chartkar-upload.jks
+#   ANDROID_KEYSTORE_PASS  its password (same for the store and the key)
+#   ANDROID_KEY_ALIAS      "upload"
+#   GOOGLE_SERVICES_JSON   the Firebase android/app/google-services.json
+#                          (without it the app builds with push off)
+on:
+  push:
+    branches: [main]
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    env:
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Firebase config
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+          else
+            echo "No GOOGLE_SERVICES_JSON secret: building with push off."
+          fi
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --console=plain
+
+      - name: Debug APK
+        run: ./gradlew :app:assembleDebug --console=plain
+
+      - name: Signing key
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/upload.jks"
+            echo "password=$KEYSTORE_PASS"
+            echo "keyAlias=${KEY_ALIAS:-upload}"
+          } > keystore.properties
+
+      - name: Release APK and AAB
+        if: env.HAS_KEYSTORE == 'true'
+        run: ./gradlew :app:assembleRelease :app:bundleRelease --console=plain
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chartkar-dev-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+
+      - uses: actions/upload-artifact@v4
+        if: env.HAS_KEYSTORE == 'true'
+        with:
+          name: chartkar-release
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/bundle/release/*.aab
+
+      - name: Remove the key
+        if: always()
+        run: rm -f keystore.properties "$RUNNER_TEMP/upload.jks"
