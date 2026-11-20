@@ -128,6 +128,15 @@ describe("TabBar search catalogue fallback", () => {
     expect(onSearchQuery).toHaveBeenCalledWith("");
   });
 
+  it("Enter prefers a matching tab other than the active one", async () => {
+    const tabs = [tab("t1", "GOLD", "Gold"), tab("t2", "GOLDEUR", "Gold / Euro")];
+    const onSelect = vi.fn();
+    renderBar({ tabs, activeId: "t1", searchQuery: "gold", onSelect });
+    fireEvent.click(screen.getByLabelText("Find open symbol"));
+    fireEvent.keyDown(screen.getByPlaceholderText("Find symbol…"), { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledWith("t2");
+  });
+
   it("clicking a tab chip selects it AND closes the search", async () => {
     const { props } = await openSearchWithQuery("eur");
     fireEvent.click(screen.getByText("EURUSD"));

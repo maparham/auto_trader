@@ -421,28 +421,33 @@ export default function TabBar({
     };
   }, [searchOpen, brokerId]);
 
-  // A query that matches open tabs scrolls the first match into view: the
-  // highlight is useless on a chip that sits off the edge of a scrolling
-  // strip. In rows mode every chip is already visible, so this is a no-op.
   // Keyboard highlight: the dropdown row, or which matching tab Enter opens.
   // Re-anchored to the first one on every query change (the list is new).
-  const [fallbackIdx, setFallbackIdx] = useState(0);
-  useEffect(() => setFallbackIdx(0), [searchQuery, searchOpen]);
-  const hitIds = tabs.filter((t) => searchHits.has(t.id)).map((t) => t.id);
-  const firstHit = hitIds[fallbackIdx] ?? hitIds[0] ?? null;
+  const [pickIdx, setPickIdx] = useState(0);
+  useEffect(() => setPickIdx(0), [searchQuery, searchOpen]);
+  // Matching tabs in bar order, the active tab last: Enter on the tab you are
+  // already on would look like nothing happened.
+  const hitIds = tabs
+    .filter((t) => searchHits.has(t.id) && t.id !== activeId)
+    .map((t) => t.id);
+  if (searchHits.has(activeId)) hitIds.push(activeId);
+  const currentHit = hitIds[pickIdx] ?? hitIds[0] ?? null;
+  // The match Enter opens is scrolled into view: the highlight is useless on
+  // a chip that sits off the edge of a scrolling strip. In rows mode every
+  // chip is already visible, so this is a no-op.
   useEffect(() => {
-    if (firstHit == null) return;
+    if (currentHit == null) return;
     const bar = barRef.current;
     const chip = bar == null
       ? null
       : Array.from(bar.querySelectorAll<HTMLElement>(":scope > .tab")).find(
-          (c) => c.dataset.tabId === firstHit,
+          (c) => c.dataset.tabId === currentHit,
         );
     if (chip != null && typeof chip.scrollIntoView === "function") {
       chip.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
     updateEdges();
-  }, [firstHit, updateEdges]);
+  }, [currentHit, updateEdges]);
 
   // The fallback dropdown shows only when the query matches NO open tab.
   const fallbackOpen =
@@ -658,13 +663,13 @@ export default function TabBar({
               const n = hitIds.length;
               if (e.key === "ArrowDown") {
                 e.preventDefault();
-                setFallbackIdx((i) => (Math.min(i, n - 1) + 1) % n);
+                setPickIdx((i) => (Math.min(i, n - 1) + 1) % n);
               } else if (e.key === "ArrowUp") {
                 e.preventDefault();
-                setFallbackIdx((i) => (Math.min(i, n - 1) - 1 + n) % n);
+                setPickIdx((i) => (Math.min(i, n - 1) - 1 + n) % n);
               } else if (e.key === "Enter") {
                 e.preventDefault();
-                if (firstHit != null) pickRecent(firstHit);
+                if (currentHit != null) pickRecent(currentHit);
               }
               return;
             }
@@ -672,17 +677,17 @@ export default function TabBar({
             if (rows === 0) return;
             if (e.key === "ArrowDown") {
               e.preventDefault();
-              setFallbackIdx((i) => Math.min(i + 1, rows - 1));
+              setPickIdx((i) => Math.min(i + 1, rows - 1));
             } else if (e.key === "ArrowUp") {
               e.preventDefault();
-              setFallbackIdx((i) => Math.max(i - 1, 0));
+              setPickIdx((i) => Math.max(i - 1, 0));
             } else if (e.key === "Enter") {
               e.preventDefault();
               if (fallbackOpen) {
-                const hit = fallbackHits[fallbackIdx] ?? fallbackHits[0];
+                const hit = fallbackHits[pickIdx] ?? fallbackHits[0];
                 if (hit != null) pickFallback(hit);
               } else {
-                const t = recentTabs[fallbackIdx] ?? recentTabs[0];
+                const t = recentTabs[pickIdx] ?? recentTabs[0];
                 if (t != null) pickRecent(t.id);
               }
             }
@@ -731,11 +736,11 @@ export default function TabBar({
                   key={m.epic}
                   type="button"
                   role="option"
-                  aria-selected={i === fallbackIdx}
+                  aria-selected={i === pickIdx}
                   className={
-                    "tab-search-dropdown-row" + (i === fallbackIdx ? " on" : "")
+                    "tab-search-dropdown-row" + (i === pickIdx ? " on" : "")
                   }
-                  onMouseEnter={() => setFallbackIdx(i)}
+                  onMouseEnter={() => setPickIdx(i)}
                   onClick={() => pickFallback(m)}
                 >
                   <SymbolIcon epic={m.epic} type={m.type} className="ss-icon" />
@@ -757,9 +762,9 @@ export default function TabBar({
                 key={t.id}
                 type="button"
                 role="option"
-                aria-selected={i === fallbackIdx}
-                className={"tab-search-dropdown-row" + (i === fallbackIdx ? " on" : "")}
-                onMouseEnter={() => setFallbackIdx(i)}
+                aria-selected={i === pickIdx}
+                className={"tab-search-dropdown-row" + (i === pickIdx ? " on" : "")}
+                onMouseEnter={() => setPickIdx(i)}
                 onClick={() => pickRecent(t.id)}
               >
                 <SymbolIcon epic={lead.symbol.epic} type={lead.symbol.type} className="ss-icon" />
@@ -900,7 +905,7 @@ export default function TabBar({
             t.id === activeId ? "on" : "",
             dragId === t.id ? "dragging" : "",
             searchHits.has(t.id) ? "search-hit" : "",
-            searchOpen && t.id === firstHit ? "search-current" : "",
+            searchOpen && t.id === currentHit ? "search-current" : "",
           ]
             .filter(Boolean)
             .join(" ")}
