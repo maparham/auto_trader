@@ -28,6 +28,11 @@ vi.mock("../lib/alertsApi", async (importOriginal) => ({
   loadTriggered: () => history.rows,
   loadTriggeredSeen: () => history.seen,
 }));
+const appPush = vi.hoisted(() => ({ register: vi.fn(), link: vi.fn() }));
+vi.mock("../lib/appPush", () => ({
+  registerAppPush: () => appPush.register(),
+  handleAppLink: () => appPush.link(),
+}));
 vi.mock("../lib/feed", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   fetchFavorites: vi.fn().mockResolvedValue([]),
@@ -213,5 +218,34 @@ describe("MobileApp Alerts tab dot", () => {
     render(<MobileApp />);
     const btn = await screen.findByRole("button", { name: "Alerts" });
     expect(btn.querySelector(".m-tabbar-dot")).toBeNull();
+  });
+});
+
+describe("MobileApp app push", () => {
+  beforeEach(() => {
+    demoFlag.on = false;
+    mobileTabSignal.set("chart");
+    appPush.register.mockReset();
+    appPush.link.mockReset();
+  });
+  afterEach(() => {
+    cleanup();
+    demoFlag.on = false;
+    appPush.register.mockReset();
+    appPush.link.mockReset();
+  });
+
+  it("registers the app's push token and handles a notification link after hydrate", async () => {
+    render(<MobileApp />);
+    await waitFor(() => expect(appPush.register).toHaveBeenCalledTimes(1));
+    expect(appPush.link).toHaveBeenCalledTimes(1);
+  });
+
+  it("does neither in the public demo", async () => {
+    demoFlag.on = true;
+    render(<MobileApp />);
+    await screen.findByRole("button", { name: "Settings" });
+    expect(appPush.register).not.toHaveBeenCalled();
+    expect(appPush.link).not.toHaveBeenCalled();
   });
 });

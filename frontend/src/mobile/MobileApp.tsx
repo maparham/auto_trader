@@ -18,6 +18,7 @@ import { GearIcon } from "./viewModeIcons";
 import DemoCta from "../DemoCta";
 import { isDemoMode } from "../lib/demoMode";
 import { inAndroidApp } from "../lib/shellBridge";
+import { handleAppLink, registerAppPush } from "../lib/appPush";
 import { initMobileAccount, mobileTabSignal, type MobileTab } from "./mobileChartState";
 import { isWorkspaceKey, bumpMobileWorkspace } from "./mobileWorkspace";
 import { initViewMode, mobileViewMode, setChromeHidden } from "./mobileViewMode";
@@ -56,6 +57,9 @@ export default function MobileApp({ banner }: { banner?: ReactNode } = {}) {
   );
 
   useEffect(() => {
+    // An unmount before hydrate settles must not register push or act on a
+    // notification link for a shell that is gone.
+    let alive = true;
     hydrateFromBackend()
       .then(() => (demo ? undefined : hydrateAlerts()))
       .catch((e) => console.warn("mobile hydrate failed; using local state", e))
@@ -65,7 +69,16 @@ export default function MobileApp({ banner }: { banner?: ReactNode } = {}) {
         // view mounts, so the chart boots on the stored account's broker.
         initMobileAccount();
         setReady(true);
+        // The Android app: register this phone for alert pushes, and act on
+        // the notification that opened the app (lib/appPush.ts).
+        if (!demo && alive) {
+          void registerAppPush();
+          handleAppLink();
+        }
       });
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -86,7 +99,7 @@ export default function MobileApp({ banner }: { banner?: ReactNode } = {}) {
   }, []);
 
   useEffect(() => {
-    if (inAndroidApp()) return; // no web push in the app; FCM is sub-project B
+    if (inAndroidApp()) return; // no web push in the app: it gets FCM (lib/appPush.ts)
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/alert-sw.js").catch(() => {});
     }
