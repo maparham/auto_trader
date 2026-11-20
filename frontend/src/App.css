@@ -5604,7 +5604,9 @@ body.pp-resizing { cursor: row-resize; user-select: none; }
 }
 .pp-sort:hover { color: var(--text-dim); }
 .pp-sort.on { color: var(--text); }
-.pp-sort-caret { font-size: 7px; line-height: 1; }
+/* Fixed width, empty or not, so the active column never grows and moves the
+   columns beside it. */
+.pp-sort-caret { font-size: 7px; line-height: 1; width: 8px; flex: none; text-align: center; }
 .pp-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 
 /* trade-line editing: pending-changes bar + row controls */
