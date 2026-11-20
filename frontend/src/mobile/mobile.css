@@ -337,7 +337,7 @@ body.m-mobile {
 .m-tabbar-dot { position: absolute; top: 6px; margin-left: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent, #2962ff); }
 
 /* Task 11: Positions tab (account summary strip + trade rows + detail sheet). */
-.m-pos-view { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.m-pos-view { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
 /* The positions tab is the desktop dock (pp-* classes, App.css) on a phone:
    the table has no width floor and scrolls sideways, the table fills the
    column instead of capping at a dock height, and the stat strip is one
@@ -346,6 +346,11 @@ body.m-mobile {
 .m-pos-view .pp-table-wrap { flex: 1; max-height: none; -webkit-overflow-scrolling: touch; }
 .m-pos-view .pp-table { min-width: 0; width: max-content; }
 .m-pos-view .pp-empty { flex: 1; padding: 24px 16px; font-size: 14px; }
+/* History (HistoryPane): the pane fills the space between the tabs and the
+   stat strip and its table scrolls inside it; unsized, the table grew past
+   the bottom tab bar. Same rules the desktop dock uses when sized. */
+.m-pos-view .pp-history { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.m-pos-view .pp-history-bar { flex-shrink: 0; }
 .m-pos-view .pp-bar {
   flex: 0 0 auto; flex-wrap: wrap; gap: 8px 14px; padding: 6px 12px;
   border-top: 1px solid var(--border);
