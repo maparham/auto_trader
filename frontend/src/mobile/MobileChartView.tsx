@@ -5,6 +5,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import ChartCore from "../ChartCore";
 import MobileDrawBar from "./MobileDrawBar";
+import MobileAssistant from "./MobileAssistant";
 import DrawingContextMenu from "../DrawingContextMenu";
 import MobileChartStrip from "./MobileChartStrip";
 import MobileTabOverview from "./MobileTabOverview";
@@ -246,6 +247,7 @@ export default function MobileChartView({ active = true }: { active?: boolean })
           />
         )}
         {booted && <MobileDrawBar />}
+        {booted && <MobileAssistant />}
         {/* A long press on a drawing opens the desktop right-click menu. */}
         {booted && <DrawingContextMenu controller={ctx?.controller ?? null} />}
         {/* Chart-only mode unmounts the tab bar, and with it the demo's

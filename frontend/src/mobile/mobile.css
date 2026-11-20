@@ -202,6 +202,25 @@ body.m-mobile {
    above it instead of sitting in a gap of exposed time axis below it. */
 .m-chart-body:has(> .m-drawbar-strip) .m-drawbar-fab { bottom: 76px; }
 
+/* AI assistant (MobileAssistant.tsx): its button sits above the pencil, and
+   the desktop AssistantPanel fills the lower part of the chart body so the
+   chart above stays in view while the assistant edits it. */
+.m-assistant-fab {
+  position: absolute; right: 12px; bottom: 64px; z-index: 50;
+  width: 44px; height: 44px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  font-size: 20px; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.m-chart-body:has(> .m-drawbar-strip) .m-assistant-fab { bottom: 128px; }
+.m-assistant {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 55%; z-index: 60;
+  display: flex; border-top: 1px solid var(--border);
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.18);
+}
+.m-assistant .assistant-panel { width: 100%; border-left: none; font-size: 14px; }
+.m-assistant .as-composer textarea { font-size: 16px; }
+
 /* The selected drawing's and the touch crosshair's menu handles
    (MobileDrawingHandle, MobileCrosshairHandle); each sets transform. */
 .m-drawing-handle {
