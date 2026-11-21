@@ -1462,22 +1462,10 @@ const INDICATOR_META: Record<string, IndicatorMetaDef> = {
         index: 33,
         default: false,
         tip: [
-          "Finds lines on a logarithmic price scale, so they are straight on the chart's L scale.",
-          "Equal percent moves count the same at any price.",
+          "On: follows the chart's L button. Lines use a log price scale while L is on.",
+          "Log lines are straight on the L scale. Equal percent moves count the same at any price.",
           "ATR settings then measure a share of price, so the same values fit any price level.",
-          "Use with the chart's L scale on.",
-        ],
-      },
-      {
-        key: "logFollow",
-        label: "Follow Chart's L",
-        type: "boolean",
-        source: "extend",
-        field: "logFollow",
-        default: false,
-        tip: [
-          "Log Scale turns on and off with the chart's L button.",
-          "Rules and alerts on this pane change with it.",
+          "Rules and alerts on this pane change with the L button.",
         ],
       },
       {

@@ -77,7 +77,6 @@ describe("TRENDLINES registration", () => {
       ["Lines per Pivot"],
       ["Strongest First"],
       ["Log Scale"],
-      ["Follow Chart's L"],
       ["Merge lines within", "Merge lines within (%)"],
       ["Merge fanned lines within", "Merge fanned lines within (%)"],
       ["Nearest in Fan"],

@@ -11,7 +11,7 @@
 //
 // Edits preview live on the chart; Cancel/Escape restores the opening snapshot.
 
-import { syncLogFollow } from "./chart/trendlineLogFollow";
+import { chartLogOn, followsChartLog, syncLogFollow } from "./chart/trendlineLogFollow";
 import { DBG_FAILED_DASH, DBG_FORCED_DASH, DBG_OUTRANKED_DASH } from "./lib/indicators/trendlinesDebugDraw";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
@@ -858,6 +858,8 @@ function IndicatorSettingsForm({
   });
 
   const inputs = resolveInputs(type, ind?.calcParams as unknown[] | undefined);
+  // Trendlines' Log Scale tick follows the chart's L (see controlFor).
+  const [logFollow, setLogFollow] = useState(() => followsChartLog(ind?.extendData));
   const debugInputs = inputs.filter((inp) => inp.tab === "debug");
 
   // --- Generic extendData inputs (e.g. LR's Source select) ---
@@ -1024,6 +1026,22 @@ function IndicatorSettingsForm({
   function controlFor(inp: IndicatorInputDef, chip = false) {
     // A BOOLEAN stored in a calcParam slot (0 / 1) — TRENDLINES' Mixed
     // touches. The number branch below would render it as a spinner.
+    // Trendlines' Log Scale: one tick that follows the chart's L button
+    // (extendData.logFollow) and sets the slot from L right away. A pane
+    // saved with a fixed Log Scale reads ticked, and unticking clears both.
+    if (isTrendlines && inp.key === "p33") {
+      const checked = logFollow || (calcParams[33] as number) >= 1;
+      const set = (next: boolean) => {
+        setLogFollow(next);
+        overrideExtend(chart, paneId, name, { logFollow: next });
+        setParam(33, next && chartLogOn(chart) ? 1 : 0);
+      };
+      return chip ? (
+        boolChip(inp, checked, set)
+      ) : (
+        <input type="checkbox" aria-label={inp.label} checked={checked} onChange={(e) => set(e.target.checked)} />
+      );
+    }
     if (inp.source === "calcParam" && inp.index != null && inp.type === "boolean") {
       const stored = calcParams[inp.index];
       const checked = Number.isFinite(stored)
@@ -1390,6 +1408,7 @@ function IndicatorSettingsForm({
       // Draw-only; each key persists only when it differs from the default so
       // a plain instance carries none of them.
       Object.assign(extendData, trendlineExtendOf(trendlineStyle), trendlineHighlight);
+      if (logFollow) extendData.logFollow = true;
       // The ATR/% switch's memory (dualControl), only once the switch is used.
       if (Object.keys(dualCuts.units).length || Object.keys(dualCuts.memo).length)
         extendData.dualCuts = dualCuts;
@@ -2198,7 +2217,7 @@ function IndicatorSettingsForm({
       }
     }
     saveIndicatorConfig(scope, name, cfg);
-    // Follow Chart's L: Log Scale takes the chart's L state now.
+    // A following Log Scale takes the chart's L state now.
     if (isTrendlines) syncLogFollow(chart, { scope, epic, brokerId }, { paneId, name });
     // Each linked alert is re-pointed at the pane's new settings; the server
     // re-validates it against its own timeframe (never chartResolution, F6)
