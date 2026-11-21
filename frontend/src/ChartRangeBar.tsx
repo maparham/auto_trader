@@ -16,7 +16,13 @@ export default function ChartRangeBar({
   onGoToDate,
 }: ChartRangeBarProps) {
   const [calOpen, setCalOpen] = useState(false);
+  // Date and time are separate fields. A single datetime-local field is
+  // invalid until every part is filled, and WebKit (the desktop shell) shows
+  // the current time in gray in an empty time part, so a date-only entry
+  // looked complete but Go failed with "Invalid value". Time is optional
+  // here; an empty time means 00:00.
   const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
   // Revealed only when the cursor is near the bottom of the chart cell (like
   // TradingView), not whenever the cursor is anywhere over the chart.
   const [peek, setPeek] = useState(false);
@@ -81,9 +87,9 @@ export default function ChartRangeBar({
   const submitDate = (e: FormEvent) => {
     e.preventDefault();
     if (!date) return;
-    // Hand the raw "YYYY-MM-DDTHH:MM" up; ChartCore resolves it in the chart
+    // Hand the raw "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM" up; ChartCore resolves it in the chart
     // timezone (the same anchoring the range buttons use), not UTC.
-    onGoToDate(date);
+    onGoToDate(time ? `${date}T${time}` : date);
     closeCalendar();
   };
 
@@ -143,11 +149,18 @@ export default function ChartRangeBar({
       {calOpen && (
         <form ref={calPopRef} className="crb-cal-pop" onSubmit={submitDate}>
           <input
-            type="datetime-local"
+            type="date"
             aria-label="Go to date"
+            required
             value={date}
             onChange={(e) => setDate(e.target.value)}
             autoFocus
+          />
+          <input
+            type="time"
+            aria-label="Go to time"
+            value={time}
+            onChange={(e) => setTime(e.target.value)}
           />
           <button type="submit" className="crb-btn">Go</button>
         </form>
