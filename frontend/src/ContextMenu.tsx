@@ -4,6 +4,13 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import Tooltip from "./components/Tooltip";
 
+
+const CHECK = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M20 6 9 17l-5-5" />
+  </svg>
+);
+
 export interface MenuItem {
   label: string;
   onClick: () => void;
@@ -11,6 +18,7 @@ export interface MenuItem {
   // Optional leading icon (an inline SVG node — see ./lib/menuIcons).
   icon?: ReactNode;
   // A toggle item: a check mark in the icon slot when true, blank when false.
+  // With an icon, the check mark goes at the right end instead.
   checked?: boolean;
   // A greyed-out, non-clickable item. `disabledReason` (when set) shows as a
   // tooltip explaining why — e.g. "MACD isn't supported in rules yet".
@@ -59,7 +67,8 @@ export default function ContextMenu({ x, y, items, onClose, className }: Props) 
   // While a toggle item is ticked, every icon-less item gets the same blank
   // slot so the labels start in one column. With none ticked there is no
   // slot at all: a blank gutter would only widen the menu.
-  const hasChecks = items.some((it) => it.checked === true);
+  // An item with its own icon shows its tick at the right end instead.
+  const hasChecks = items.some((it) => it.checked === true && !it.icon);
   const style: React.CSSProperties = {
     left: Math.min(x, window.innerWidth - 200),
     top: Math.min(y, window.innerHeight - items.length * 34 - 12),
@@ -86,17 +95,18 @@ export default function ContextMenu({ x, y, items, onClose, className }: Props) 
             <span className="ctx-item-label">
               {hasChecks && !it.icon ? (
                 <span className="ctx-item-icon ctx-item-check" aria-hidden="true">
-                  {it.checked && (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M20 6 9 17l-5-5" />
-                    </svg>
-                  )}
+                  {it.checked && CHECK}
                 </span>
               ) : (
                 it.icon && <span className="ctx-item-icon">{it.icon}</span>
               )}
               {it.label}
             </span>
+            {it.icon && it.checked && (
+              <span className="ctx-item-icon ctx-item-check" aria-hidden="true">
+                {CHECK}
+              </span>
+            )}
           </button>
         );
         return it.disabled && it.disabledReason ? (

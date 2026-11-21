@@ -402,4 +402,18 @@ export const MenuIcons = {
   chevronUp: svg(<path d="M6 15l6-6 6 6" />),
   // Down chevron — "sell limit" (short).
   chevronDown: svg(<path d="M6 9l6 6 6-6" />),
+  // Axis with a flattening curve: "log scale" (Trendlines' Log Scale row).
+  logScale: svg(
+    <>
+      <path d="M3 3v18h18" />
+      <path d="M6 18c2-7 5-10 14-12" />
+    </>,
+  ),
+  // Bug: "debug mode" (Trendlines' Debug mode row).
+  bug: svg(
+    <>
+      <rect x="8" y="6" width="8" height="14" rx="4" />
+      <path d="M9 3l1.5 3M15 3l-1.5 3M12 10v10M8 11H4M8 15H3M8 19l-3 2M16 11h4M16 15h5M16 19l3 2" />
+    </>,
+  ),
 };

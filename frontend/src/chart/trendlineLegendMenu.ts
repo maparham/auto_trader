@@ -1,9 +1,10 @@
 // The Trendlines-only entries of the indicator menu (legend row right-click,
-// ⋯ button, curve right-click): Log Scale, Follow Chart's L, Debug mode and,
+// ⋯ button, curve right-click): Log Scale (follows the chart's L), Debug mode and,
 // while debug is on, its layer toggles. Each one writes through the path its Settings field
 // uses, so the menu and the form never disagree.
 import type { Chart } from "klinecharts";
 import type { MenuItem } from "../ContextMenu";
+import { MenuIcons } from "../lib/menuIcons";
 import { loadIndicatorConfigs, saveIndicatorConfig } from "../lib/persist";
 import { overrideExtend } from "../lib/overrideExtend";
 import { parseTrendlinesConfig, TRENDLINES_EXTEND_DEFAULTS } from "../lib/indicators/trendlinesOutputs";
@@ -40,28 +41,28 @@ export function trendlineMenuItems(ctx: ApplyCtx): MenuItem[] {
   const follow = followsChartLog(ext);
   const items: MenuItem[] = [
     {
+      // One toggle: on means Log Scale follows the chart's L button. Off
+      // stops following and draws linear. A pane saved with a fixed Log
+      // Scale (no follow) also shows ticked, and a click turns it off.
       label: "Log Scale",
-      checked: log,
-      // While it follows, the L button is what sets it.
-      disabled: follow,
-      disabledReason: follow ? "Set by the chart's L button" : undefined,
-      // The coordinator path the Settings form and debug Apply use, so a
-      // pinned timeframe re-fetches and the saved config follows.
+      icon: MenuIcons.logScale,
+      checked: follow || log,
       onClick: () => {
-        applyDebugChanges(ctx, [{ field: "logScale", from: log ? 1 : 0, to: log ? 0 : 1, pool: false }]);
-      },
-    },
-    {
-      label: "Follow Chart's L",
-      checked: follow,
-      onClick: () => {
-        setExtendFlag(chart, scope, paneId, name, "logFollow", !follow);
+        if (follow || log) {
+          if (follow) setExtendFlag(chart, scope, paneId, name, "logFollow", false);
+          // The coordinator path the Settings form uses, so a pinned
+          // timeframe re-fetches and the saved config follows.
+          if (log) applyDebugChanges(ctx, [{ field: "logScale", from: 1, to: 0, pool: false }]);
+          return;
+        }
+        setExtendFlag(chart, scope, paneId, name, "logFollow", true);
         // Starting to follow takes the chart's L state at once.
-        if (!follow) syncLogFollow(chart, ctx, { paneId, name });
+        syncLogFollow(chart, ctx, { paneId, name });
       },
     },
     {
       label: "Debug mode",
+      icon: MenuIcons.bug,
       checked: debug,
       // A live gesture, never saved (lib/indicators.ts drops it on restore),
       // exactly as the debug strip's close button turns it off.
