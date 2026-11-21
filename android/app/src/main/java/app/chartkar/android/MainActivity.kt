@@ -2,11 +2,13 @@ package app.chartkar.android
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
@@ -35,6 +37,7 @@ class MainActivity : ComponentActivity(), ShellBridge.Host {
         private const val PREFS = "auth"
         private const val PENDING_KEY = "pending"
         private const val ASKED_NOTIFY_KEY = "askedNotify"
+        private const val NOTIFY_OPT_OUT_KEY = "notifyOptOut"
     }
 
     private lateinit var webView: WebView
@@ -125,7 +128,8 @@ class MainActivity : ComponentActivity(), ShellBridge.Host {
 
         val restored = savedInstanceState != null && webView.restoreState(savedInstanceState) != null
         if (!handleIntent(intent) && !restored) webView.loadUrl(BuildConfig.START_URL)
-        askNotificationPermissionOnce()
+        // A cold start only: not on rotation or a restored activity.
+        if (savedInstanceState == null) checkNotifications()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -194,12 +198,68 @@ class MainActivity : ComponentActivity(), ShellBridge.Host {
         }
     }
 
-    private fun askNotificationPermissionOnce() {
-        if (Build.VERSION.SDK_INT < 33 || Notifications.canPost(this)) return
+    /** Alerts arrive as notifications: check every launch and lead the user
+     *  to turn them on (rules in NotifyPrompt). */
+    private fun checkNotifications() {
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        if (prefs.getBoolean(ASKED_NOTIFY_KEY, false)) return
-        prefs.edit().putBoolean(ASKED_NOTIFY_KEY, true).apply()
+        val state = NotifyPrompt.State(
+            sdk = Build.VERSION.SDK_INT,
+            permissionGranted = Notifications.canPost(this),
+            appEnabled = Notifications.appEnabled(this),
+            channelEnabled = Notifications.channelEnabled(this),
+            askedBefore = prefs.getBoolean(ASKED_NOTIFY_KEY, false),
+            canAskAgain = Build.VERSION.SDK_INT >= 33 &&
+                shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS),
+            optedOut = prefs.getBoolean(NOTIFY_OPT_OUT_KEY, false),
+        )
+        when (val action = NotifyPrompt.decide(state)) {
+            NotifyPrompt.Action.None -> Unit
+            NotifyPrompt.Action.SystemPrompt -> requestNotifyPermission()
+            is NotifyPrompt.Action.Explain -> AlertDialog.Builder(this)
+                .setTitle(R.string.notify_prompt_title)
+                .setMessage(R.string.notify_prompt_body)
+                .setPositiveButton(R.string.notify_prompt_turn_on) { _, _ ->
+                    when (action.fix) {
+                        NotifyPrompt.Fix.SYSTEM_PROMPT -> requestNotifyPermission()
+                        NotifyPrompt.Fix.APP_SETTINGS -> openNotificationSettings(channel = false)
+                        NotifyPrompt.Fix.CHANNEL_SETTINGS -> openNotificationSettings(channel = true)
+                    }
+                }
+                .setNegativeButton(R.string.notify_prompt_not_now, null)
+                .setNeutralButton(R.string.notify_prompt_never) { _, _ ->
+                    prefs.edit().putBoolean(NOTIFY_OPT_OUT_KEY, true).apply()
+                }
+                .show()
+        }
+    }
+
+    private fun requestNotifyPermission() {
+        if (Build.VERSION.SDK_INT < 33) return
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(ASKED_NOTIFY_KEY, true).apply()
         askNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun openNotificationSettings(channel: Boolean) {
+        val intent = when {
+            Build.VERSION.SDK_INT >= 26 && channel ->
+                Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    .putExtra(Settings.EXTRA_CHANNEL_ID, Notifications.CHANNEL_ALERTS)
+            Build.VERSION.SDK_INT >= 26 ->
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            else ->
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
+        }
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            // Some builds lack the page: fall back to the app's info page.
+            try {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+            } catch (_: Exception) {
+            }
+        }
     }
 
     private fun nowSecs(): Long = System.currentTimeMillis() / 1000

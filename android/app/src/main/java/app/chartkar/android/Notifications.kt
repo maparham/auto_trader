@@ -35,6 +35,16 @@ object Notifications {
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
 
+    /** App notifications on in system settings (any API level). */
+    fun appEnabled(ctx: Context): Boolean = NotificationManagerCompat.from(ctx).areNotificationsEnabled()
+
+    /** The "alerts" channel is not set to "None" in system settings. */
+    fun channelEnabled(ctx: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 26) return true
+        val ch = ctx.getSystemService(NotificationManager::class.java)?.getNotificationChannel(CHANNEL_ALERTS)
+        return ch == null || ch.importance != NotificationManager.IMPORTANCE_NONE
+    }
+
     /** Posts one alert. `url`, when set, is opened in the app on tap. */
     fun post(ctx: Context, title: String, body: String, url: String? = null, id: Int = nextId()) {
         ensureChannel(ctx)

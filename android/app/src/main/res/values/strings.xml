@@ -1,4 +1,9 @@
 <resources>
     <string name="channel_alerts">Alerts</string>
     <string name="channel_alerts_desc">Price, indicator, account and position alerts</string>
+    <string name="notify_prompt_title">Turn on alert notifications</string>
+    <string name="notify_prompt_body">Chartkar shows your price, indicator, account and position alerts as notifications. Notifications are off now, so you will not see them.</string>
+    <string name="notify_prompt_turn_on">Turn on</string>
+    <string name="notify_prompt_not_now">Not now</string>
+    <string name="notify_prompt_never">Don\'t ask again</string>
 </resources>

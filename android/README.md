@@ -11,6 +11,11 @@ What the native side does: browser sign-in through the App Link
 `notify_native`, `read_clipboard`) that `frontend/src/lib/shellBridge.ts`
 detects.
 
+Notifications are checked on every cold start (`NotifyPrompt.kt`): the
+first launch shows the system prompt; while alerts stay off, a dialog
+explains why and offers the prompt again or the settings page (app or the
+"Alerts" channel). "Don't ask again" stops it.
+
 ## Build
 
 Needs JDK 17 and the Android SDK (`local.properties` with `sdk.dir`).
