@@ -152,8 +152,8 @@ test("calendar popover opens, accepts a date, submits, and closes without crashi
   // Popover appears.
   await expect(bar.locator(".crb-cal-pop")).toBeVisible();
 
-  // Fill the datetime-local input (aria-label="Go to date").
-  await bar.getByRole("textbox", { name: "Go to date" }).fill("2026-03-15T00:00");
+  // A date alone is enough; the time field is optional.
+  await bar.getByLabel("Go to date").fill("2026-03-15");
   await bar.getByRole("button", { name: "Go", exact: true }).click();
 
   // Popover closes after submit and the chart canvas is still present.
