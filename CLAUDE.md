@@ -66,7 +66,9 @@ external host the backend needs goes in that allowlist; never add a
 
 The MT5 Wine terminal stays on the AWS box (3.139.146.5). The box-only unit
 `mt5-forward` forwards 127.0.0.1:22346 to it over SSH, with a key limited to
-that one port. The API on AWS is disabled by the drop-in `moved-to-iran.conf`.
+that one port. Iran filters direct SSH to that IP (since 2026-11-21), so a
+`via-xray.conf` drop-in on `mt5-forward` and `aws-relay` sends it through Xray (`nc -X connect` to
+127.0.0.1:18483), and the gateway allowlist has an IP rule for 3.139.146.5:22. The API on AWS is disabled by the drop-in `moved-to-iran.conf`.
 Delete it to roll back.
 
 The AWS box stays up. Besides MT5 it runs a WireGuard VPN exit outside Iran
@@ -77,7 +79,7 @@ live peers, and the `aws-vps` Cloudflare tunnel (ssh, vnc, wgeasy, grafana).
 way in. The stopped API and its 2.2 GB data dir are the rollback copy.
 
 Monitoring: the Iran box's `egress-check` timer (every 2 min) reaches Telegram
-and Capital through the proxy and writes the result, which Caddy serves at
+and Capital through the proxy, checks the `mt5-forward` port, and writes the result, which Caddy serves at
 `https://api.chartkar.app/egress-status`. The AWS box's `chartkar-watch` timer
 (every 5 min, outside Iran so Telegram works when the gateway does not) reads
 `/health` and that status and messages the admin through @ChartkarBot after
