@@ -15,7 +15,7 @@
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useSignalValue } from "./lib/signalHooks";
-import { findPositionAlert, isAccountMonitorable, loadAccountAlerts, METRIC_LABELS, type AccountMetric } from "./lib/alertsApi";
+import { findPositionAlert, isAccountMonitorable, loadMoveRules, loadAccountAlerts, METRIC_LABELS, type AccountMetric } from "./lib/alertsApi";
 import {
   applyLevels,
   cancelWorkingOrder,
@@ -49,6 +49,7 @@ import {
   draggingLineSignal,
   accountAlertRequest,
   positionAlertRequest,
+  openTradeEditor,
   alertsChanged,
   requestConfirm,
   type PendingEdit,
@@ -57,6 +58,7 @@ import { accountStats, enrichTrade, type EnrichedTrade } from "./lib/accountStat
 import type { TradingSettings } from "./theme";
 import type { TradeRow } from "./lib/tradeList";
 import Tooltip from "./components/Tooltip";
+import { moveRuleText } from "./lib/moveRuleLines";
 import { PositionsHead } from "./PositionsTable";
 import {
   DEFAULT_SORT,
@@ -429,6 +431,24 @@ export default function PositionsPanel({
                       }}
                     >
                       <BellIcon filled={warnOn} />
+                    </button>
+                  </Tooltip>
+                );
+              })()}
+              {!isOrder && (() => {
+                const rules = loadMoveRules({ dealId: t.id });
+                if (rules.length === 0) return null;
+                return (
+                  <Tooltip content={rules.map(moveRuleText)}>
+                    <button
+                      className="pp-iconbtn pp-iconbtn-warn on"
+                      aria-label="Move rules"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openTradeEditor(t.id, rules[0].action.field === "sl" ? "stop" : "tp");
+                      }}
+                    >
+                      <MoveRuleIcon />
                     </button>
                   </Tooltip>
                 );
@@ -904,6 +924,25 @@ export function Stat({
         <span className={`pp-stat-val num${tone ? ` pp-${tone}` : ""}`}>{value}</span>
       </div>
     </Tooltip>
+  );
+}
+
+function MoveRuleIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M5 12h14" />
+      <path d="M13 6l6 6-6 6" />
+    </svg>
   );
 }
 

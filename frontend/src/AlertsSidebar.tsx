@@ -11,6 +11,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import Tooltip from "./components/Tooltip";
+import { toast } from "./lib/notify";
+import { moveRuleText } from "./lib/moveRuleLines";
 import { ago } from "./lib/timeFormat";
 import { accountRowView, decimalsOf, historyRowView, positionRowView, useAlertTick } from "./lib/alertRows";
 import type { ChartController } from "./lib/chartController";
@@ -50,6 +52,9 @@ import {
   loadAccountAlerts,
   loadPositionAlerts,
   deletePositionAlert,
+  loadMoveRules,
+  deleteMoveRule,
+  type MoveRule,
   type PositionAlert,
   deleteAccountAlert,
   accountLabel,
@@ -331,6 +336,36 @@ function PositionAlertRow({ a }: { a: PositionAlert }) {
   );
 }
 
+// One SL/TP move rule: `EURUSD · Move SL to BE when ↑ 1.1050`, with a delete button.
+function MoveRuleRow({ r }: { r: MoveRule }) {
+  return (
+    <div className="ap-row">
+      <div className="ap-row-main">
+        <span className="ap-sym">{r.epic}</span>
+        <span className="ap-cond">{moveRuleText(r)}</span>
+      </div>
+      <div className="ap-row-meta">
+        <span className="ap-row-badges" />
+        <div className="ap-row-actions">
+          <Tooltip content="Delete rule">
+            <button
+              className="ap-icon-btn"
+              aria-label="Delete move rule"
+              onClick={async (e) => {
+                e.stopPropagation();
+                const err = await deleteMoveRule(r.id);
+                if (err) toast(err, { tone: "error" });
+              }}
+            >
+              <TrashIcon />
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   // The focused cell's controller — its overlay manager owns the live alert lines
   // shown here. epic/precision are the focused cell's too.
@@ -569,7 +604,8 @@ export default function AlertsSidebar({
   // the symbol scope. Re-read on every alertsChanged bump, like the rest.
   const accountAlerts = loadAccountAlerts();
   const positionAlerts = loadPositionAlerts();
-  const accountCount = accountAlerts.length + positionAlerts.length;
+  const moveRules = loadMoveRules();
+  const accountCount = accountAlerts.length + positionAlerts.length + moveRules.length;
   // History is persisted; re-read on every firing (alertsChanged) and on mount.
   const [historyState, setHistoryState] = useState<TriggeredAlert[]>(loadTriggered);
   useEffect(
@@ -707,10 +743,11 @@ export default function AlertsSidebar({
               {accountAlerts.map((a) => <AccountAlertRow key={a.id} a={a} />)}
             </div>
           )}
-          {positionAlerts.length > 0 && (
+          {positionAlerts.length + moveRules.length > 0 && (
             <div>
               <div className="ap-group-header">Positions</div>
               {positionAlerts.map((a) => <PositionAlertRow key={a.id} a={a} />)}
+              {moveRules.map((r) => <MoveRuleRow key={r.id} r={r} />)}
             </div>
           )}
           {showAll ? (

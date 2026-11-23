@@ -50,6 +50,24 @@ function arrow(c: AlertCondition | undefined): string {
   return "↕";
 }
 
+/** One line of rule text: `Move SL to BE when ↑ 1.1050` (indicator and line rules
+ *  name their `label`). Used by the position row tooltip and the Alerts sidebar. */
+export function moveRuleText(rule: MoveRule): string {
+  const { field, target } = rule.action;
+  const tgt = target.type === "price"
+    ? target.value.toFixed(rule.precision)
+    : target.offset > 0 ? `BE+${target.offset}` : "BE";
+  let when: string;
+  if (rule.triggerKind === "price_level") {
+    const level = Number(rule.params.level);
+    const lv = Number.isFinite(level) ? level.toFixed(rule.precision) : "?";
+    when = `${arrow(rule.params.condition as AlertCondition | undefined)} ${lv}`;
+  } else {
+    when = rule.label || (rule.triggerKind === "line" ? "line" : "indicator");
+  }
+  return `Move ${field.toUpperCase()} to ${tgt} when ${when}`;
+}
+
 // The SL / TP line colors, faded: the trigger a little, the target more.
 const TRIGGER_ALPHA = "b3"; // ~70%
 const TARGET_ALPHA = "59"; // ~35%

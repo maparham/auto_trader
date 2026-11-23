@@ -68,6 +68,8 @@ const mocks = vi.hoisted(() => ({
   triggered: [] as unknown[],
   resync: vi.fn(async () => {}),
   delPos: vi.fn(),
+  delMove: vi.fn(async (): Promise<string | null> => null),
+  moveRules: [] as unknown[],
 }));
 
 vi.mock("./lib/alertsApi", async (orig) => ({
@@ -77,6 +79,8 @@ vi.mock("./lib/alertsApi", async (orig) => ({
   loadAccountAlerts: () => [acctAlert, eqAlert],
   loadPositionAlerts: () => [posAlert, posAlertNoAtr],
   deletePositionAlert: mocks.delPos,
+  loadMoveRules: () => mocks.moveRules,
+  deleteMoveRule: mocks.delMove,
   loadTriggered: () => mocks.triggered,
   resyncAlerts: mocks.resync,
 }));
@@ -280,5 +284,30 @@ describe("AlertsSidebar positions group", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Alerts/ }));
     fireEvent.click(screen.getAllByLabelText("Edit alert")[0]);
     expect(signals.positionAlertRequest.value).toEqual({ account: "capital-live:live", epic: "US100", dealId: "d1", precision: 1 });
+  });
+});
+
+describe("AlertsSidebar move rules", () => {
+  const rule = {
+    id: "m1", broker: "capital", epic: "EURUSD", triggerKind: "price_level",
+    params: { level: 1.105, condition: "crossing_up" },
+    action: { account: "capital:demo", dealId: "d9", field: "sl", target: { type: "breakeven", offset: 0 } },
+    precision: 4, notify: {},
+  };
+  afterEach(() => { mocks.moveRules = []; mocks.delMove.mockClear(); });
+
+  it("lists the rule in the Positions group and deletes it", () => {
+    mocks.moveRules = [rule];
+    renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: /^Alerts/ }));
+    expect(screen.getByText("Move SL to BE when \u2191 1.1050")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Delete move rule"));
+    expect(mocks.delMove).toHaveBeenCalledWith("m1");
+  });
+
+  it("shows no move row without rules", () => {
+    renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: /^Alerts/ }));
+    expect(screen.queryByLabelText("Delete move rule")).toBeNull();
   });
 });

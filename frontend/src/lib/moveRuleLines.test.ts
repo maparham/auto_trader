@@ -15,6 +15,7 @@ import {
   endMoveLineDrag,
   moveLineOverrides,
   moveLineSpecs,
+  moveRuleText,
   parseTradeLineKey,
 } from "./moveRuleLines";
 
@@ -136,5 +137,29 @@ describe("drag", () => {
     applyMoveLineDrag("move:draft:sl:trigger", 1.2);
     await endMoveLineDrag("move:draft:sl:trigger");
     expect(patchMoveRule).not.toHaveBeenCalled();
+  });
+});
+
+describe("moveRuleText", () => {
+  const base = (over: Partial<MoveRule>): MoveRule => ({
+    id: "r1", broker: "capital", epic: "EURUSD", triggerKind: "price_level",
+    params: { level: 1.105, condition: "crossing_up" },
+    action: { account: "capital:demo", dealId: "d1", field: "sl", target: { type: "breakeven", offset: 0 } },
+    precision: 4, notify: { toast: true, browser: false, sound: false, push: true, telegram: true },
+    ...over,
+  });
+  it("writes a price trigger with breakeven", () => {
+    expect(moveRuleText(base({}))).toBe("Move SL to BE when \u2191 1.1050");
+  });
+  it("writes BE+offset, a price target and the down arrow", () => {
+    const a = base({ action: { ...base({}).action, field: "tp", target: { type: "breakeven", offset: 0.5 } }, params: { level: 2, condition: "less" } });
+    expect(moveRuleText(a)).toBe("Move TP to BE+0.5 when \u2193 2.0000");
+    const b = base({ action: { ...base({}).action, target: { type: "price", value: 1.1 } }, params: { level: 1, condition: "crossing" } });
+    expect(moveRuleText(b)).toBe("Move SL to 1.1000 when \u2195 1.0000");
+  });
+  it("uses the label for indicator and line rules, with a fallback", () => {
+    expect(moveRuleText(base({ triggerKind: "indicator", params: {}, label: "RSI > 70" }))).toBe("Move SL to BE when RSI > 70");
+    expect(moveRuleText(base({ triggerKind: "indicator", params: {} }))).toBe("Move SL to BE when indicator");
+    expect(moveRuleText(base({ triggerKind: "line", params: {} }))).toBe("Move SL to BE when line");
   });
 });
