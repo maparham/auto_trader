@@ -254,3 +254,31 @@ def test_position_margin_uses_broker_leverage_and_fx() -> None:
     # 240, and NOT the old 1200/10 = 120 fixed-leverage estimate).
     assert p.margin is not None
     assert abs(p.margin - 198.6) < 1.0
+
+
+def test_a_positions_change_invalidates_the_history_store() -> None:
+    """A position leaving the book (TP/SL/close on Capital's site) means new
+    history rows, so the next history read refreshes instead of serving memory."""
+    book = [{"position": {"direction": "BUY", "level": 10.0, "size": 1.0, "dealId": "d1",
+                          "upl": 0.0, "currency": "EUR"},
+             "market": {"epic": "X", "bid": 10.0, "offer": 10.1}}]
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/api/v1/accounts":
+            return httpx.Response(200, json={"accounts": [{"preferred": True, "currency": "EUR"}]})
+        if req.url.path == "/api/v1/positions":
+            return httpx.Response(200, json={"positions": list(book)})
+        if req.url.path.startswith("/api/v1/markets/"):
+            return httpx.Response(200, json={"instrument": {}, "snapshot": {}})
+        raise AssertionError(f"unexpected {req.url.path}")
+
+    ex = CapitalExecutionBroker(_broker(handler))
+    marks: list[int] = []
+    ex._history.invalidate = lambda: marks.append(1)  # type: ignore[method-assign]
+    asyncio.run(ex.get_positions())
+    asyncio.run(ex.get_positions())
+    assert marks == []  # unchanged book
+    book.clear()
+    asyncio.run(ex.get_positions())
+    assert marks == [1]
+    asyncio.run(ex.aclose())

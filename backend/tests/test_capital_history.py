@@ -410,3 +410,109 @@ def test_day_cache_is_bounded():
     for day in (1, 2, 3):
         asyncio.run(cache.day(date(2026, 10, day), fetch, now))
     assert list(cache._days) == [date(2026, 10, 2), date(2026, 10, 3)]
+
+
+# --- HistoryStore: reloads served from memory -------------------------------
+
+from auto_trader.brokers._capital_history import HistoryStore  # noqa: E402
+
+
+class _Clock:
+    def __init__(self, t):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+def _store_world():
+    """A fake Capital whose rows can grow; transactions filtered by from/to."""
+    world = {"tx": [], "act": {}}
+
+    def handler(path, params):
+        if path.endswith("/transactions"):
+            lo, hi = T(params["from"]), T(params["to"])
+            rows = [r for r in world["tx"] if lo <= T(r["dateUtc"]) <= hi]
+            return {"transactions": sorted(rows, key=lambda r: r["dateUtc"], reverse=True)}
+        return {"activities": world["act"].get(params["from"][:10], [])}
+
+    return world, FakeCapital(handler)
+
+
+def _close(world, deal, when, pnl):
+    world["act"].setdefault(when[:10], []).append(act(deal, when, "TP", "SELL", 11.0, open_price=10.0))
+    world["tx"].append(tx(when, "TRADE", pnl, deal=deal))
+
+
+def test_store_serves_a_reload_without_broker_calls():
+    world, cap = _store_world()
+    _close(world, "D1", "2026-10-21T09:00:00", "5")
+    clock = _Clock(T("2026-10-21T12:00:00"))
+    store = HistoryStore(now=clock)
+    first = asyncio.run(store.get(cap.request, T("2026-10-14T12:00:00"), clock.t))
+    n = len(cap.calls)
+    clock.t += timedelta(minutes=2)
+    again = asyncio.run(store.get(cap.request, clock.t - timedelta(days=7), clock.t))
+    assert len(cap.calls) == n  # nothing changed: no broker call
+    assert [t.deal_id for t in again.trades] == [t.deal_id for t in first.trades] == ["D1"]
+    assert again.trades[0].pnl == 5.0
+
+
+def test_store_refreshes_only_the_recent_window_after_invalidate():
+    world, cap = _store_world()
+    clock = _Clock(T("2026-10-21T12:00:00"))
+    store = HistoryStore(now=clock)
+    asyncio.run(store.get(cap.request, T("2026-10-14T12:00:00"), clock.t))
+    clock.t += timedelta(minutes=1)
+    _close(world, "D2", "2026-10-21T12:00:30", "7")
+    store.invalidate()
+    cap.calls.clear()
+    h = asyncio.run(store.get(cap.request, clock.t - timedelta(days=7), clock.t))
+    assert [t.deal_id for t in h.trades] == ["D2"] and h.trades[0].pnl == 7.0
+    # One ledger page from (last end - overlap) and one activity call for today.
+    assert [c[1]["from"] for c in cap.calls] == ["2026-10-21T11:45:00", "2026-10-21T00:00:00"]
+
+
+def test_store_refreshes_after_the_ttl_and_serves_narrower_ranges():
+    world, cap = _store_world()
+    clock = _Clock(T("2026-10-21T12:00:00"))
+    store = HistoryStore(now=clock, ttl=timedelta(minutes=10))
+    asyncio.run(store.get(cap.request, clock.t - timedelta(days=30), clock.t))
+    _close(world, "D3", "2026-10-21T12:05:00", "1")  # e.g. done on Capital's own site
+    clock.t += timedelta(minutes=6)
+    cap.calls.clear()
+    assert asyncio.run(store.get(cap.request, clock.t - timedelta(days=7), clock.t)).trades == []
+    assert cap.calls == []  # 7d inside the cached 30d, still fresh
+    clock.t += timedelta(minutes=5)
+    h = asyncio.run(store.get(cap.request, clock.t - timedelta(days=7), clock.t))
+    assert [t.deal_id for t in h.trades] == ["D3"]
+
+
+def test_store_widens_to_older_days_once():
+    world, cap = _store_world()
+    _close(world, "D4", "2026-10-01T09:00:00", "3")
+    clock = _Clock(T("2026-10-21T12:00:00"))
+    store = HistoryStore(now=clock)
+    assert asyncio.run(store.get(cap.request, clock.t - timedelta(days=7), clock.t)).trades == []
+    h = asyncio.run(store.get(cap.request, clock.t - timedelta(days=30), clock.t))
+    assert [t.deal_id for t in h.trades] == ["D4"] and h.trades[0].pnl == 3.0
+    cap.calls.clear()
+    asyncio.run(store.get(cap.request, clock.t - timedelta(days=30), clock.t))
+    asyncio.run(store.get(cap.request, clock.t - timedelta(days=7), clock.t))
+    assert cap.calls == []
+
+
+def test_store_keeps_a_change_made_during_a_fetch():
+    world, cap = _store_world()
+    clock = _Clock(T("2026-10-21T12:00:00"))
+    store = HistoryStore(now=clock)
+    orig = cap.request
+
+    async def request(*a, **kw):
+        store.invalidate()  # a close lands while the first fetch runs
+        return await orig(*a, **kw)
+
+    asyncio.run(store.get(request, clock.t - timedelta(days=1), clock.t))
+    cap.calls.clear()
+    asyncio.run(store.get(cap.request, clock.t - timedelta(days=1), clock.t))
+    assert cap.calls  # still dirty: refetched

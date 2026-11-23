@@ -164,6 +164,23 @@ describe("subscribeHistory", () => {
     expect(demoState!.data).toBeNull(); // unsubscribed before it landed: no delivery
     offPaper();
   });
+  it("a resubscribe shows the last data at once while it refetches", async () => {
+    fetchMock.mockImplementation(() => ok(payload()));
+    const off1 = subscribeHistory("capital:demo", 7, () => {});
+    await flush();
+    off1();
+    let resolve!: (r: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise<Response>((r) => (resolve = r)));
+    const seen: HistoryState[] = [];
+    const off2 = subscribeHistory("capital:demo", 7, (s) => seen.push(s));
+    expect(seen[0].data?.trades[0].dealId).toBe("D1"); // cached, no blank wait
+    expect(seen.at(-1)!.loading).toBe(true);
+    resolve(new Response(JSON.stringify(payload("D2")), { status: 200 }));
+    await flush();
+    expect(seen.at(-1)!.data?.trades[0].dealId).toBe("D2");
+    expect(historyCalls()).toHaveLength(2);
+    off2();
+  });
 });
 
 describe("subscribeMarkerHistory", () => {

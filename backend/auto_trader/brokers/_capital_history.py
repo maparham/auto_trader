@@ -21,7 +21,7 @@ from datetime import date, datetime, time, timedelta, timezone
 
 import httpx
 
-from auto_trader.core.models import ClosedTrade, LedgerEntry, Side
+from auto_trader.core.models import AccountHistory, ClosedTrade, LedgerEntry, Side
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +204,13 @@ def _now() -> datetime:
 async def fetch_transactions(
     request: RequestFn, since: datetime, until: datetime,
 ) -> tuple[list[LedgerEntry], bool]:
+    rows, truncated = await fetch_transaction_rows(request, since, until)
+    return parse_transactions(rows), truncated
+
+
+async def fetch_transaction_rows(
+    request: RequestFn, since: datetime, until: datetime,
+) -> tuple[list[dict], bool]:
     """Page the 100-row-capped ledger newest to oldest. The next page ends at the
     oldest row seen, rounded UP to a whole second (Capital takes whole seconds and
     rows carry milliseconds), so rows sharing that second come back and are deduped
@@ -239,7 +246,7 @@ async def fetch_transactions(
             "fetch_transactions hit the %d-page cap for range %s..%s; older rows may be missing",
             TX_MAX_PAGES, since, until,
         )
-    return parse_transactions(list(seen.values())), truncated
+    return list(seen.values()), truncated
 
 
 class DayCache:
@@ -286,6 +293,10 @@ class DayCache:
         return await asyncio.shield(task)
 
 
+def _activity_key(r: dict) -> tuple:
+    return (r.get("dealId"), r.get("dateUTC"), r.get("source"))
+
+
 async def fetch_activity(
     request: RequestFn,
     cache: DayCache,
@@ -293,9 +304,22 @@ async def fetch_activity(
     until: datetime,
     now: Callable[[], datetime] = _now,
 ) -> list[ClosedTrade]:
-    """Closed trades in [since, until], walking whole UTC days ONE AT A TIME: the
-    rate limiter is shared with dealing, so a gathered burst would queue ahead of
-    an order. Rows a midnight edge returns twice are deduped."""
+    """Closed trades in [since, until]; see fetch_activity_rows."""
+    rows = await fetch_activity_rows(request, cache, since, until, now)
+    return [t for t in parse_activity(rows) if since <= t.closed_at <= until]
+
+
+async def fetch_activity_rows(
+    request: RequestFn,
+    cache: DayCache,
+    since: datetime,
+    until: datetime,
+    now: Callable[[], datetime] = _now,
+) -> list[dict]:
+    """Raw activity rows of every UTC day touching [since, until], walking the
+    days ONE AT A TIME: the rate limiter is shared with dealing, so a gathered
+    burst would queue ahead of an order. Rows a midnight edge returns twice are
+    deduped."""
 
     async def one_day(d: date) -> list[dict]:
         start = datetime.combine(d, time(0), tzinfo=timezone.utc)
@@ -316,9 +340,103 @@ async def fetch_activity(
     last = until.astimezone(timezone.utc).date()
     while d <= last:
         for r in await cache.day(d, one_day, now):
-            key = (r.get("dealId"), r.get("dateUTC"), r.get("source"))
+            key = _activity_key(r)
             if key not in seen:
                 seen.add(key)
                 rows.append(r)
         d += timedelta(days=1)
-    return [t for t in parse_activity(rows) if since <= t.closed_at <= until]
+    return rows
+
+
+# How long a snapshot is served with no broker call when nothing we can see has
+# changed. It bounds the delay for events the app cannot observe: overnight
+# funding, deposits, withdrawals, a close done on Capital's own platform while
+# no one is polling positions here.
+HISTORY_TTL = timedelta(minutes=10)
+# A refresh refetches from this far before the last fetch's end, so a row Capital
+# lists a little late (or with a time just before our fetch) is still caught.
+HISTORY_OVERLAP = timedelta(minutes=15)
+
+
+class HistoryStore:
+    """One broker instance's history, kept in memory and served without broker
+    calls while it is fresh.
+
+    The store holds raw ledger and activity rows covering [since, until] of all
+    fetches so far. A request inside that range answers from memory. It goes to
+    Capital only for (a) older days than ever fetched, and (b) the recent window
+    [until - overlap, now] once `invalidate()` was called (a deal or a position
+    change) or the snapshot is older than the TTL. Past days of activity also
+    come from DayCache, so a widened range costs one call per new day."""
+
+    def __init__(
+        self,
+        ttl: timedelta = HISTORY_TTL,
+        overlap: timedelta = HISTORY_OVERLAP,
+        now: Callable[[], datetime] = _now,
+    ) -> None:
+        self._ttl = ttl
+        self._overlap = overlap
+        self._now = now
+        self._days = DayCache()
+        self._lock = asyncio.Lock()
+        self._tx: dict[str, dict] = {}
+        self._act: dict[tuple, dict] = {}
+        self._since: datetime | None = None
+        self._until: datetime | None = None
+        self._fetched_at: datetime | None = None
+        # Ledger rows older than this may be missing (a fetch stopped paging).
+        self._tx_gap_until: datetime | None = None
+        self._changes = 0
+        self._seen_changes = 0
+
+    def invalidate(self) -> None:
+        """Something may have changed upstream: the next request refreshes the
+        recent window. Counted, so a change during a fetch is not lost."""
+        self._changes += 1
+
+    async def get(self, request: RequestFn, since: datetime, until: datetime) -> AccountHistory:
+        async with self._lock:
+            await self._refresh(request, since, until)
+            return self._view(since, until)
+
+    async def _refresh(self, request: RequestFn, since: datetime, until: datetime) -> None:
+        changes = self._changes
+        if self._since is None or self._until is None or self._fetched_at is None:
+            await self._fetch(request, since, until)
+            self._since, self._until = since, until
+            self._fetched_at, self._seen_changes = self._now(), changes
+            return
+        if since < self._since:
+            await self._fetch(request, since, self._since + self._overlap)
+            self._since = since
+        stale = self._now() - self._fetched_at >= self._ttl
+        if changes != self._seen_changes or stale:
+            await self._fetch(request, max(self._since, self._until - self._overlap), until)
+            self._until = max(self._until, until)
+            self._fetched_at, self._seen_changes = self._now(), changes
+
+    async def _fetch(self, request: RequestFn, since: datetime, until: datetime) -> None:
+        rows, truncated = await fetch_transaction_rows(request, since, until)
+        for r in rows:
+            self._tx[_row_key(r)] = r
+        if truncated:
+            times = [t for r in rows if (t := utc(r.get("dateUtc"))) is not None]
+            edge = min(times) if times else until
+            if self._tx_gap_until is None or edge > self._tx_gap_until:
+                self._tx_gap_until = edge
+        for r in await fetch_activity_rows(request, self._days, since, until, self._now):
+            self._act[_activity_key(r)] = r
+
+    def _view(self, since: datetime, until: datetime) -> AccountHistory:
+        ledger = [e for e in parse_transactions(list(self._tx.values())) if since <= e.at <= until]
+        # Same rows a direct fetch of [since, until] would see: whole UTC days
+        # from since's day on (an open before that stays unknown, as before).
+        day0 = datetime.combine(since.astimezone(timezone.utc).date(), time(0), tzinfo=timezone.utc)
+        rows = [r for r in self._act.values() if (at := utc(r.get("dateUTC"))) is not None and at >= day0]
+        trades = [t for t in parse_activity(rows) if since <= t.closed_at <= until]
+        return AccountHistory(
+            trades=attach_pnl(trades, ledger),
+            ledger=ledger,
+            ledger_truncated=self._tx_gap_until is not None and since < self._tx_gap_until,
+        )

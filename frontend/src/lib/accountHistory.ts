@@ -2,7 +2,8 @@
 // closed trades with realized P&L and the cash ledger, from GET /api/history.
 //
 // One store entry per (account, days), shared by every subscriber (desktop
-// dock, phone view, chart markers). An entry refetches while it has
+// dock, phone view, chart markers). The entry outlives its subscribers, so a
+// remount shows the last rows while they refresh. An entry refetches while it has
 // subscribers: on a 60 s timer (skipped while the page is hidden), and when a
 // position disappears from the trades book (a close just happened). The timer
 // is what keeps capital:demo fresh: it has no server push and no trades poll.
@@ -190,8 +191,13 @@ export function subscribeHistory(
   return () => {
     entry.listeners.delete(fn);
     if (entry.listeners.size === 0) {
+      // Keep the entry and its last data: reopening the History tab then
+      // shows the cached rows at once while load() refreshes them, instead
+      // of a blank "Loading history…" for the whole slow broker fetch. An
+      // in-flight response still lands here, ready for the next subscriber.
+      // Memory only; impersonation and sign-out reload the page.
       if (entry.timer !== null) clearInterval(entry.timer);
-      entries.delete(key); // drops any in-flight response (load checks identity)
+      entry.timer = null;
     }
     syncVisibilityListener();
   };
@@ -199,7 +205,7 @@ export function subscribeHistory(
 
 /** Refetch every subscribed range of `account` now. */
 export function refreshHistory(account: string): void {
-  for (const e of entries.values()) if (e.account === account) void load(e);
+  for (const e of entries.values()) if (e.account === account && e.listeners.size > 0) void load(e);
 }
 
 // A position leaving the book is a close (TP/SL/manual/stop-out): refetch the

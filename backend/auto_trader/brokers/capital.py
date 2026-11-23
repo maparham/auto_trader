@@ -19,12 +19,7 @@ import httpx
 
 from auto_trader.brokers.base import MarketDataBroker
 from auto_trader.core import candle_timing
-from auto_trader.brokers._capital_history import (
-    DayCache,
-    attach_pnl,
-    fetch_activity,
-    fetch_transactions,
-)
+from auto_trader.brokers._capital_history import HistoryStore
 from auto_trader.brokers._dealing import (
     AsyncConfirmExecutionBroker,
     account_summary_from_accounts,
@@ -603,8 +598,11 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
         # It effectively never changes, so a long TTL keeps get_positions cheap.
         self._account_ccy: str | None = None
         self._account_ccy_at: "datetime | None" = None
-        # Past UTC days of activity never change; see _capital_history.DayCache.
-        self._history_days = DayCache()
+        # History served from memory between changes; see _capital_history.HistoryStore.
+        self._history = HistoryStore()
+        # (deal_id, size) of the last full positions read: a change (a close, a
+        # fill, a partial close) means new history rows upstream.
+        self._position_sig: frozenset | None = None
 
     async def _account_currency(self) -> str | None:
         now = datetime.now(timezone.utc)
@@ -688,6 +686,7 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
                 result = self._result_from_confirm(order, status, confirm, submitted, resting=False)
 
             self._store_result(order.client_order_id, result)
+            self._history.invalidate()
             return result
 
     def _result_from_confirm(
@@ -758,6 +757,11 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
                     trailing_stop=bool(pos.get("trailingStop")),
                 )
             )
+        if epic is None:
+            sig = frozenset((p.deal_id, p.quantity) for p in out)
+            if self._position_sig is not None and sig != self._position_sig:
+                self._history.invalidate()
+            self._position_sig = sig
         return out
 
     async def _position_margin(
@@ -802,6 +806,7 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
         status, confirm = await self._submit_and_confirm(
             "DELETE", f"/api/v1/positions/{deal_id}", None
         )
+        self._history.invalidate()
         if status is OrderStatus.PENDING:
             status = OrderStatus.FILLED
         dealt = _f(confirm.get("size"))
@@ -962,12 +967,7 @@ class CapitalExecutionBroker(AsyncConfirmExecutionBroker):
     async def get_history(self, since: datetime, until: datetime) -> AccountHistory:
         """Closed trades (with realized P&L) and the cash ledger in [since, until].
         Sequential on purpose: these calls share the dealing session's limiter."""
-        request = self._broker._request
-        ledger, truncated = await fetch_transactions(request, since, until)
-        trades = await fetch_activity(request, self._history_days, since, until)
-        return AccountHistory(
-            trades=attach_pnl(trades, ledger), ledger=ledger, ledger_truncated=truncated,
-        )
+        return await self._history.get(self._broker._request, since, until)
 
 
 def _deal_id(confirm: dict) -> str | None:
