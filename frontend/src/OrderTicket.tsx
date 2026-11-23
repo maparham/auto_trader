@@ -37,6 +37,8 @@ import {
 import {
   draftOrderSignal,
   editTradeSignal,
+  indicatorAlertRequest,
+  lineAlertRequest,
   pendingEditsSignal,
   setTradeSelected,
   tradeLineUiSignal,
@@ -61,7 +63,15 @@ import NumberField from "./components/NumberField";
 import SelectMenu from "./components/SelectMenu";
 import ExpirySelect from "./components/ExpirySelect";
 import ProximityWarn from "./components/ProximityWarn";
-import { addPositionAlert } from "./lib/alertsApi";
+import { addMoveRule, addPositionAlert, deleteMoveRule, findMoveRule, patchMoveRule, type MoveRule } from "./lib/alertsApi";
+import MoveRuleControl from "./components/MoveRuleControl";
+import {
+  defaultCondition,
+  defaultTriggerLevel,
+  moveDraftSignal,
+  type MoveDraftState,
+  type MoveRuleDraft,
+} from "./lib/moveRuleDraft";
 import { expiryToApi, isValidExpiry } from "./lib/expiry";
 import { useMarketClosed } from "./lib/useMarketClosed";
 import { useBrokerLeverage } from "./lib/useBrokerLeverage";
@@ -130,9 +140,31 @@ function seedExit(ref: number, up: boolean, atr: number | null, precision: numbe
   if (atr != null) return levelFromAtr(ref, 1, atr, up, precision);
   return Number((up ? ref * (1 + DEFAULT_BRACKET) : ref * (1 - DEFAULT_BRACKET)).toFixed(precision));
 }
-// Sticky: a real-money warning that did not get set stays until the form changes.
-const WARN_FAIL_PREFIX = "Order filled. Warning not set: ";
+// Sticky: a real-money warning or move rule that did not get set stays until the form changes.
+const STICKY_PREFIX = "Order filled. ";
 const LIMIT_WARN_TIP = "Available for market orders. Turn it on from the position once filled.";
+const LIMIT_MOVE_TIP = "Available for market orders. Set it on the position once filled.";
+
+/** Move-draft state with `field` replaced (creating the state when absent). */
+function withMoveField(
+  cur: MoveDraftState | null, epic: string, dealId: string | null, side: "buy" | "sell",
+  field: "sl" | "tp", d: MoveRuleDraft | null,
+): MoveDraftState {
+  const base: MoveDraftState =
+    cur && cur.epic === epic && cur.dealId === dealId && cur.side === side
+      ? cur
+      : { epic, dealId, side, sl: null, tp: null };
+  return { ...base, [field]: d };
+}
+const seedMoveDraft = (
+  field: "sl" | "tp", side: "buy" | "sell", ref: number, sl: number | null, tp: number | null, precision: number,
+): MoveRuleDraft => ({
+  on: true,
+  level: Number(defaultTriggerLevel(field, side, ref, sl, tp).toFixed(precision)),
+  condition: defaultCondition(field, side),
+  target: { type: "breakeven", offset: 0 },
+});
+const moveRuleFields = (d: MoveRuleDraft) => ({ level: d.level, condition: d.condition });
 type OrderType = "market" | "limit" | "stop";
 
 export default function OrderTicket({
@@ -182,6 +214,14 @@ export default function OrderTicket({
   const doneTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(doneTimer.current), []);
   const [quote, setQuote] = useState<Quote | null>(null);
+  // Move SL / Move TP drafts live in moveDraftSignal (the chart draws from it).
+  const [moveDraft, setMoveDraft] = useState<MoveDraftState | null>(moveDraftSignal.value);
+  useEffect(() => moveDraftSignal.subscribe(setMoveDraft), []);
+  // A draft is for one epic / side / order type; any change drops it, as does leaving.
+  useEffect(() => {
+    moveDraftSignal.set(null);
+  }, [epic, side, orderType]);
+  useEffect(() => () => moveDraftSignal.set(null), []);
   const [draft, setDraft] = useState<DraftOrder | null>(draftOrderSignal.value);
   const [positions, setPositions] = useState<TradeView[]>([]);
   const [editId, setEditId] = useState<string | null>(editTradeSignal.value);
@@ -223,7 +263,7 @@ export default function OrderTicket({
   // figure is only the fallback (and what the paper sim uses).
   const brokerLev = useBrokerLeverage(epic, brokerOf(account), !replaying && !account.endsWith(":paper"));
   // The sticky warning leaves on the user's next interaction with the form.
-  const dropStickyMsg = () => setMsg((m) => (m?.startsWith(WARN_FAIL_PREFIX) ? null : m));
+  const dropStickyMsg = () => setMsg((m) => (m?.startsWith(STICKY_PREFIX) ? null : m));
   const round = (n: number) => Number(n.toFixed(precision));
   const fmt = (v: number | null | undefined) => (v == null ? "—" : v.toFixed(precision));
 
@@ -330,7 +370,10 @@ export default function OrderTicket({
   // Entering edit mode clears the new-order draft so its lines disappear; leaving
   // edit re-seeds a fresh draft via the maintenance effect below.
   useEffect(() => {
-    if (editId) draftOrderSignal.set(null);
+    if (editId) {
+      draftOrderSignal.set(null);
+      moveDraftSignal.set(null);
+    }
   }, [editId]);
 
   useEffect(() => {
@@ -353,7 +396,7 @@ export default function OrderTicket({
   }, [epic, account, replaying]);
 
   useEffect(() => {
-    if (!msg || msg.startsWith(WARN_FAIL_PREFIX)) return;
+    if (!msg || msg.startsWith(STICKY_PREFIX)) return;
     window.clearTimeout(flash.current);
     flash.current = window.setTimeout(() => setMsg(null), 4000);
     return () => window.clearTimeout(flash.current);
@@ -440,6 +483,16 @@ export default function OrderTicket({
   const pct = (level: number | null) =>
     level != null && entryPrice ? ((level - entryPrice) / entryPrice) * 100 : null;
 
+  const myMove = moveDraft && moveDraft.epic === epic && moveDraft.dealId == null ? moveDraft : null;
+  function setMove(field: "sl" | "tp", d: MoveRuleDraft | null) {
+    moveDraftSignal.set(withMoveField(moveDraftSignal.value, epic, null, side, field, d));
+  }
+  function toggleMove(field: "sl" | "tp", on: boolean) {
+    const ref = mid ?? entryPrice;
+    if (!on || ref == null) return setMove(field, null);
+    setMove(field, seedMoveDraft(field, side, ref, slVal, tpVal, precision));
+  }
+
   // An exit on the wrong side of the entry (a sell's stop below it, its target
   // above) is refused by the broker with a raw code. Flag the field and block
   // the order here instead.
@@ -495,6 +548,10 @@ export default function OrderTicket({
     const warnSides: ("sl" | "tp")[] = [];
     if (!isLimit && tpOn && warnTp) warnSides.push("tp");
     if (!isLimit && slOn && warnSl) warnSides.push("sl");
+    const moveSides: ("sl" | "tp")[] = [];
+    if (!isLimit && myMove?.sl?.on) moveSides.push("sl");
+    if (!isLimit && myMove?.tp?.on) moveSides.push("tp");
+    const moveDrafts = { sl: myMove?.sl ?? null, tp: myMove?.tp ?? null };
     submittingRef.current = true;
     setBusy(true);
     setMsg(null);
@@ -534,6 +591,7 @@ export default function OrderTicket({
         setQuantity("1");
         setWarnTp(false);
         setWarnSl(false);
+        moveDraftSignal.set(null);
         const px = result.fill_price != null ? result.fill_price.toFixed(precision) : "?";
         setDone(isLimit ? "Limit order placed" : `Filled ${result.filled_quantity} @ ${px}`);
         window.clearTimeout(doneTimer.current);
@@ -542,6 +600,7 @@ export default function OrderTicket({
           onDone?.();
         }, DONE_FLASH_MS);
         refreshTrades();
+        const failures: string[] = [];
         if (!isLimit && warnSides.length) {
           let reason: string | null = null;
           if (!result.deal_id) reason = "no deal id from the broker";
@@ -553,8 +612,28 @@ export default function OrderTicket({
               if (d && !reason) reason = d;
             }
           }
-          if (reason) setMsg(`${WARN_FAIL_PREFIX}${reason}`);
+          if (reason) failures.push(`Warning not set: ${reason}`);
         }
+        for (const sd of moveSides) {
+          const d = moveDrafts[sd]!;
+          const word = sd === "sl" ? "Move SL" : "Move TP";
+          if (!result.deal_id) {
+            failures.push(`${word} not set: no deal id from the broker`);
+            continue;
+          }
+          const reason = await addMoveRule({
+            broker: account.split(":")[0],
+            epic,
+            triggerKind: "price_level",
+            params: moveRuleFields(d),
+            action: {
+              account, dealId: result.deal_id, field: sd, direction: side === "buy" ? "BUY" : "SELL", target: d.target,
+            },
+            precision,
+          });
+          if (reason) failures.push(`${word} not set: ${reason}`);
+        }
+        if (failures.length) setMsg(`${STICKY_PREFIX}${failures.join(". ")}`);
       }
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Order failed.");
@@ -753,6 +832,24 @@ export default function OrderTicket({
           onToggle={setWarnSl}
           onMult={setWarnSlMult}
         />
+        <MoveRuleControl
+          field="tp"
+          draft={myMove?.tp ?? null}
+          precision={precision}
+          disabled={isLimit}
+          disabledReason={LIMIT_MOVE_TIP}
+          onChange={(d) => setMove("tp", d)}
+          onToggle={(on) => toggleMove("tp", on)}
+        />
+        <MoveRuleControl
+          field="sl"
+          draft={myMove?.sl ?? null}
+          precision={precision}
+          disabled={isLimit}
+          disabledReason={LIMIT_MOVE_TIP}
+          onChange={(d) => setMove("sl", d)}
+          onToggle={(on) => toggleMove("sl", on)}
+        />
       </div>
 
       {/* Order info (approximate, paper account). */}
@@ -875,6 +972,14 @@ function EditTicket({
     },
     [trade.id],
   );
+
+  // Move SL / Move TP of an open position: the draft is in moveDraftSignal once
+  // the user edits; until then the control shows the saved price rule.
+  const [moveDraft, setMoveDraft] = useState<MoveDraftState | null>(moveDraftSignal.value);
+  useEffect(() => moveDraftSignal.subscribe(setMoveDraft), []);
+  useEffect(() => () => moveDraftSignal.set(null), [trade.id]);
+  const [, setRev] = useState(0);
+  const bump = () => setRev((n) => n + 1);
 
   const round = (n: number) => Number(n.toFixed(precision));
   const isOrder = trade.kind === "order";
@@ -1031,6 +1136,80 @@ function EditTicket({
     }
   }
 
+  const myMove = moveDraft && moveDraft.dealId === trade.id ? moveDraft : null;
+  const savedMove = (field: "sl" | "tp"): MoveRule | undefined => findMoveRule(trade.id, field);
+  const moveDraftOf = (field: "sl" | "tp"): MoveRuleDraft | null => {
+    if (myMove?.[field]) return myMove[field];
+    const r = savedMove(field);
+    if (!r || r.triggerKind !== "price_level") return null;
+    return {
+      on: true,
+      level: Number(r.params.level),
+      condition: r.params.condition as MoveRuleDraft["condition"],
+      target: r.action.target,
+    };
+  };
+  const setMove = (field: "sl" | "tp", d: MoveRuleDraft | null) =>
+    moveDraftSignal.set(withMoveField(moveDraftSignal.value, trade.epic, trade.id, trade.side, field, d));
+  async function removeMove(field: "sl" | "tp") {
+    const r = savedMove(field);
+    setMove(field, null);
+    if (!r) return;
+    setBusy(true);
+    const reason = await deleteMoveRule(r.id);
+    setBusy(false);
+    if (reason) setMsg(`Move ${field.toUpperCase()} not removed: ${reason}`);
+    bump();
+  }
+  function toggleMove(field: "sl" | "tp", on: boolean) {
+    if (!on) return void removeMove(field);
+    setMove(field, seedMoveDraft(field, trade.side, trade.priceLevel, stop, tp, precision));
+  }
+  async function saveMove(field: "sl" | "tp") {
+    const d = moveDraftOf(field);
+    if (!d) return;
+    const r = savedMove(field);
+    setBusy(true);
+    setMsg(null);
+    const reason = r
+      ? await patchMoveRule(r.id, { params: { ...moveRuleFields(d), trigger: "once" }, target: d.target })
+      : await addMoveRule({
+          broker: account.split(":")[0],
+          epic: trade.epic,
+          triggerKind: "price_level",
+          params: moveRuleFields(d),
+          action: {
+            account, dealId: trade.id, field, direction: trade.side === "buy" ? "BUY" : "SELL", target: d.target,
+          },
+          precision,
+        });
+    setBusy(false);
+    if (reason) setMsg(`Move ${field.toUpperCase()} not saved: ${reason}`);
+    else setMove(field, null);
+    bump();
+  }
+  function editMove(field: "sl" | "tp") {
+    const r = savedMove(field);
+    if (!r) return;
+    if (r.triggerKind === "line") lineAlertRequest.set({ mode: "edit", id: r.id });
+    else indicatorAlertRequest.set({ mode: "edit", id: r.id });
+  }
+  const moveControl = (field: "sl" | "tp") => (
+    <MoveRuleControl
+      key={field}
+      field={field}
+      draft={moveDraftOf(field)}
+      precision={precision}
+      busy={busy}
+      saved={savedMove(field)}
+      onChange={(d) => setMove(field, d)}
+      onToggle={(on) => toggleMove(field, on)}
+      onSave={() => void saveMove(field)}
+      onRemove={() => void removeMove(field)}
+      onEdit={() => editMove(field)}
+    />
+  );
+
   const word = tradeLabel(trade.kind, trade.side);
 
   return (
@@ -1100,6 +1279,8 @@ function EditTicket({
           breakevenTip="Move the stop-loss to your entry price, so the trade can't turn into a loss from here."
           atr={exitAtrView(atrPrefs, setAtrPrefs, "sl", atrValue, ref, long, precision, resolution, !isOrder)}
         />
+        {!isOrder && moveControl("tp")}
+        {!isOrder && moveControl("sl")}
       </div>
 
       <div className="ot-edit-actions">

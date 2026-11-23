@@ -7958,3 +7958,15 @@ tr.tl-loss td:nth-last-child(-n + 2) { color: var(--neg); }
    dualControl): sized to its longest unit, not the row's full-width selects. */
 .ind-settings-tl .ind-row.ind-row-cols select.ind-unit,
 .ind-row select.ind-unit { width: auto; padding: 4px 4px; font-size: 0.85em; }
+.ot-move.disabled .ot-prox-label { opacity: 0.6; }
+.ot-move-body { display: flex; flex-direction: column; gap: 6px; padding: 0 0 8px; }
+.ot-move-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); padding-bottom: 4px; }
+.ot-move-row .ot-input { flex: 1; min-width: 0; }
+.ot-move-sel { flex: 1; }
+.ot-move-field { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.ot-move-saved { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ot-move-btn {
+  padding: 2px 8px; font: inherit; font-size: 11px; color: var(--text); cursor: pointer;
+  background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px;
+}
+.ot-move-btn:disabled { opacity: 0.5; cursor: default; }
