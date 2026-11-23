@@ -46,6 +46,7 @@ from auto_trader.core.alert_indicators import IndicatorHub, Loader, SeriesKey
 from auto_trader.core.alert_kinds import AlertKind, kind_of
 from auto_trader.core.alert_store import AlertStore
 from auto_trader.core.models import Candle
+from auto_trader.core.position_alert_kind import watched_price
 from auto_trader.core.state_store import STATE_STORE
 from auto_trader.indicators.alert_series import IndicatorKey
 
@@ -101,6 +102,9 @@ class AlertEngine:
         self._get_broker: Callable[[str], Any] | None = None
         self._broadcast: Callable[[str, dict], Awaitable[None]] | None = None
         self._notifiers: list[Callable[[str, dict], Awaitable[None]]] | None = None
+        # SL/TP move rules (rows with an `action`) hand their fire to this.
+        self._action_handler: Callable[[str, dict, float, float], Awaitable[None]] | None = None
+        self._action_tasks: set[asyncio.Task] = set()
 
         # registry: (broker, epic) -> [(user_id, row), ...]
         self._registry: dict[tuple[str, str], list[tuple[str, dict]]] = {}
@@ -767,6 +771,13 @@ class AlertEngine:
                 "value": {"broker": broker, "epic": epic, "origin": "engine"},
             })
 
+    def set_action_handler(
+        self, fn: Callable[[str, dict, float, float], Awaitable[None]] | None,
+    ) -> None:
+        """Wire the move-rule action handler, called as fn(user_id, row, price,
+        level). Until one is set, action rows are neither fired nor removed."""
+        self._action_handler = fn
+
     # ---- tick evaluation ----
 
     async def on_tick(
@@ -824,6 +835,9 @@ class AlertEngine:
         kind = kind_of(row)
         if kind is None:
             return
+        action = row.get("action")
+        if action and self._action_handler is None:
+            return  # waits, untouched, until the handler is wired
         params = row.get("params", {})
 
         sig = kind.sig(params)
@@ -835,6 +849,10 @@ class AlertEngine:
 
         side = self.price_side_for(user_id)
         price = bid if side == "bid" and bid is not None else ask if side == "ask" and ask is not None else mid
+        if action and row.get("kind", "price_level") == "price_level":
+            # A move rule watches the side a position closes on, not the user's setting.
+            side_price = watched_price(action["direction"], bid, ask)
+            price = side_price if side_price is not None else mid
 
         ind = kind.indicator_key(params)
         # One bar clock for every alert: the period the sample falls in.
@@ -998,6 +1016,22 @@ class AlertEngine:
         # indicator line (or the fixed value) for an indicator alert.
         level = pair[1]
         condition = params.get("condition")
+
+        if row.get("action"):
+            # Move rule: no History, broadcast or notifiers. The handler
+            # reports its own outcome.
+            handler = self._action_handler
+            if handler is not None:
+                task = asyncio.ensure_future(handler(user_id, row, price, level))
+                self._action_tasks.add(task)
+
+                def done(t: asyncio.Task) -> None:
+                    self._action_tasks.discard(t)
+                    if not t.cancelled() and t.exception() is not None:
+                        log.warning("move rule handler failed for alert=%s", row["id"], exc_info=t.exception())
+
+                task.add_done_callback(done)
+            return
 
         # The sample time: equal to now for live feeds, and the value the
         # restart rebuild maps back through `period_start`.

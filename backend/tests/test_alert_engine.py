@@ -1047,3 +1047,84 @@ def test_start_ignores_account_rows(tmp_path):
         finally:
             await eng.stop()
     asyncio.run(main())
+
+
+# ---- SL/TP move rules (rows with an action) ----
+
+
+def move_row(direction="BUY", level=1.10, condition="crossing_up", **kw):
+    return row(
+        id="mv-1", level=level, condition=condition, trigger="once",
+        action={"account": "a1", "dealId": "d1", "field": "stop", "direction": direction, "target": 1.05},
+        **kw,
+    )
+
+
+def make_move_engine(tmp_path, with_handler=True):
+    eng, store, sent, notified = make_engine(tmp_path)
+    calls: list[tuple] = []
+
+    async def handler(uid, r, price, level):
+        calls.append((uid, r, price, level))
+
+    if with_handler:
+        eng.set_action_handler(handler)
+    return eng, store, sent, notified, calls
+
+
+def test_move_row_fires_handler_not_notifiers(tmp_path):
+    async def main():
+        eng, store, sent, notified, calls = make_move_engine(tmp_path)
+        created = await store.create("u1", move_row())
+        eng.on_alert_changed("u1", created, "mv-1")
+        await eng.on_tick("capital", "US100", 1.09, 1.09, 1.092)
+        await eng.on_tick("capital", "US100", 1.11, 1.11, 1.112)
+        await asyncio.sleep(0)
+        await asyncio.gather(*eng._action_tasks)
+        assert len(calls) == 1
+        uid, r, price, level = calls[0]
+        assert (uid, r["id"], price, level) == ("u1", "mv-1", 1.11, 1.10)
+        assert notified == []
+        assert [m for _, m in sent if m["key"] == "__alerts__:fired"] == []
+        assert await store.list_triggered("u1") == []
+        assert await store.list_user("u1") == []
+    asyncio.run(main())
+
+
+def test_move_row_long_uses_bid(tmp_path):
+    async def main():
+        eng, store, sent, notified, calls = make_move_engine(tmp_path)
+        created = await store.create("u1", move_row("BUY"))
+        eng.on_alert_changed("u1", created, "mv-1")
+        await eng.on_tick("capital", "US100", 1.095, 1.094, 1.096)
+        await eng.on_tick("capital", "US100", 1.105, 1.099, 1.111)  # mid crossed, bid did not
+        await asyncio.sleep(0)
+        assert calls == []
+        assert len(await store.list_user("u1")) == 1
+    asyncio.run(main())
+
+
+def test_move_row_short_uses_ask(tmp_path):
+    async def main():
+        eng, store, sent, notified, calls = make_move_engine(tmp_path)
+        created = await store.create("u1", move_row("SELL", condition="crossing_down"))
+        eng.on_alert_changed("u1", created, "mv-1")
+        await eng.on_tick("capital", "US100", 1.105, 1.104, 1.106)
+        await eng.on_tick("capital", "US100", 1.095, 1.09, 1.101)  # bid crossed, ask did not
+        await asyncio.sleep(0)
+        assert calls == []
+        assert len(await store.list_user("u1")) == 1
+    asyncio.run(main())
+
+
+def test_move_row_waits_without_handler(tmp_path):
+    async def main():
+        eng, store, sent, notified, calls = make_move_engine(tmp_path, with_handler=False)
+        created = await store.create("u1", move_row())
+        eng.on_alert_changed("u1", created, "mv-1")
+        await eng.on_tick("capital", "US100", 1.09, 1.09, 1.092)
+        await eng.on_tick("capital", "US100", 1.11, 1.11, 1.112)
+        await asyncio.sleep(0)
+        assert calls == []
+        assert len(await store.list_user("u1")) == 1
+    asyncio.run(main())
