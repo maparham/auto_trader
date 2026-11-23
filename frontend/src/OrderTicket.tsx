@@ -1153,16 +1153,19 @@ function EditTicket({
     moveDraftSignal.set(withMoveField(moveDraftSignal.value, trade.epic, trade.id, trade.side, field, d));
   async function removeMove(field: "sl" | "tp") {
     const r = savedMove(field);
-    setMove(field, null);
-    if (!r) return;
+    if (!r) return setMove(field, null);
     setBusy(true);
     const reason = await deleteMoveRule(r.id);
     setBusy(false);
     if (reason) setMsg(`Move ${field.toUpperCase()} not removed: ${reason}`);
+    else setMove(field, null);
     bump();
   }
+  // The switch never deletes a saved rule: off collapses the draft, on reopens it.
   function toggleMove(field: "sl" | "tp", on: boolean) {
-    if (!on) return void removeMove(field);
+    const cur = moveDraftOf(field);
+    if (!on) return setMove(field, cur ? { ...cur, on: false } : null);
+    if (cur) return setMove(field, { ...cur, on: true });
     setMove(field, seedMoveDraft(field, trade.side, trade.priceLevel, stop, tp, precision));
   }
   async function saveMove(field: "sl" | "tp") {

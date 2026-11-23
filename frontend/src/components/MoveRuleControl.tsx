@@ -127,10 +127,10 @@ export default function MoveRuleControl({
               onChange={(n) => onChange({ ...draft, level: n })}
             />
           </div>
-          {saved && (
+          {(onSave || saved) && (
             <div className="ot-move-row">
-              <button type="button" className="ot-move-btn" disabled={busy} onClick={onSave}>Save rule</button>
-              <button type="button" className="ot-move-btn" disabled={busy} onClick={onRemove}>Remove rule</button>
+              {onSave && <button type="button" className="ot-move-btn" disabled={busy} onClick={onSave}>Save rule</button>}
+              {saved && <button type="button" className="ot-move-btn" disabled={busy} onClick={onRemove}>Remove rule</button>}
             </div>
           )}
         </div>
