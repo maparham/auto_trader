@@ -178,6 +178,14 @@ async def lifespan(app: FastAPI):
         engine=ALERT_ENGINE,
     )
     POSITION_WATCH.listen_to(ALERT_ENGINE)
+    from auto_trader.core.move_rules import MOVE_RULES
+    MOVE_RULES.configure(
+        store=ALERT_STORE,
+        get_exec=deps.get_exec,
+        broadcast=state_router.broadcast_to_user,
+        notifiers=[TELEGRAM.notifier, PUSH.notifier, FCM.notifier],
+        engine=ALERT_ENGINE,
+    )
     telegram_poller = asyncio.create_task(TELEGRAM.run_poller())
     try:
         # One-shot lift of legacy localStorage alert blobs (mirrored into
@@ -202,6 +210,7 @@ async def lifespan(app: FastAPI):
         await ALERT_ENGINE.start()
         await ACCOUNT_MONITOR.start()
         await POSITION_WATCH.start()
+        await MOVE_RULES.start()
         # The MCP endpoint is mounted, so its own lifespan never runs — drive its
         # streamable-HTTP session manager from here for the app's lifetime.
         async with mcp_server.mcp_session() if AGENT_BRIDGE else nullcontext():
@@ -211,6 +220,9 @@ async def lifespan(app: FastAPI):
         # below (flusher/triggers cancel + the registry close) —
         # same "one broken cleanup step can't block the rest" convention as
         # the suppress()s a few lines down.
+        # Before ALERT_ENGINE: running moves change real stops, let them finish.
+        with suppress(Exception):
+            await MOVE_RULES.stop()
         with suppress(Exception):
             await POSITION_WATCH.stop()
         with suppress(Exception):
