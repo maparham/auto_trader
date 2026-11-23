@@ -6,7 +6,11 @@ import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/re
 // `const add = vi.fn(...)` referenced inside the factory would throw (TDZ).
 // vi.hoisted runs before that hoisting and is the documented escape hatch.
 // `describeFn` (not `describe`) to avoid shadowing vitest's own `describe`.
-const { add, patch, loadAll, describeFn } = vi.hoisted(() => ({
+const { add, patch, loadAll, describeFn, addMove, patchMove, loadMoves, adminFlag } = vi.hoisted(() => ({
+  addMove: vi.fn((_r: unknown) => Promise.resolve(null as string | null)),
+  patchMove: vi.fn((_id: string, _p: Record<string, unknown>) => Promise.resolve(null as string | null)),
+  loadMoves: vi.fn(() => [] as import("./lib/alertsApi").MoveRule[]),
+  adminFlag: { value: false },
   add: vi.fn((_a: import("./lib/alertsApi").IndicatorAlert) => Promise.resolve(true)),
   patch: vi.fn((_id: string, _p: Record<string, unknown>) => Promise.resolve(true)),
   loadAll: vi.fn((_broker?: string) => [] as import("./lib/alertsApi").IndicatorAlert[]),
@@ -18,6 +22,21 @@ vi.mock("./lib/alertsApi", async (orig) => ({
   patchIndicatorAlert: patch,
   loadAllIndicatorAlerts: loadAll,
   describeIndicatorAlert: describeFn,
+  addMoveRule: addMove,
+  patchMoveRule: patchMove,
+  loadMoveRules: loadMoves,
+}));
+vi.mock("./lib/trading", async (orig) => ({
+  ...(await orig<typeof import("./lib/trading")>()),
+  isAdminAccount: () => adminFlag.value,
+  getTradesAccount: () => "capital-demo:demo",
+  subscribeTrades: (fn: (t: unknown[]) => void) => {
+    fn([{
+      kind: "position", id: "d1", epic: "US100", side: "buy", quantity: 2, priceLevel: 100, stop: null,
+      takeProfit: null, upnl: null, openedAt: null, expiresAt: null, leverage: null, margin: null,
+    }]);
+    return () => {};
+  },
 }));
 
 import IndicatorAlertModal from "./IndicatorAlertModal";
@@ -39,6 +58,13 @@ beforeEach(() => {
   loadAll.mockReturnValue([]);
   describeFn.mockReset();
   describeFn.mockResolvedValue(null);
+  addMove.mockReset();
+  addMove.mockResolvedValue(null);
+  patchMove.mockReset();
+  patchMove.mockResolvedValue(null);
+  loadMoves.mockReset();
+  loadMoves.mockReturnValue([]);
+  adminFlag.value = false;
 });
 
 const RSI_DESC: AlertDescription = {
@@ -213,5 +239,58 @@ describe("IndicatorAlertModal", () => {
     fireEvent.change(document.querySelector(".al-message")!, { target: { value: "  my note " } });
     fireEvent.click(screen.getByText("Create"));
     expect(add.mock.calls[0][0].message).toBe("my note");
+  });
+});
+
+describe("IndicatorAlertModal move rules", () => {
+  const props = { defaults: DEFAULT_ALERT_DEFAULTS, now: 0, onClose: () => {} };
+
+  it("hides the Then picker for a non-admin", async () => {
+    describeFn.mockResolvedValue(RSI_DESC);
+    render(<IndicatorAlertModal request={{ mode: "create", draft: draft() }} {...props} />);
+    await screen.findByDisplayValue("55.5");
+    expect(screen.queryByLabelText("Then")).toBeNull();
+  });
+
+  it("Move SL saves through addMoveRule as an indicator trigger", async () => {
+    adminFlag.value = true;
+    describeFn.mockResolvedValue(RSI_DESC);
+    const onClose = vi.fn();
+    render(<IndicatorAlertModal request={{ mode: "create", draft: draft() }} {...props} onClose={onClose} />);
+    await screen.findByDisplayValue("55.5");
+    fireEvent.change(screen.getByLabelText("Then"), { target: { value: "sl" } });
+    expect(screen.queryByLabelText("Trigger")).toBeNull();
+    fireEvent.click(screen.getByText("Create"));
+    await waitFor(() => expect(addMove).toHaveBeenCalledTimes(1));
+    expect(add).not.toHaveBeenCalled();
+    expect(addMove.mock.calls[0][0]).toMatchObject({
+      triggerKind: "indicator", epic: "US100", broker: "b",
+      action: { field: "sl", dealId: "d1", account: "capital-demo:demo", target: { type: "breakeven", offset: 0 } },
+      params: { output: "value", condition: "crossing", value: 55.5 },
+    });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("a move rule opens in edit mode and saves through patchMoveRule", async () => {
+    describeFn.mockResolvedValue(RSI_DESC);
+    loadMoves.mockReturnValue([{
+      id: "mv-1", broker: "b", epic: "US100", triggerKind: "indicator", precision: 2,
+      params: {
+        type: "RSI", config: {}, output: "value", timeframe: "HOUR", target: "value", value: 70,
+        evalOn: "close", condition: "greater", trigger: "once", link: null,
+      },
+      action: { account: "capital-demo:demo", dealId: "d1", field: "sl", target: { type: "breakeven", offset: 1 } },
+      notify: { toast: true, browser: false, sound: false, push: true, telegram: true },
+    }]);
+    render(<IndicatorAlertModal request={{ mode: "edit", id: "mv-1" }} {...props} />);
+    expect((await screen.findByLabelText("Then") as HTMLSelectElement).value).toBe("sl");
+    fireEvent.change(screen.getByLabelText("Move offset"), { target: { value: "2" } });
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(patchMove).toHaveBeenCalledTimes(1));
+    expect(patch).not.toHaveBeenCalled();
+    const [id, body] = patchMove.mock.calls[0] as [string, { target: unknown; params: Record<string, unknown> }];
+    expect(id).toBe("mv-1");
+    expect(body.target).toEqual({ type: "breakeven", offset: 2 });
+    expect(body.params).toMatchObject({ output: "value", value: 70, condition: "greater" });
   });
 });

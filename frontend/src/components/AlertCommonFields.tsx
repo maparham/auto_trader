@@ -76,13 +76,18 @@ export default function AlertCommonFields({
   state,
   now,
   autoMsg,
+  moveMode = false,
 }: {
   state: AlertCommonState;
   now: number;
   autoMsg: string;
+  /** The alert moves an SL/TP: it fires once, never expires and has no custom text. */
+  moveMode?: boolean;
 }) {
   return (
     <>
+      {!moveMode && (
+        <>
       {/* Trigger + Expiration share a row — each field stacks its own label
           above its own control, so the label doesn't crowd the control. */}
       <div className="al-row al-pair">
@@ -123,6 +128,8 @@ export default function AlertCommonFields({
           onChange={(e) => state.setMessage(e.target.value)}
         />
       </label>
+        </>
+      )}
 
       <div className="al-field">
         <span>Notifications</span>

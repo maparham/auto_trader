@@ -7,13 +7,15 @@ import { useEffect, useState } from "react";
 import FloatingModal from "./components/FloatingModal";
 import InfoTip from "./components/InfoTip";
 import AlertCommonFields, { useAlertCommonState } from "./components/AlertCommonFields";
+import MoveActionPicker, { type MovePick } from "./components/MoveActionPicker";
 import { CONDITIONS } from "./lib/alertUi";
 import {
-  addIndicatorAlert, conditionPhrase, deleteIndicatorAlert, describeIndicatorAlert, fmtIndicatorValue,
-  loadAllIndicatorAlerts, patchIndicatorAlert,
-  type AlertCondition, type AlertDescription, type AlertTarget, type EvalOn, type IndicatorAlert,
+  addIndicatorAlert, addMoveRule, conditionPhrase, deleteIndicatorAlert, deleteMoveRule, describeIndicatorAlert,
+  fmtIndicatorValue, loadAllIndicatorAlerts, loadMoveRules, moveRuleAsAlert, patchIndicatorAlert, patchMoveRule,
+  type AlertCondition, type AlertDescription, type AlertTarget, type EvalOn, type IndicatorAlert, type MoveRule,
 } from "./lib/alertsApi";
 import type { AlertInstance } from "./lib/indicatorAlertInstance";
+import { toast } from "./lib/notify";
 import { requestConfirm, type IndicatorAlertRequest } from "./lib/signals";
 import { tfLabel } from "./lib/timeframe";
 import { supportsStreaming } from "./lib/trading";
@@ -29,7 +31,10 @@ interface Props {
 const newId = () => `al-${crypto.randomUUID()}`;
 
 export default function IndicatorAlertModal({ request, defaults, now, onClose }: Props) {
-  const existing = request.mode === "edit" ? findAlert(request.id) : undefined;
+  const moveRule = request.mode === "edit" ? loadMoveRules().find((r) => r.id === request.id) : undefined;
+  const existing = request.mode === "edit"
+    ? (moveRule ? asIndicator(moveRule) : findAlert(request.id))
+    : undefined;
   useEffect(() => {
     if (request.mode === "edit" && !existing) onClose(); // deleted elsewhere
   }, [request, existing, onClose]);
@@ -42,22 +47,31 @@ export default function IndicatorAlertModal({ request, defaults, now, onClose }:
         quoteOnly: !supportsStreaming(existing!.broker), alertId: existing!.id, instance: undefined,
       }
     : { ...request.draft, timeframe: request.draft.chartTimeframe, alertId: undefined };
-  return <Body {...{ base, existing, isEdit, defaults, now, onClose }} />;
+  return <Body {...{ base, existing, moveRule, isEdit, defaults, now, onClose }} />;
+}
+
+function asIndicator(r: MoveRule): IndicatorAlert | undefined {
+  const a = moveRuleAsAlert(r);
+  return a.kind === "indicator" ? a : undefined;
 }
 
 function findAlert(id: string): IndicatorAlert | undefined {
   return loadAllIndicatorAlerts().find((a) => a.id === id);
 }
 
-function Body({ base, existing, isEdit, defaults, now, onClose }: {
+function Body({ base, existing, moveRule, isEdit, defaults, now, onClose }: {
   base: {
     epic: string; broker: string; precision: number; timeframe: string;
     link: IndicatorAlert["params"]["link"]; quoteOnly: boolean;
     instance: AlertInstance | undefined; alertId: string | undefined;
   };
-  existing?: IndicatorAlert; isEdit: boolean; defaults: AlertDefaults; now: number; onClose: () => void;
+  existing?: IndicatorAlert; moveRule?: MoveRule; isEdit: boolean; defaults: AlertDefaults; now: number; onClose: () => void;
 }) {
   const common = useAlertCommonState(existing, defaults, now, isEdit);
+  const [move, setMove] = useState<MovePick | null>(() =>
+    moveRule
+      ? { field: moveRule.action.field, dealId: moveRule.action.dealId, account: moveRule.action.account, target: moveRule.action.target }
+      : null);
   const [desc, setDesc] = useState<AlertDescription | null>(null);
   const [output, setOutput] = useState<string | null>(existing?.params.output ?? null);
   const [target, setTarget] = useState<AlertTarget | null>(existing?.params.target ?? null);
@@ -113,6 +127,22 @@ function Body({ base, existing, isEdit, defaults, now, onClose }: {
       condition: event ? ("crossing_up" as const) : condition, trigger: common.trigger,
       message: msg === autoMsg ? "" : msg, expiresAt: common.expiresAt, notify: common.notify,
     };
+    if (move) {
+      const wire = { ...params, condition: fields.condition };
+      let err: string | null;
+      if (moveRule) {
+        const { link: _l, ...patchParams } = wire;
+        err = await patchMoveRule(moveRule.id, { params: patchParams, target: move.target, notify: common.notify });
+      } else {
+        err = await addMoveRule({
+          triggerKind: "indicator", epic: base.epic, broker: base.broker, precision: base.precision, label,
+          params: { ...wire, type: desc.type, config: {}, instance: base.instance },
+          action: move, notify: common.notify,
+        });
+      }
+      if (err) toast(err); else onClose();
+      return;
+    }
     const ok = isEdit
       ? await patchIndicatorAlert(existing!.id, { ...fields, params })
       : await addIndicatorAlert({
@@ -133,11 +163,14 @@ function Body({ base, existing, isEdit, defaults, now, onClose }: {
           {isEdit && (
             <button className="ghost" onClick={() => requestConfirm({
               message: `Delete this alert on ${base.epic}?`,
-              onConfirm: () => { deleteIndicatorAlert(existing!.id); onClose(); },
+              onConfirm: () => {
+                if (moveRule) void deleteMoveRule(moveRule.id); else deleteIndicatorAlert(existing!.id);
+                onClose();
+              },
             })}>Delete</button>
           )}
           <button className="ghost" onClick={onClose}>Cancel</button>
-          <button className="confirm-primary" onClick={() => void save()} disabled={!valid}>
+          <button className="confirm-primary" onClick={() => void save()} disabled={!valid || (move != null && !move.dealId)}>
             {isEdit ? "Save" : "Create"}
           </button>
         </>
@@ -220,7 +253,11 @@ function Body({ base, existing, isEdit, defaults, now, onClose }: {
               : ["On bar close: no repaint", "As it happens: fires on the live candle"]
           } />
         </div>
-        <AlertCommonFields state={common} now={now} autoMsg={autoMsg} />
+        {(!isEdit || moveRule) && (
+          <MoveActionPicker epic={base.epic} value={move} onChange={setMove} precision={base.precision}
+            locked={moveRule != null} />
+        )}
+        <AlertCommonFields state={common} now={now} autoMsg={autoMsg} moveMode={move != null} />
       </div>
     </FloatingModal>
   );

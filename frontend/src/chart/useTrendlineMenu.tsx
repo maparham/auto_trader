@@ -29,7 +29,8 @@ import { MenuIcons } from "../lib/menuIcons";
 import { overrideExtend } from "../lib/overrideExtend";
 import { indTypeOf } from "../lib/indicators/shared";
 import { getIndicator } from "../lib/indicators";
-import { lineAlertRequest } from "../lib/signals";
+import { lineAlertRequest, tradesSignal } from "../lib/signals";
+import { hasMovablePosition } from "../components/MoveActionPicker";
 import { buildLineAlertDraft } from "./lineAlertDraft";
 import { loadIndicatorConfigs, saveIndicatorConfig } from "../lib/persist";
 import type { OverlayManager } from "../lib/overlays";
@@ -463,9 +464,21 @@ export function useTrendlineMenu({ chartRef, containerRef, overlays, scope, epic
         epic: e, broker, precision,
       });
       if (r === null) return [];
-      return "draft" in r
-        ? [{ label: "Add alert", icon: MenuIcons.bell, onClick: () => lineAlertRequest.set({ mode: "create", draft: r.draft }) }]
-        : [{ label: "Add alert", icon: MenuIcons.bell, disabled: true, disabledReason: r.reason, onClick: () => {} }];
+      if (!("draft" in r)) {
+        return [{ label: "Add alert", icon: MenuIcons.bell, disabled: true, disabledReason: r.reason, onClick: () => {} }];
+      }
+      const items: MenuItem[] = [
+        { label: "Add alert", icon: MenuIcons.bell, onClick: () => lineAlertRequest.set({ mode: "create", draft: r.draft }) },
+      ];
+      if (hasMovablePosition(tradesSignal.value, e)) {
+        for (const field of ["sl", "tp"] as const) {
+          items.push({
+            label: `Move ${field.toUpperCase()} when crossed…`, icon: MenuIcons.bell,
+            onClick: () => lineAlertRequest.set({ mode: "create", draft: r.draft, move: { field } }),
+          });
+        }
+      }
+      return items;
     })();
     const items: MenuItem[] = [
       { label: bold ? "Unhighlight" : "Highlight", icon: MenuIcons.highlight, onClick: () => toggle("bold") },

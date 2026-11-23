@@ -976,6 +976,15 @@ export function loadMoveRules(filter?: { account?: string; epic?: string; dealId
     && (!filter?.dealId || r.action.dealId === filter.dealId));
 }
 
+/** A stored indicator / line move rule in the shape the alert modals edit. */
+export function moveRuleAsAlert(r: MoveRule): ServerAlert {
+  const row = {
+    id: r.id, broker: r.broker, epic: r.epic, kind: r.triggerKind, params: r.params, message: "",
+    expires_at: null, notify: r.notify, created_at: 0, precision: r.precision, label: r.label,
+  } as unknown as AlertRow;
+  return r.triggerKind === "line" ? rowToLineAlert(row) : rowToIndicatorAlert(row);
+}
+
 export function findMoveRule(dealId: string, field: "sl" | "tp"): MoveRule | undefined {
   for (const r of moveCache.values()) if (r.action.dealId === dealId && r.action.field === field) return r;
   return undefined;
@@ -1459,13 +1468,16 @@ export function deletePositionAlert(id: string): void {
 }
 
 /** Create a move rule. null = saved, else the server's detail (no toast). */
-export async function addMoveRule(r: Omit<MoveRule, "id" | "notify"> & { id?: string }): Promise<string | null> {
+export async function addMoveRule(
+  r: Omit<MoveRule, "id" | "notify"> & { id?: string; notify?: AlertNotifyChannels },
+): Promise<string | null> {
   const id = r.id ?? `al-${Math.random().toString(36).slice(2, 10)}`;
   indWriteStart();
   const res = await sendJson("/api/alerts", "POST", {
     id, broker: r.broker, epic: r.epic, kind: r.triggerKind,
     params: { ...r.params, trigger: "once" }, action: r.action, precision: r.precision,
     ...(r.label ? { label: r.label } : {}),
+    ...(r.notify ? { notify: r.notify } : {}),
   });
   indWriteSettled();
   if (res?.ok) {
@@ -1479,13 +1491,14 @@ export async function addMoveRule(r: Omit<MoveRule, "id" | "notify"> & { id?: st
 }
 
 export async function patchMoveRule(
-  id: string, patch: { params?: Record<string, unknown>; target?: MoveTarget },
+  id: string, patch: { params?: Record<string, unknown>; target?: MoveTarget; notify?: AlertNotifyChannels },
 ): Promise<string | null> {
   if (!moveCache.has(id)) return "Alert not found";
   indWriteStart();
   const res = await sendJson(`/api/alerts/${encodeURIComponent(id)}`, "PATCH", {
     ...(patch.params ? { params: patch.params } : {}),
     ...(patch.target ? { action: { target: patch.target } } : {}),
+    ...(patch.notify ? { notify: patch.notify } : {}),
   });
   indWriteSettled();
   if (res?.ok) {

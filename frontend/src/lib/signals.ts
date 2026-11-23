@@ -101,7 +101,10 @@ export interface LineAlertDraft {
   line: TrendlineAlertLine;
   link: { scope: string; instanceId: string; lineKey: string };
 }
-export type LineAlertRequest = { mode: "create"; draft: LineAlertDraft } | { mode: "edit"; id: string };
+export type LineAlertRequest =
+  // `move` preselects "Then: Move SL / Move TP" in the modal (the Trendlines menu items).
+  | { mode: "create"; draft: LineAlertDraft; move?: { field: "sl" | "tp" } }
+  | { mode: "edit"; id: string };
 export const lineAlertRequest = new Signal<LineAlertRequest | null>(null);
 
 // A confirmation dialog request. Any destructive action that wants a "are you sure?"
