@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS alerts (
   notify TEXT NOT NULL DEFAULT '{}',
   precision INTEGER NOT NULL DEFAULT 2,
   active INTEGER NOT NULL DEFAULT 1,
+  action TEXT,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, id));
 CREATE INDEX IF NOT EXISTS idx_alerts_feed ON alerts (broker, epic);
@@ -72,7 +73,7 @@ CREATE TABLE IF NOT EXISTS telegram_links (
 _NOTIFY_CHANNELS = ("toast", "browser", "sound", "push", "telegram")
 
 # Patch keys `update()` accepts — a shallow merge onto the stored row.
-_UPDATABLE_FIELDS = ("params", "message", "expires_at", "notify", "precision", "active")
+_UPDATABLE_FIELDS = ("params", "message", "expires_at", "notify", "precision", "active", "action")
 
 
 def _migrate_triggered_alert_json(conn: sqlite3.Connection) -> None:
@@ -82,6 +83,14 @@ def _migrate_triggered_alert_json(conn: sqlite3.Connection) -> None:
     # from _SCHEMA already, hence the introspection guard.
     if "alert_json" not in table_columns(conn, "triggered"):
         conn.execute("ALTER TABLE triggered ADD COLUMN alert_json TEXT")
+
+
+def _migrate_alerts_action(conn: sqlite3.Connection) -> None:
+    # Pre-existing DBs from before move rules: `alerts` gains a nullable JSON
+    # `action` column. Old rows read back as action=None. Fresh DBs get the
+    # column from _SCHEMA already, hence the introspection guard.
+    if "action" not in table_columns(conn, "alerts"):
+        conn.execute("ALTER TABLE alerts ADD COLUMN action TEXT")
 
 
 def _migrate_indicator_params(conn: sqlite3.Connection) -> None:
@@ -108,6 +117,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     d["params"] = json.loads(d["params"])
     stored_notify = json.loads(d["notify"])
     d["notify"] = {ch: stored_notify.get(ch, True) for ch in _NOTIFY_CHANNELS}
+    d["action"] = json.loads(d["action"]) if d.get("action") is not None else None
     return d
 
 
@@ -119,7 +129,10 @@ class AlertStore:
         self._db_path = db_path
         conn = self._connect()
         try:
-            run_migrations(conn, {1: _migrate_triggered_alert_json, 2: _migrate_indicator_params})
+            run_migrations(
+                conn,
+                {1: _migrate_triggered_alert_json, 2: _migrate_indicator_params, 3: _migrate_alerts_action},
+            )
         finally:
             conn.close()
 
@@ -174,8 +187,8 @@ class AlertStore:
             try:
                 conn.execute(
                     "INSERT INTO alerts (user_id, id, broker, epic, kind, params, message, "
-                    "expires_at, notify, precision, active, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "expires_at, notify, precision, active, action, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         user_id,
                         row["id"],
@@ -188,6 +201,7 @@ class AlertStore:
                         json.dumps(row.get("notify", {})),
                         row.get("precision", 2),
                         row.get("active", 1),
+                        json.dumps(row["action"]) if row.get("action") is not None else None,
                         row.get("created_at", int(time.time() * 1000)),
                         row.get("updated_at", int(time.time() * 1000)),
                     ),
@@ -230,7 +244,7 @@ class AlertStore:
                 merged["created_at"] = merged["updated_at"]
             conn.execute(
                 "UPDATE alerts SET params = ?, message = ?, expires_at = ?, notify = ?, "
-                "precision = ?, active = ?, created_at = ?, updated_at = ? "
+                "precision = ?, active = ?, action = ?, created_at = ?, updated_at = ? "
                 "WHERE user_id = ? AND id = ?",
                 (
                     json.dumps(merged["params"]),
@@ -239,6 +253,7 @@ class AlertStore:
                     json.dumps(merged["notify"]),
                     merged["precision"],
                     merged["active"],
+                    json.dumps(merged["action"]) if merged["action"] is not None else None,
                     merged["created_at"],
                     merged["updated_at"],
                     user_id,

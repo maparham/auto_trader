@@ -16,7 +16,7 @@ USER2 = "other"
 
 _ROW_KEYS = {
     "id", "broker", "epic", "kind", "params", "message", "expires_at",
-    "notify", "precision", "active", "created_at", "updated_at",
+    "notify", "precision", "active", "created_at", "updated_at", "action",
 }
 
 
@@ -69,6 +69,55 @@ def test_update_returns_row_with_no_user_id_key(tmp_path):
     asyncio.run(store.create(USER, _row()))
     updated = asyncio.run(store.update(USER, "a1", {"message": "x"}))
     assert set(updated) == _ROW_KEYS
+
+
+def test_action_round_trip(tmp_path):
+    store = AlertStore(str(tmp_path / "a.db"))
+    act = {"account": "capital:demo", "dealId": "D1", "field": "sl", "direction": "BUY",
+           "target": {"type": "breakeven", "offset": 0}}
+    asyncio.run(store.create(USER, _row(id_="al-1", action=act)))
+    asyncio.run(store.create(USER, _row(id_="al-2")))
+    rows = {r["id"]: r for r in asyncio.run(store.list_user(USER))}
+    assert rows["al-1"]["action"] == act
+    assert rows["al-2"]["action"] is None
+    saved = asyncio.run(store.update(USER, "al-1", {"action": {**act, "target": {"type": "price", "value": 1.2}}}))
+    assert saved["action"]["target"] == {"type": "price", "value": 1.2}
+    cleared = asyncio.run(store.update(USER, "al-1", {"action": None}))
+    assert cleared["action"] is None
+
+
+def test_action_migration_on_old_db(tmp_path):
+    """An alerts table created WITHOUT the action column gains it via the
+    versioned migration; old rows read action=None and new rows round-trip."""
+    import sqlite3
+    path = str(tmp_path / "alerts-old-action.db")
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE alerts ("
+        "user_id TEXT NOT NULL, id TEXT NOT NULL, "
+        "broker TEXT NOT NULL, epic TEXT NOT NULL, "
+        "kind TEXT NOT NULL DEFAULT 'price_level', "
+        "params TEXT NOT NULL, message TEXT NOT NULL DEFAULT '', "
+        "expires_at INTEGER, notify TEXT NOT NULL DEFAULT '{}', "
+        "precision INTEGER NOT NULL DEFAULT 2, active INTEGER NOT NULL DEFAULT 1, "
+        "created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, "
+        "PRIMARY KEY (user_id, id))"
+    )
+    conn.execute(
+        "INSERT INTO alerts (user_id, id, broker, epic, kind, params, created_at, updated_at) "
+        "VALUES ('dev', 'old-1', 'capital', 'US100', 'price_level', "
+        "'{\"level\": 100.5, \"condition\": \"above\"}', 1000, 1000)"
+    )
+    conn.commit()
+    conn.close()
+
+    store = AlertStore(path)
+    old = {r["id"]: r for r in asyncio.run(store.list_user(USER))}["old-1"]
+    assert old["action"] is None
+    act = {"account": "capital:demo", "dealId": "D1", "field": "tp", "direction": "SELL",
+           "target": {"type": "price", "value": 99.0}}
+    asyncio.run(store.create(USER, _row(id_="new-1", action=act)))
+    assert {r["id"]: r for r in asyncio.run(store.list_user(USER))}["new-1"]["action"] == act
 
 
 def test_create_duplicate_id_raises_value_error(tmp_path):
