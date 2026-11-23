@@ -245,7 +245,10 @@ async function candlesFind(input: Record<string, unknown>, ctx: ActionContext, a
       ? { line: { color }, polygon: { color: hexToRgba(color, 0.12), borderColor: color } }
       : { line: { color } }
     : undefined;
-  const specs = hits.map((r) => {
+  // A rect spans the gap from the previous close, so a match with no previous
+  // bar (the start of the market's data) has nothing to draw.
+  const drawable = tool === "rect" ? hits.filter((r) => prevOf.has(r.time)) : hits;
+  const specs = drawable.map((r) => {
     const prev = prevOf.get(r.time);
     const points = tool === "rect" && prev
       ? [{ timestamp: prev.time, value: prev.close }, { timestamp: r.time, value: r.open }]

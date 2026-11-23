@@ -69,10 +69,12 @@ export function checkWhere(where: unknown): Cond[] {
     if (!SCAN_OPS.includes(op as Op)) {
       throw new Error(`unknown op ${String(op)} (one of ${SCAN_OPS.join(" ")})`);
     }
-    if (typeof value !== "number" && typeof value !== "boolean") {
-      throw new Error(`value for ${String(field)} must be a number or true/false`);
+    if (field === "afterWeekend" ? typeof value !== "boolean" : typeof value !== "number") {
+      throw new Error(field === "afterWeekend"
+        ? "value for afterWeekend must be true or false"
+        : `value for ${String(field)} must be a number`);
     }
-    return { field: field as ScanField, op: op as Op, value };
+    return { field: field as ScanField, op: op as Op, value: value as number | boolean };
   });
 }
 

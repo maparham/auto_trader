@@ -116,7 +116,7 @@ const LOCAL_DEFS: ToolDef[] = [
   {
     name: "candles_find",
     description:
-      "Read-only scan of the focused chart's market over any date range, without moving the chart. Each bar has time, weekday (0=Sun, of the trading session), open, high, low, close, change% (vs previous close), gap% (open vs previous close) and afterWeekend (true when a weekend lies between this bar and the previous one). where: conditions joined by AND. Returns matching rows as tuples in `cols` order. With mark, it also draws each match (verticalStraightLine at the bar, or rect over the gap from previous close to open) as one undoable change. Use this for any question about past bars.",
+      "Read-only scan of the focused chart's market over any date range, without moving the chart. Each bar has time, weekday (0=Sun, of the trading session), open, high, low, close, change% (vs previous close), gap% (open vs previous close) and afterWeekend (true when a weekend lies between this bar and the previous one). where: conditions joined by AND. Returns matching rows as tuples in `cols` order. With mark, it also draws each match (verticalStraightLine at the bar, or rect over the gap from previous close to open) as one undoable change. partial or degraded in the result means the data is incomplete: say so, and never conclude that nothing matched. Use this for any question about past bars.",
     input_schema: {
       type: "object", additionalProperties: false, required: ["from", "to"],
       properties: {

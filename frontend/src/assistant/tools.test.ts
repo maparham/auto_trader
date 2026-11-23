@@ -54,6 +54,7 @@ describe("assistant tools", () => {
   it("offers candles_find with from and to required", () => {
     const t = buildTools().find((x) => x.name === "candles_find")!;
     expect(t.input_schema).toMatchObject({ required: ["from", "to"], additionalProperties: false });
+    expect(t.description).toMatch(/partial or degraded/);
   });
 
   it("closes schemas and keeps required", () => {

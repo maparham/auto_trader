@@ -58,6 +58,10 @@ describe("checkWhere", () => {
   it("names the valid fields for an unknown field", () => {
     expect(() => checkWhere([{ field: "nope", op: ">", value: 0 }])).toThrow(/gap%/);
   });
+  it("requires true/false for afterWeekend and a number elsewhere", () => {
+    expect(() => checkWhere([{ field: "gap%", op: ">", value: true }])).toThrow(/number/);
+    expect(() => checkWhere([{ field: "afterWeekend", op: ">", value: 0 }])).toThrow(/true or false/);
+  });
   it("names the valid ops for an unknown op", () => {
     expect(() => checkWhere([{ field: "gap%", op: "=>", value: 0 }])).toThrow(/>=/);
   });

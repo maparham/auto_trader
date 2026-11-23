@@ -479,6 +479,17 @@ describe("candles_find", () => {
     ]);
   });
 
+  it("skips a rect for a match with no previous bar and counts it", async () => {
+    ok();
+    const r = await executeTool("candles_find", { ...range, where: [{ field: "close", op: ">", value: 0 }], mark: { tool: "rect" } }, ctx);
+    const specs = drawings.placeDrawings.mock.calls[0][0] as Array<{ points: unknown[] }>;
+    expect(specs).toHaveLength(2);
+    for (const sp of specs) expect(sp.points).toHaveLength(2);
+    const j = JSON.parse(r.content);
+    expect(j.marked).toBe(2);
+    expect(j.notPlaced).toBe(1);
+  });
+
   it("records no change when nothing matches", async () => {
     ok(week.slice(0, 2));
     const r = await executeTool("candles_find", { ...range, where: gapUp, mark: { tool: "rect" } }, ctx);
