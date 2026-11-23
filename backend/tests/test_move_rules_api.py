@@ -132,9 +132,21 @@ def test_plain_alert_and_move_rule_same_level_coexist(admin, positions):
     plain = _plain(params={"level": 100.0, "condition": "crossing_up", "trigger": "once"})
     assert client.post("/api/alerts", json=plain, headers=admin).status_code == 200
     assert client.post("/api/alerts", json=_body(), headers=admin).status_code == 200
-    # and the other order, with a second plain alert refused only against the plain one
+    # a second plain alert is still refused against the first plain one
     r = client.post("/api/alerts", json={**plain, "id": "al-plain2"}, headers=admin)
     assert r.status_code == 409
+
+
+def test_plain_alert_after_move_rule_same_level_ok(admin, positions):
+    assert client.post("/api/alerts", json=_body(), headers=admin).status_code == 200
+    plain = _plain(params={"level": 100.0, "condition": "crossing_up", "trigger": "once"})
+    r = client.post("/api/alerts", json=plain, headers=admin)
+    assert r.status_code == 200, r.text
+
+
+def test_create_empty_action_422(admin, positions):
+    r = client.post("/api/alerts", json=_body(action={}), headers=admin)
+    assert r.status_code == 422
 
 
 def test_two_deals_same_trigger_level_ok(admin, positions):
@@ -166,8 +178,16 @@ def test_patch_params_keeps_once_and_needs_admin(admin, positions):
     client.post("/api/alerts", json=_body(), headers=admin)
     r = client.patch("/api/alerts/al-mv", json={"params": {"level": 101.0, "trigger": "every"}}, headers=admin)
     assert r.status_code == 200 and r.json()["params"]["trigger"] == "once"
-    r = client.patch("/api/alerts/al-mv", json={"params": {"level": 102.0}}, headers=_auth("alice"))
-    assert r.status_code in (403, 404)
+    from auto_trader.api.routers import alerts as alerts_router
+    now = 1
+    asyncio.run(alerts_router.ALERT_STORE.create("alice", {
+        "id": "al-alice", "broker": "capital", "epic": "US100", "kind": "price_level",
+        "params": {"level": 100.0, "condition": "crossing_up", "trigger": "once"},
+        "message": "", "expires_at": None, "notify": {}, "precision": 2, "active": 1,
+        "created_at": now, "updated_at": now, "action": {**_action(), "direction": "BUY"},
+    }))
+    r = client.patch("/api/alerts/al-alice", json={"params": {"level": 102.0}}, headers=_auth("alice"))
+    assert r.status_code == 403
     r = client.patch("/api/alerts/al-mv", json={"expires_at": 4102444800000}, headers=admin)
     assert r.status_code == 422 and "move_no_expiry" in r.text
 

@@ -189,7 +189,6 @@ async def _check_position(account: str, epic: str, params: dict[str, Any]) -> No
         raise HTTPException(422, "trailing_stop")
 
 
-_MOVE_KINDS = ("price_level", "indicator", "line")
 _MOVE_NOTIFY = {"toast": True, "browser": False, "sound": False, "push": True, "telegram": True}
 _FIELD_WORD = {"sl": "SL", "tp": "TP"}
 
@@ -315,12 +314,12 @@ async def list_alerts(request: Request) -> dict[str, Any]:
 async def create_alert(request: Request, body: CreateAlertBody, origin: str = Query("")) -> dict[str, Any]:
     _validate_id(body.id)
     _validate_kind(body.kind)
-    if body.kind in ("account", "position") or body.action:
+    if body.kind in ("account", "position") or body.action is not None:
         deps.require_admin(request)
-    action = dict(body.action) if body.action else None
+    action = dict(body.action) if body.action is not None else None
     params = body.params
     if action is not None:
-        if body.kind not in _MOVE_KINDS:
+        if body.kind not in KINDS:
             raise HTTPException(422, "move_kind")
         _validate_move_action(action)
         if action["account"].split(":")[0] != body.broker:
