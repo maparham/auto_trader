@@ -141,14 +141,14 @@ the price, which is reported as a failure.
   position alerts do: the bid for a long, the offer for a short (a missing
   side falls back to the other). Indicator and line triggers keep the
   alert engine's usual price.
-- **Line menu.** "Move SL/TP when crossed" lists the open positions on that
-  epic as a submenu (account, side, size). With none, the items are hidden.
+- **Line menu.** With no open position on that epic, the "Move SL/TP when
+  crossed" items are hidden.
 
 ## Lifecycle
 
-- The rule is deleted silently when the position closes, using the position
-  watcher's 10 s poll (`core/position_watch.py`), which already learns each
-  watched deal. A failed poll deletes nothing.
+- The rule is deleted silently when the position closes, by its own 10 s
+  poll of each account that has rules (modelled on `core/position_watch.py`).
+  A failed poll deletes nothing.
 - Partial close keeps the rule (same deal id).
 - Restart: rules are stored rows, so they survive. `once` plus delete-on-act
   means a restart cannot act twice.
@@ -158,8 +158,12 @@ the price, which is reported as a failure.
 - In `OrderTicket.tsx`, under the TP and SL fields, a "Move SL" and a "Move TP"
   switch, next to the existing "Warn near" switches. Turning one on shows:
   target (number field, or a Breakeven preset with an offset field), trigger
-  source (Price, or Indicator using the same picker as `IndicatorAlertModal`),
-  and the condition.
+  and the condition. The ticket's trigger is always a price level.
+- Indicator and Trendlines triggers are set from the existing alert dialogs
+  (`IndicatorAlertModal`, `LineAlertModal`), which get a "Then: Notify / Move
+  SL / Move TP" row with a position picker. They already own the indicator
+  picker and the line checks, so the ticket does not copy them. (Changed during
+  planning.)
 - Price trigger: a draggable dashed line appears on the chart, labelled like
   `Move SL → BE  when ↑`, using the existing horizontal line drag
   (`chart/useLineDrag.ts`, `lib/positionLines.ts`). A numeric target adds a
@@ -169,8 +173,8 @@ the price, which is reported as a failure.
   deal id, like the proximity switches (failure toast: "Order filled. Move SL
   not set: <reason>").
 - The `line` kind (a frozen Trendlines line) is set from the line's right-click
-  menu: "Move SL when crossed…" / "Move TP when crossed…", which opens the
-  ticket for a position on that epic.
+  menu: "Move SL when crossed…" / "Move TP when crossed…", which open the line
+  alert dialog with that action chosen; the position is picked there.
 - Open positions with a rule show it on the position row (like the proximity
   bell) and as the chart lines above; clicking opens the ticket in edit mode.
 - Alerts sidebar: rules appear in the "Positions" group with their own icon.
