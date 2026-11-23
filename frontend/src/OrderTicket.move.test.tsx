@@ -181,6 +181,17 @@ describe("OrderTicket move rules in edit mode", () => {
     expect(indicatorAlertRequest.value).toEqual({ mode: "edit", id: "r1" });
   });
 
+  it("disables the switch for an indicator rule and ignores clicks", async () => {
+    await openEditor(rule({ triggerKind: "indicator", label: "RSI above 70", params: {} }));
+    const sw = screen.getByLabelText("Move SL") as HTMLButtonElement;
+    expect(sw.disabled).toBe(true);
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    await act(async () => fireEvent.click(sw));
+    expect(mocks.deleteMoveRule).not.toHaveBeenCalled();
+    expect(btn("Edit")).toBeTruthy();
+    expect(btn("Remove rule")).toBeTruthy();
+  });
+
   it("opens the line modal for a line rule", async () => {
     await openEditor(rule({ triggerKind: "line", label: "Trendline", params: {} }));
     await act(async () => fireEvent.click(btn("Edit")));

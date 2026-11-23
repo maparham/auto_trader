@@ -12,6 +12,8 @@ const TIP = [
   "Only tightens. Never loosens your SL or TP.",
 ];
 
+const OTHER_KIND_TIP = ["Set by an indicator or line alert.", "Use Edit or Remove rule."];
+
 interface Props {
   field: "sl" | "tp";
   draft: MoveRuleDraft | null;
@@ -45,7 +47,7 @@ export default function MoveRuleControl({
         role="switch"
         aria-label={label}
         aria-checked={active || otherKind}
-        disabled={disabled}
+        disabled={disabled || otherKind}
         onClick={() => onToggle(!(active || otherKind))}
       >
         <span className="ot-switch-knob" />
@@ -59,7 +61,8 @@ export default function MoveRuleControl({
           {label} <InfoTip title={label} text={TIP} />
         </span>
         <div className="ot-prox-controls">
-          {disabled && disabledReason ? <Tooltip content={disabledReason}>{sw}</Tooltip> : sw}
+          {disabled && disabledReason ? <Tooltip content={disabledReason}>{sw}</Tooltip>
+            : otherKind ? <Tooltip content={OTHER_KIND_TIP}>{sw}</Tooltip> : sw}
         </div>
       </div>
       {otherKind && saved && (
