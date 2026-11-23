@@ -66,6 +66,10 @@ class FakeEngine:
     def __init__(self):
         self.handler = None
         self.changed: list[tuple] = []
+        self.action_tasks: set = set()
+
+    def pending_action_tasks(self):
+        return {t for t in self.action_tasks if not t.done()}
 
     def set_action_handler(self, fn):
         self.handler = fn
@@ -415,4 +419,86 @@ def test_on_alert_changed_drops_row_without_action(tmp_path):
         row = await h.add()
         h.m.on_alert_changed("u1", {**row, "action": None}, row["id"])
         assert h.m._rules == {}
+    run(main())
+
+
+def test_fire_during_stop_wait_is_reported(tmp_path):
+    async def main():
+        h = Harness(tmp_path)
+        await h.m.start()
+        first = await h.add()
+        second = await h.add(field="tp", target={"type": "price", "value": 1.05}, deal="D1")
+        await h.store.delete("u1", first["id"])
+        await h.store.delete("u1", second["id"])
+        h.exec.gate = asyncio.Event()
+        t1 = asyncio.create_task(h.m.execute("u1", first, 1.01, 1.01))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        stopper = asyncio.create_task(h.m.stop())
+        await asyncio.sleep(0)
+        # A fire arrives while stop() waits on the first move.
+        t2 = asyncio.create_task(h.m.execute("u1", second, 1.01, 1.01))
+        await asyncio.sleep(0)
+        h.exec.gate.set()
+        await stopper
+        assert t1.done() and t1.result() == "moved"
+        assert t2.done() and t2.result() == "failed"
+        assert len(h.exec.modify_calls) == 1  # the late fire never touched the broker
+        heads = [p["headline"] for p in h.fired()]
+        assert any(x.endswith("server restarting") for x in heads)
+        assert len(h.notified) == 2
+    run(main())
+
+
+def test_stop_awaits_engine_task_not_yet_started(tmp_path):
+    async def main():
+        h = Harness(tmp_path)
+        await h.m.start()
+        row = await h.add()
+        await h.store.delete("u1", row["id"])
+        task = asyncio.ensure_future(h.m.execute("u1", row, 1.01, 1.01))
+        h.engine.action_tasks.add(task)
+        assert h.m._running == set()  # not started yet
+        await h.m.stop()
+        assert task.done() and task.result() == "failed"
+        assert h.fired()[0]["headline"].endswith("server restarting")
+        assert h.exec.modify_calls == []
+    run(main())
+
+
+def test_slow_modify_is_cut_at_remaining_budget(tmp_path, monkeypatch):
+    async def main():
+        monkeypatch.setattr(mr, "BUDGET_S", 0.5)
+        monkeypatch.setattr(mr, "MIN_TRY_S", 0.05)
+        h = Harness(tmp_path)
+        row = await h.add()
+        orig = h.exec.get_positions
+
+        async def read(epic=None):
+            if h.exec.reads == 0:
+                h.now += 0.3  # the first read eats most of the budget
+            return await orig(epic)
+        h.exec.get_positions = read
+        h.exec.gate = asyncio.Event()  # modify never answers
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
+        assert await h.fire(row) == "failed"
+        took = loop.time() - t0
+        assert len(h.exec.modify_calls) == 1
+        assert took < 0.45  # cut at the remaining 0.2 s, not the full budget
+        assert h.fired()[0]["headline"].endswith("broker timed out")
+    run(main())
+
+
+def test_alert_engine_pending_action_tasks():
+    async def main():
+        from auto_trader.core.alert_engine import AlertEngine
+        eng = AlertEngine()
+        gate = asyncio.Event()
+        t = asyncio.ensure_future(gate.wait())
+        eng._action_tasks.add(t)
+        assert eng.pending_action_tasks() == {t}
+        gate.set()
+        await t
+        assert eng.pending_action_tasks() == set()
     run(main())

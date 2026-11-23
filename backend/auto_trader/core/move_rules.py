@@ -29,7 +29,11 @@ POLL_S = 10.0
 FETCH_TIMEOUT_S = 10.0
 RETRY_WAIT_S = 5.0
 BUDGET_S = 30.0
-STOP_WAIT_S = 35.0
+# Broker work in one execute ends by BUDGET_S plus one last read
+# (FETCH_TIMEOUT_S) after the fire: 40 s. STOP_WAIT_S covers that plus the
+# history write and broadcasts. Notifiers (30 s each) may still be cut.
+STOP_WAIT_S = 45.0
+MIN_TRY_S = 1.0  # never start a read or a modify with less budget than this
 NOTIFIER_TIMEOUT_S = 30.0
 ALL_CHANNELS = {"toast": True, "browser": True, "sound": True, "push": True, "telegram": True}
 
@@ -69,6 +73,7 @@ class MoveRules:
         # (account, dealId) -> [lock, users]; one move at a time per deal
         self._locks: dict[tuple[str, str], list] = {}
         self._started = False
+        self._stopping = False
 
     def configure(
         self, store: AlertStore, get_exec: Callable[[str], Any],
@@ -92,6 +97,7 @@ class MoveRules:
         for user_id, row in await self._store.list_all():
             if row.get("action"):
                 self._rules.setdefault(row["action"]["account"], []).append((user_id, row))
+        self._stopping = False
         self._started = True
         self._reconcile()
 
@@ -99,19 +105,41 @@ class MoveRules:
         """Let running moves finish (they change real stops), up to
         STOP_WAIT_S, then cancel the sweep loops."""
         self._started = False
-        running = list(self._running)
-        if running:
-            try:
-                await asyncio.wait_for(
-                    asyncio.shield(asyncio.gather(*running, return_exceptions=True)), timeout=STOP_WAIT_S)
-            except (asyncio.TimeoutError, TimeoutError):
-                log.warning("move rules: %d move(s) still running at shutdown", len(self._running))
+        # From here a new execute reports "server restarting" and never
+        # touches the broker.
+        self._stopping = True
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + STOP_WAIT_S
+        me = asyncio.current_task()
+        while True:
+            # Re-gather every round: a fire may arrive while we wait, and
+            # the engine may hold a task that has not run its first step.
+            pending = {t for t in self._running | self._engine_pending() if not t.done() and t is not me}
+            if not pending:
+                break
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                log.warning("move rules: %d move(s) still running at shutdown", len(pending))
+                break
+            # asyncio.wait never cancels the tasks it waits on.
+            await asyncio.wait(pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.sleep(0)
         tasks = list(self._tasks.values())
         self._tasks = {}
         for t in tasks:
             t.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _engine_pending(self) -> set:
+        fn = getattr(self._engine, "pending_action_tasks", None)
+        if fn is None:
+            return set()
+        try:
+            return set(fn())
+        except Exception:
+            log.warning("move rules: reading engine action tasks failed", exc_info=True)
+            return set()
 
     def _reconcile(self) -> None:
         needed = {
@@ -228,9 +256,9 @@ class MoveRules:
             if me is not None:
                 self._running.discard(me)
 
-    async def _read(self, account: str, deal: str) -> Any:
+    async def _read(self, account: str, deal: str, timeout: float = FETCH_TIMEOUT_S) -> Any:
         assert self._get_exec is not None
-        positions = await asyncio.wait_for(self._get_exec(account).get_positions(), timeout=FETCH_TIMEOUT_S)
+        positions = await asyncio.wait_for(self._get_exec(account).get_positions(), timeout=timeout)
         return next((p for p in positions if p.deal_id == deal), None)
 
     async def _execute(self, user_id: str, row: dict, price: float, level: float) -> str:
@@ -245,6 +273,8 @@ class MoveRules:
             await self._report(user_id, row, outcome, price, level, new=new, old=old, reason=reason)
             return outcome
 
+        if self._stopping:
+            return await report("failed", new=None, old=None, reason="server restarting")
         if direction not in DIRECTIONS:
             return await report("failed", new=None, old=None, reason="bad direction")
         if field not in FIELD_LABEL:
@@ -259,39 +289,48 @@ class MoveRules:
                 old: float | None = None
                 target: float | None = None
                 reason = ""
-                while True:
+
+                def remaining() -> float:
+                    return BUDGET_S - (self._clock() - fired_at)
+
+                def level_of(p: Any) -> float | None:
+                    return p.stop_level if field == "sl" else p.take_profit_level
+
+                # Every read before a try and every modify ends by the budget;
+                # only the read-back after FILLED and the last check below may
+                # run past it, by at most FETCH_TIMEOUT_S.
+                while remaining() >= MIN_TRY_S:
                     try:
-                        pos = await self._read(account, deal)
+                        pos = await self._read(account, deal, min(FETCH_TIMEOUT_S, remaining()))
                     except BrokerBlocked as exc:
                         return await report("failed", new=target, old=old, reason=_reason(exc))
                     except Exception as exc:
                         reason = _reason(exc)
-                        pos = None
-                        read_failed = True
                     else:
-                        read_failed = False
-                    if not read_failed:
                         if pos is None:
                             return "gone"
                         if field == "sl" and getattr(pos, "trailing_stop", False):
                             return await report("failed", new=target, old=old, reason="trailing stop")
                         target = target_level(action["target"], direction, pos.open_level)
-                        current = pos.stop_level if field == "sl" else pos.take_profit_level
+                        current = level_of(pos)
                         if uncertain and _same(current, target, precision):
                             return await report("moved", new=target, old=old)
                         if not uncertain:
                             old = current
                         if decide(field, direction, current, target) == "skip":
                             return await report("skipped", new=target, old=current)
+                        if remaining() < MIN_TRY_S:
+                            break
                         kw = {"stop_level": target} if field == "sl" else {"take_profit_level": target}
                         try:
                             result = await asyncio.wait_for(
-                                self._get_exec(account).modify_position(deal, **kw), timeout=BUDGET_S)
+                                self._get_exec(account).modify_position(deal, **kw),
+                                timeout=min(BUDGET_S, remaining()))
                         except BrokerBlocked as exc:
                             return await report("failed", new=target, old=old, reason=_reason(exc))
                         except Exception as exc:
                             uncertain = True
-                            reason = _reason(exc)
+                            reason = _reason(exc) if not isinstance(exc, TimeoutError) else "broker timed out"
                         else:
                             if result.status == OrderStatus.FILLED:
                                 try:
@@ -303,8 +342,7 @@ class MoveRules:
                                 else:
                                     if after is None:
                                         return "gone"
-                                    now = after.stop_level if field == "sl" else after.take_profit_level
-                                    if _same(now, target, precision):
+                                    if _same(level_of(after), target, precision):
                                         return await report("moved", new=target, old=old)
                                     return await report("failed", new=target, old=old,
                                                         reason="broker did not keep the new level")
@@ -314,20 +352,20 @@ class MoveRules:
                             else:
                                 uncertain = True
                                 reason = result.reason or "broker did not confirm the change"
-                    if self._clock() - fired_at + RETRY_WAIT_S >= BUDGET_S:
-                        if uncertain and target is not None:
-                            # Budget spent: one last read, never another modify.
-                            await self._sleep(RETRY_WAIT_S)
-                            try:
-                                last = await self._read(account, deal)
-                            except Exception:
-                                last = None
-                            if last is not None and _same(
-                                    last.stop_level if field == "sl" else last.take_profit_level,
-                                    target, precision):
-                                return await report("moved", new=target, old=old)
-                        return await report("failed", new=target, old=old, reason=reason)
+                    if remaining() - RETRY_WAIT_S < MIN_TRY_S:
+                        break
                     await self._sleep(RETRY_WAIT_S)
+                # Budget spent. After an unsure modify, one last read (never
+                # another modify), started no later than the budget's end.
+                if uncertain and target is not None:
+                    await self._sleep(max(0.0, min(RETRY_WAIT_S, remaining())))
+                    try:
+                        last = await self._read(account, deal)
+                    except Exception:
+                        last = None
+                    if last is not None and _same(level_of(last), target, precision):
+                        return await report("moved", new=target, old=old)
+                return await report("failed", new=target, old=old, reason=reason or "ran out of time")
         finally:
             entry[1] -= 1
             if entry[1] == 0 and self._locks.get(key) is entry:

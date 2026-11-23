@@ -778,6 +778,11 @@ class AlertEngine:
         level). Until one is set, action rows are neither fired nor removed."""
         self._action_handler = fn
 
+    def pending_action_tasks(self) -> set[asyncio.Task]:
+        """Move-rule handler tasks not yet finished, including ones created
+        but not yet started. MoveRules.stop waits for these."""
+        return {t for t in self._action_tasks if not t.done()}
+
     # ---- tick evaluation ----
 
     async def on_tick(
