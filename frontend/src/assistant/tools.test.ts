@@ -48,7 +48,12 @@ describe("assistant tools", () => {
   it("includes every local tool", () => {
     const names = buildTools().map((t) => t.name);
     for (const t of LOCAL_TOOLS) expect(names).toContain(t);
-    expect(LOCAL_TOOLS).toHaveLength(8);
+    expect(LOCAL_TOOLS).toHaveLength(9);
+  });
+
+  it("offers candles_find with from and to required", () => {
+    const t = buildTools().find((x) => x.name === "candles_find")!;
+    expect(t.input_schema).toMatchObject({ required: ["from", "to"], additionalProperties: false });
   });
 
   it("closes schemas and keeps required", () => {

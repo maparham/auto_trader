@@ -17,6 +17,10 @@ import { DEFAULT_BROKER } from "../lib/feed/common";
 import { actionFor, prepareInput, budgetResult, RESULT_CAP } from "./tools";
 import { describeIndicator, configureParams, describeRules, validateRule } from "./describe";
 import { explainTrendline } from "./trendlinesExplain";
+import { tfSecondsOf } from "../lib/timeframe";
+import { hexToRgba } from "../lib/lineStyle";
+import { loadSettings } from "../theme";
+import { checkWhere, deriveRows, fetchFilled, formatResult, matches, SCAN_FIELDS, type ScanField, type ScanRow } from "./candleScan";
 
 // `epic`: captured alongside `cellId` at the same point, since a cell can be
 // re-pointed at a different symbol (market.select) without its id changing —
@@ -53,7 +57,7 @@ export interface ExecResult { content: string; isError: boolean; change?: Change
 
 const NOOP_CTX = (signal: AbortSignal): ActionContext => ({ progress: () => {}, signal });
 // Local tools executeTool runs itself. ask_user is the session's (it ends the turn).
-const LOCAL_EXEC = new Set(["describe_indicator", "describe_rules", "validate_rule", "indicator_configure", "indicator_values", "symbol_search", "trendlines_explain_line"]);
+const LOCAL_EXEC = new Set(["describe_indicator", "describe_rules", "validate_rule", "indicator_configure", "indicator_values", "symbol_search", "trendlines_explain_line", "candles_find"]);
 
 const SETTLE_TIMEOUT_MS = 2000;
 const SETTLE_WARNING = "\nwarning: the chart did not switch within 2 s; check chart_state before editing.";
@@ -176,6 +180,92 @@ function indicatorValues(input: Record<string, unknown>): ExecResult {
   return { content: body(), isError: false };
 }
 
+const SCAN_MAX_BARS = 20_000;
+const MARK_MAX = 500;
+const MARGIN_MS = 4 * 86_400_000;
+const MARK_TOOLS = ["verticalStraightLine", "rect"];
+
+/** candles_find: scan [from, to] of the focused market without moving the
+ * chart; with `mark`, draw every match as one undoable change. */
+async function candlesFind(input: Record<string, unknown>, ctx: ActionContext, at: At): Promise<ExecResult> {
+  const where = checkWhere(input.where ?? []);
+  const from = Number(input.from);
+  const to = Number(input.to);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) {
+    return { content: "INVALID_ARGS: from and to must be times in ms with from before to", isError: true };
+  }
+  const fields = (Array.isArray(input.fields) && input.fields.length
+    ? input.fields
+    : ["time", ...where.map((c) => c.field)]) as string[];
+  const bad = fields.find((f) => !SCAN_FIELDS.includes(f as ScanField));
+  if (bad) return { content: `INVALID_ARGS: unknown field ${bad} (one of ${SCAN_FIELDS.join(", ")})`, isError: true };
+  const cols = [...new Set(fields)] as ScanField[];
+  const mark = input.mark as { tool?: unknown; color?: unknown; text?: unknown } | undefined;
+  if (mark) {
+    if (!MARK_TOOLS.includes(String(mark.tool))) {
+      return { content: `INVALID_ARGS: mark.tool must be one of ${MARK_TOOLS.join(", ")}`, isError: true };
+    }
+    if (mark.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(String(mark.color))) {
+      return { content: "INVALID_ARGS: mark.color must be #rrggbb", isError: true };
+    }
+  }
+  const resolution = input.resolution ? agentPeriod(String(input.resolution))?.resolution : focusedChart().resolution;
+  if (!resolution) return { content: `INVALID_ARGS: unknown resolution ${String(input.resolution)}`, isError: true };
+  const barSec = tfSecondsOf(resolution);
+  if (barSec == null || barSec < 60) {
+    return { content: "INVALID_ARGS: scan 1 minute bars or higher; seconds bars have no history", isError: true };
+  }
+  if ((to - from) / 1000 / barSec > SCAN_MAX_BARS) {
+    return { content: `TOO_MANY_BARS: the window is over ${SCAN_MAX_BARS} bars; use a higher timeframe or a shorter range`, isError: true };
+  }
+  const barMs = barSec * 1000;
+  const got = await fetchFilled({
+    epic: at.epic, resolution, broker: brokerNow(), priceSide: loadSettings().priceSide, signal: ctx.signal,
+    fromMs: from - Math.max(MARGIN_MS, 3 * barMs), toMs: to,
+  });
+  const all = deriveRows(got.bars, barMs);
+  const prevOf = new Map<number, ScanRow>();
+  all.forEach((r, i) => { if (i > 0) prevOf.set(r.time, all[i - 1]); });
+  const inWindow = all.filter((r) => r.time >= from && r.time <= to);
+  const hits = inWindow.filter((r) => matches(r, where));
+  const head = { epic: at.epic, resolution, scanned: inWindow.length, partial: got.partial, degraded: got.degraded };
+  if (!mark || hits.length === 0) return { content: formatResult(head, hits, cols, RESULT_CAP), isError: false };
+
+  if (hits.length > MARK_MAX) {
+    return { content: `TOO_MANY_MARKS: ${hits.length} bars match; mark at most ${MARK_MAX}, so tighten the conditions`, isError: true };
+  }
+  if (cellNow() !== at.cellId || epicNow() !== at.epic) {
+    return { content: "FOCUS_CHANGED: another chart was focused during the scan; nothing was drawn.", isError: true };
+  }
+  const tool = String(mark.tool);
+  const color = typeof mark.color === "string" ? mark.color : undefined;
+  const text = typeof mark.text === "string" ? mark.text : undefined;
+  const styles = color
+    ? tool === "rect"
+      ? { line: { color }, polygon: { color: hexToRgba(color, 0.12), borderColor: color } }
+      : { line: { color } }
+    : undefined;
+  const specs = hits.map((r) => {
+    const prev = prevOf.get(r.time);
+    const points = tool === "rect" && prev
+      ? [{ timestamp: prev.time, value: prev.close }, { timestamp: r.time, value: r.open }]
+      : [{ timestamp: r.time, value: r.close }];
+    return { name: tool, points, styles, extendData: text ? { text, priceLabels: true } : { priceLabels: true } };
+  });
+  const ids = focusedDrawings().overlays.placeDrawings(specs);
+  if (ids.length === 0) return { content: "DRAW_FAILED: could not create the drawings", isError: true };
+  const extra: Record<string, unknown> = { marked: ids.length };
+  if (ids.length < hits.length) extra.notPlaced = hits.length - ids.length;
+  return {
+    content: formatResult(head, hits, cols, RESULT_CAP, extra),
+    isError: false,
+    change: {
+      label: `Marked ${ids.length} bar${ids.length === 1 ? "" : "s"}`, ...at,
+      undo: async () => { focusedDrawings().overlays.removeDrawings(ids); },
+    },
+  };
+}
+
 /** Where a call starts: its change belongs to this cell and epic, even if the
  * user focuses another chart while it runs. */
 type At = { cellId: string; epic: string };
@@ -192,6 +282,9 @@ async function local(tool: string, input: Record<string, unknown>, ctx: ActionCo
   }
   if (tool === "indicator_values") {
     return indicatorValues(input);
+  }
+  if (tool === "candles_find") {
+    try { return await candlesFind(input, ctx, at); } catch (e) { return err(e); }
   }
   if (tool === "trendlines_explain_line") {
     const r = await explainTrendline(input, {

@@ -23,6 +23,11 @@ describe("prompt", () => {
     expect(SYSTEM_PROMPT).toMatch(/never end with an offer/);
   });
 
+  it("sends history questions to candles_find, not chart scrolling", () => {
+    expect(SYSTEM_PROMPT).toMatch(/candles_find/);
+    expect(SYSTEM_PROMPT).toMatch(/Never move the visible range to read history/);
+  });
+
   it("asks for evidence over guesses", () => {
     expect(SYSTEM_PROMPT).toMatch(/only from tool results/);
     expect(SYSTEM_PROMPT).toMatch(/never guess one/);

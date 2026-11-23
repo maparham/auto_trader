@@ -38,7 +38,14 @@ maps to an agent-registry action (the same handlers the MCP bridge drives).
 A new registry action is NOT exposed to the model until it is added there.
 `LOCAL_TOOLS` (`ask_user`, `describe_indicator`, `indicator_configure`,
 `describe_rules`, `validate_rule`, `indicator_values`, `symbol_search`,
-`trendlines_explain_line`) run locally instead of through the registry; `ask_user` ends the turn with chips.
+`trendlines_explain_line`, `candles_find`) run locally instead of through the registry; `ask_user` ends the turn with chips.
+`candles_find` (`assistant/candleScan.ts`) scans any date range of the
+focused market without moving the chart: one `/api/candles` window read,
+asked again while the backend reports `X-Candles-Partial` (up to 30 s), at most
+20,000 bars. Each bar gets `gap%`, `change%`, a session `weekday` and
+`afterWeekend`; `where` filters them and only matches come back. With `mark`
+it draws every match through `placeDrawings` (one persist) as ONE change whose
+undo calls `removeDrawings` (skips ids the user already deleted).
 `market_select` only opens an epic the broker's own search returns
 (`symbol_search` finds it), so a guessed epic never opens an empty tab.
 

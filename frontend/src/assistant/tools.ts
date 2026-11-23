@@ -4,6 +4,7 @@
 import { listActions } from "../agent/registry";
 import { VALID_TYPES } from "../agent/actions/indicators";
 import type { ToolDef } from "./types";
+import { SCAN_FIELDS, SCAN_OPS } from "./candleScan";
 
 export const TOOL_TO_ACTION: Record<string, string> = {
   chart_state: "chart.state",
@@ -27,7 +28,7 @@ const ACTION_TO_TOOL = Object.fromEntries(Object.entries(TOOL_TO_ACTION).map(([t
 
 export const LOCAL_TOOLS = [
   "ask_user", "describe_indicator", "indicator_configure", "describe_rules", "validate_rule",
-  "indicator_values", "symbol_search", "trendlines_explain_line",
+  "indicator_values", "symbol_search", "trendlines_explain_line", "candles_find",
 ] as const;
 
 export function actionFor(tool: string): string | null {
@@ -109,6 +110,39 @@ const LOCAL_DEFS: ToolDef[] = [
         bars: { type: "number", description: "how many bars, newest last (default 60, max 300)" },
         from: { type: "number", description: "window start, ms" },
         to: { type: "number", description: "window end, ms" },
+      },
+    },
+  },
+  {
+    name: "candles_find",
+    description:
+      "Read-only scan of the focused chart's market over any date range, without moving the chart. Each bar has time, weekday (0=Sun, of the trading session), open, high, low, close, change% (vs previous close), gap% (open vs previous close) and afterWeekend (true when a weekend lies between this bar and the previous one). where: conditions joined by AND. Returns matching rows as tuples in `cols` order. With mark, it also draws each match (verticalStraightLine at the bar, or rect over the gap from previous close to open) as one undoable change. Use this for any question about past bars.",
+    input_schema: {
+      type: "object", additionalProperties: false, required: ["from", "to"],
+      properties: {
+        from: { type: "number", description: "window start, ms" },
+        to: { type: "number", description: "window end, ms" },
+        resolution: { type: "string", description: "timeframe to scan, e.g. 1D or 4H (default: the chart's)" },
+        where: {
+          type: "array",
+          items: {
+            type: "object", additionalProperties: false, required: ["field", "op", "value"],
+            properties: {
+              field: { type: "string", enum: [...SCAN_FIELDS] },
+              op: { type: "string", enum: [...SCAN_OPS] },
+              value: { type: ["number", "boolean"] },
+            },
+          },
+        },
+        fields: { type: "array", items: { type: "string", enum: [...SCAN_FIELDS] }, description: "columns to return (default: time and the filtered fields)" },
+        mark: {
+          type: "object", additionalProperties: false, required: ["tool"],
+          properties: {
+            tool: { type: "string", enum: ["verticalStraightLine", "rect"] },
+            color: { type: "string", description: "#rrggbb" },
+            text: { type: "string", description: "label on each mark" },
+          },
+        },
       },
     },
   },

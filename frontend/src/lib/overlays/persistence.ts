@@ -205,8 +205,12 @@ export abstract class OverlayPersistence extends OverlayManagerBase {
   // the alert-write decoupling: a redraw/rehydrate/drawing action produces no alert
   // write, so it structurally cannot stomp the shared per-epic alert list. See
   // docs/superpowers/specs/2026-07-08-alert-write-decoupling-design.md.
+  // Set while a batch (placeDrawings / removeDrawings) runs, so N drawings
+  // cost one write instead of N; the batch persists once at the end.
+  protected persistMuted = false;
+
   protected persist(): void {
-    if (this.hydrating || !this.chart) return;
+    if (this.hydrating || this.persistMuted || !this.chart) return;
     // Guard the symbol-change window: setEpic() advanced this.epic but the old
     // epic's overlays are still in `entries` until rehydrate() rebuilds. Writing now
     // would save the OLD overlays under the NEW epic's drawings key.

@@ -38,7 +38,15 @@ vi.mock("../lib/feed/common", () => ({ DEFAULT_BROKER: "capital" }));
 const drawings = {
   getDrawing: vi.fn((id: string) => (id === "d1" ? { name: "segment", points: [], styles: { line: { size: 3 } }, lock: false, visible: true, zLevel: 0, extendData: {} } : null)),
   placeDrawing: vi.fn(() => "d9"),
+  placeDrawings: vi.fn((specs: unknown[]) => specs.map((_, i) => `m${i}`)),
+  removeDrawings: vi.fn((ids: string[]) => ids.length),
 };
+// candles_find: the real scan logic, a fake backend read.
+const fetchFilled = vi.fn();
+vi.mock("./candleScan", async (orig) => ({
+  ...(await orig<typeof import("./candleScan")>()),
+  fetchFilled: (a: unknown) => fetchFilled(a),
+}));
 
 import { clearRegistryForTest, registerAction } from "../agent/registry";
 import { executeTool, undoTurn, redoTurn } from "./undo";
@@ -64,6 +72,9 @@ beforeEach(() => {
   calls.length = 0;
   drawings.getDrawing.mockClear();
   drawings.placeDrawing.mockClear();
+  drawings.placeDrawings.mockClear();
+  drawings.removeDrawings.mockClear();
+  fetchFilled.mockReset();
   focus.cellId = "c1";
   focus.epic = "US100";
   liveInstances = [{ id: "TL", type: "TRENDLINES", calcParams: [5, 0, 2], extendData: { showStats: true } }];
@@ -407,5 +418,122 @@ describe("indicator_values", () => {
     panes = new Map();
     const r = await executeTool("indicator_values", { id: "NOPE" }, ctx);
     expect(r.isError).toBe(true);
+  });
+});
+
+describe("candles_find", () => {
+  const DAY = 86_400_000;
+  const t = (iso: string) => Date.parse(iso);
+  const bar = (time: number, open: number, close: number) =>
+    ({ timestamp: time, open, high: Math.max(open, close), low: Math.min(open, close), close, volume: 0 });
+  // Thu, Fri, Mon: one weekend gap up on Monday.
+  const week = [
+    bar(t("2026-11-12T00:00:00Z"), 99, 100),
+    bar(t("2026-11-13T00:00:00Z"), 100, 101),
+    bar(t("2026-11-16T00:00:00Z"), 103, 104),
+  ];
+  const gapUp = [
+    { field: "gap%", op: ">", value: 0 },
+    { field: "afterWeekend", op: "==", value: true },
+  ];
+  const range = { from: t("2026-11-12T00:00:00Z"), to: t("2026-11-17T00:00:00Z"), resolution: "1D" };
+  const ok = (bars = week) => fetchFilled.mockResolvedValue({ bars, partial: false, degraded: null });
+
+  it("returns only the matching bars, read-only", async () => {
+    ok();
+    const r = await executeTool("candles_find", { ...range, where: gapUp }, ctx);
+    expect(r.isError).toBe(false);
+    expect(r.change).toBeUndefined();
+    const j = JSON.parse(r.content);
+    expect(j.matched).toBe(1);
+    expect(j.scanned).toBe(3);
+    expect(j.cols).toEqual(["time", "gap%", "afterWeekend"]);
+    expect(j.rows).toEqual([[t("2026-11-16T00:00:00Z"), 1.98, true]]);
+  });
+
+  it("fetches a calendar margin before the window so a Monday has its Friday", async () => {
+    ok();
+    const from = t("2026-11-16T00:00:00Z");
+    await executeTool("candles_find", { from, to: from + DAY, resolution: "HOUR_4", where: gapUp }, ctx);
+    expect(fetchFilled.mock.calls[0][0].fromMs).toBeLessThanOrEqual(from - 4 * DAY);
+  });
+
+  it("marks every match as one undoable change", async () => {
+    ok();
+    const r = await executeTool("candles_find", { ...range, where: gapUp, mark: { tool: "verticalStraightLine", color: "#FF4D4F" } }, ctx);
+    expect(r.isError).toBe(false);
+    expect(drawings.placeDrawings).toHaveBeenCalledTimes(1);
+    expect(drawings.placeDrawings.mock.calls[0][0]).toHaveLength(1);
+    expect(r.change?.label).toBe("Marked 1 bar");
+    expect(JSON.parse(r.content).marked).toBe(1);
+    expect(await undoTurn([r.change!])).toBe(true);
+    expect(drawings.removeDrawings).toHaveBeenCalledWith(["m0"]);
+  });
+
+  it("draws a gap rect from the previous close to the open", async () => {
+    ok();
+    await executeTool("candles_find", { ...range, where: gapUp, mark: { tool: "rect" } }, ctx);
+    expect((drawings.placeDrawings.mock.calls[0][0][0] as { points: unknown }).points).toEqual([
+      { timestamp: t("2026-11-13T00:00:00Z"), value: 101 },
+      { timestamp: t("2026-11-16T00:00:00Z"), value: 103 },
+    ]);
+  });
+
+  it("records no change when nothing matches", async () => {
+    ok(week.slice(0, 2));
+    const r = await executeTool("candles_find", { ...range, where: gapUp, mark: { tool: "rect" } }, ctx);
+    expect(r.isError).toBe(false);
+    expect(r.change).toBeUndefined();
+    expect(drawings.placeDrawings).not.toHaveBeenCalled();
+  });
+
+  it("refuses to mark more than 500 bars", async () => {
+    ok(Array.from({ length: 600 }, (_, i) => bar(t("2026-01-01T00:00:00Z") + i * DAY, 1, 1)));
+    const r = await executeTool("candles_find", {
+      from: t("2026-01-01T00:00:00Z"), to: t("2027-12-31T00:00:00Z"), resolution: "1D",
+      where: [{ field: "close", op: ">", value: 0 }], mark: { tool: "verticalStraightLine" },
+    }, ctx);
+    expect(r.isError).toBe(true);
+    expect(drawings.placeDrawings).not.toHaveBeenCalled();
+  });
+
+  it("checks mark before fetching", async () => {
+    for (const mark of [{ tool: "circle" }, { tool: "rect", color: "red" }]) {
+      const r = await executeTool("candles_find", { ...range, where: gapUp, mark }, ctx);
+      expect(r.isError).toBe(true);
+    }
+    expect(fetchFilled).not.toHaveBeenCalled();
+  });
+
+  it("refuses a window over 20000 bars before fetching", async () => {
+    const r = await executeTool("candles_find", {
+      from: t("2024-11-01T00:00:00Z"), to: t("2026-11-01T00:00:00Z"), resolution: "MINUTE", where: gapUp,
+    }, ctx);
+    expect(r.isError).toBe(true);
+    expect(r.content).toMatch(/20000/);
+    expect(fetchFilled).not.toHaveBeenCalled();
+  });
+
+  it("names the valid fields for a bad condition", async () => {
+    const r = await executeTool("candles_find", { ...range, where: [{ field: "nope", op: ">", value: 0 }] }, ctx);
+    expect(r.isError).toBe(true);
+    expect(r.content).toMatch(/gap%/);
+  });
+
+  it("does not mark when focus moved during the read", async () => {
+    fetchFilled.mockImplementation(async () => { focus.cellId = "c2"; return { bars: week, partial: false, degraded: null }; });
+    const r = await executeTool("candles_find", { ...range, where: gapUp, mark: { tool: "rect" } }, ctx);
+    expect(r.isError).toBe(true);
+    expect(r.content).toMatch(/FOCUS_CHANGED/);
+    expect(drawings.placeDrawings).not.toHaveBeenCalled();
+  });
+
+  it("reports DRAW_FAILED when no drawing could be placed", async () => {
+    ok();
+    drawings.placeDrawings.mockImplementationOnce(() => []);
+    const r = await executeTool("candles_find", { ...range, where: gapUp, mark: { tool: "rect" } }, ctx);
+    expect(r.isError).toBe(true);
+    expect(r.content).toMatch(/DRAW_FAILED/);
+    expect(r.change).toBeUndefined();
   });
 });

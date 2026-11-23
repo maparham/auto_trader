@@ -301,6 +301,56 @@ export abstract class OverlayDrawings extends OverlayTools {
     return id;
   }
 
+  // Place many fully-specified drawings with ONE persist and no selection
+  // change (the assistant's candles_find marks). Returns the ids created,
+  // fewer than specs when a create fails.
+  placeDrawings(specs: Parameters<OverlayDrawings["placeDrawing"]>[0][]): string[] {
+    if (!this.canPlaceDrawing()) return [];
+    const ids: string[] = [];
+    this.persistMuted = true;
+    try {
+      for (const spec of specs) {
+        const id = this.create("drawing", spec.name, spec.points, spec.styles, spec.lock, {
+          visible: spec.visible,
+          zLevel: spec.zLevel,
+          extendData: spec.extendData,
+        });
+        if (!id) continue;
+        if (isTradeDrawing(spec.name)) this.completeTradeDrawing(id);
+        ids.push(id);
+      }
+    } finally {
+      this.persistMuted = false;
+    }
+    if (ids.length) {
+      this.persist();
+      this.notifyDrawing();
+    }
+    return ids;
+  }
+
+  // Remove the given drawings with ONE persist, skipping ids already gone.
+  // Returns how many were removed.
+  removeDrawings(ids: string[]): number {
+    if (this.readOnly) return 0;
+    let n = 0;
+    this.persistMuted = true;
+    try {
+      for (const id of ids) {
+        if (!this.getDrawing(id)) continue;
+        this.chart?.removeOverlay({ id });
+        n++;
+      }
+    } finally {
+      this.persistMuted = false;
+    }
+    if (n) {
+      this.persist();
+      this.notifyDrawing();
+    }
+    return n;
+  }
+
   // Place a drawing as if the user had just drawn it: styled from their saved
   // default for `name` (klinecharts' own look when there is none), not from a
   // snapshot. Persists and selects it like placeDrawing.
