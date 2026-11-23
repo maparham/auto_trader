@@ -3267,6 +3267,7 @@
   opacity: 0; transform: translateY(-8px); transition: opacity 0.25s, transform 0.25s;
 }
 .toast.show { opacity: 1; transform: translateY(0); }
+.toast.toast-error { border-left-color: var(--danger); }
 /* Clickable alert toast (jumps to the alert's chart). The container is
    pointer-events: none so stacked toasts never block the chart — re-enable on
    the clickable toast itself. */

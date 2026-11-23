@@ -100,3 +100,28 @@ describe("position alert notices", () => {
     expect(nav).toHaveBeenCalledWith("US100", "al-p1", 1, "capital-live");
   });
 });
+
+describe("move rule notices", () => {
+  beforeEach(() => {
+    toast.mockClear();
+    notify.mockClear();
+  });
+
+  const base = { id: "al-m1", broker: "capital-live:live", epic: "US100", kind: "move", price: 1, level: 1,
+    condition: "crossing_up", message: "", precision: 1, notify: {} };
+
+  it("shows the headline as the toast text", () => {
+    renderHook(() => useAlertFiredNotices());
+    fired!({ ...base, outcome: "moved", headline: "US100 SL moved to 18,300.0" });
+    expect(toast).toHaveBeenCalledTimes(1);
+    const [text, opts] = toast.mock.calls[0] as [string, { tone?: string }];
+    expect(text).toBe("US100 SL moved to 18,300.0");
+    expect(opts.tone).toBeUndefined();
+  });
+
+  it("uses the error tone when the move failed", () => {
+    renderHook(() => useAlertFiredNotices());
+    fired!({ ...base, outcome: "failed", headline: "US100 SL move failed" });
+    expect((toast.mock.calls[0] as [string, { tone?: string }])[1].tone).toBe("error");
+  });
+});

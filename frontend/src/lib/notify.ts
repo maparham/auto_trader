@@ -192,7 +192,7 @@ function container(): HTMLElement {
 // auto-dismiss countdown only starts once the tab is visible.
 export function toast(
   message: string,
-  opts: { onClick?: () => void; duration?: number | null; key?: string } = {},
+  opts: { onClick?: () => void; duration?: number | null; key?: string; tone?: "error" } = {},
 ): void {
   const sticky = opts.duration === null;
   if (opts.key) {
@@ -225,7 +225,7 @@ export function toast(
     }
   }
   const el = document.createElement("div");
-  el.className = "toast";
+  el.className = opts.tone === "error" ? "toast toast-error" : "toast";
   const msg = document.createElement("span");
   msg.className = "toast-msg";
   msg.textContent = message;

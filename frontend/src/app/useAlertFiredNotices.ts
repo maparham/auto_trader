@@ -55,6 +55,20 @@ export function useAlertFiredNotices() {
         bumpAlerts();
         return;
       }
+      if (p.kind === "move") {
+        // A move rule acted on a position (or tried to): the headline says what
+        // happened. A failure is an error toast; no chart bell, there is no line.
+        const text = p.headline ?? "Move rule";
+        const goTo = () => alertNavHandler.current?.(p.epic, p.id, Math.min(10, Math.max(0, p.precision ?? 2)), p.broker);
+        const key = `move|${p.id}`;
+        const failed = p.outcome === "failed";
+        if (p.notify?.toast ?? true)
+          toast(text, { onClick: goTo, duration: null, key, ...(failed ? { tone: "error" as const } : {}) });
+        if (p.notify?.browser ?? true) notify(p.epic, text, goTo, key);
+        if (p.notify?.sound ?? true) playPing();
+        bumpAlerts();
+        return;
+      }
       // Guard against a bad/out-of-range payload (server validates on write,
       // but a stale/mismatched deploy or hand-rolled ws message shouldn't be
       // able to RangeError out of toFixed and kill this handler).

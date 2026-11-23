@@ -291,6 +291,28 @@ export interface PositionAlert {
   trailing?: boolean;
 }
 
+export type MoveTarget = { type: "price"; value: number } | { type: "breakeven"; offset: number };
+export interface MoveAction {
+  account: string;
+  dealId: string;
+  field: "sl" | "tp";
+  direction?: "BUY" | "SELL";
+  target: MoveTarget;
+}
+/** A server-evaluated rule that moves one position's SL or TP once its trigger fires. */
+export interface MoveRule {
+  id: string;
+  broker: string;
+  epic: string;
+  triggerKind: "price_level" | "indicator" | "line";
+  /** The trigger's params (level/condition/... as for that kind). */
+  params: Record<string, unknown>;
+  action: MoveAction;
+  precision: number;
+  notify: AlertNotifyChannels;
+  label?: string;
+}
+
 // One record per alert firing, across all symbols (History tab, newest first).
 export interface TriggeredAlert {
   time: number;
@@ -335,6 +357,9 @@ export interface FiredPayload {
   account?: string;
   /** Present on a position-alert firing (`kind: "position"`). */
   side?: "sl" | "tp";
+  /** Present on a move-rule firing (`kind: "move"`). */
+  field?: "sl" | "tp";
+  outcome?: "moved" | "skipped" | "failed";
   metric?: AccountMetric;
   tierLabel?: TierLabel;
   critical?: boolean;
@@ -345,6 +370,8 @@ export interface FiredPayload {
 // --- wire shape (server) ------------------------------------------------------
 
 interface AlertRow {
+  /** Non-null on a move rule: it moves one position's SL/TP instead of alerting. */
+  action?: MoveAction | null;
   id: string;
   broker: string;
   epic: string;
@@ -479,7 +506,7 @@ function triggeredRowToClient(row: TriggeredRow): TriggeredAlert {
     target: (row.alert?.params?.target as AlertTarget | undefined) ?? undefined,
     kind: row.kind,
     headline: row.kind === "account" ? accountTriggeredHeadline(row)
-      : row.kind === "position" ? row.alert?.headline : undefined,
+      : (row.kind === "position" || row.kind === "move") ? row.alert?.headline : undefined,
     alert: (row.alert as AlertRow | null | undefined) ?? null,
   };
 }
@@ -514,6 +541,9 @@ let accountCache = new Map<string, AccountAlert>();
 // Map<id, PositionAlert>: SL/TP proximity alerts, keyed off an exec account
 // and a dealId, so they never touch the price/indicator caches.
 let positionCache = new Map<string, PositionAlert>();
+// Map<id, MoveRule>: rows with an `action`, whatever their trigger kind; they
+// never reach the price/indicator/line caches (no chart line, no bell).
+let moveCache = new Map<string, MoveRule>();
 let triggeredCache: TriggeredAlert[] = [];
 let triggeredSeenCache = 0;
 
@@ -536,6 +566,20 @@ function rowToAccountAlert(row: AlertRow): AccountAlert {
     monitored: row.monitored,
     unmonitoredReason: row.unmonitoredReason,
     currency: row.currency,
+  };
+}
+
+function rowToMoveRule(row: AlertRow): MoveRule {
+  return {
+    id: row.id,
+    broker: row.broker,
+    epic: row.epic,
+    triggerKind: row.kind as MoveRule["triggerKind"],
+    params: row.params,
+    action: row.action as MoveAction,
+    precision: row.precision,
+    notify: { ...ALL_CHANNELS, ...(row.notify ?? {}) },
+    label: row.label,
   };
 }
 
@@ -640,8 +684,11 @@ export function hydrateAlerts(): Promise<void> {
         const nextInd = new Map<string, ServerAlert>();
         const nextAcct = new Map<string, AccountAlert>();
         const nextPos = new Map<string, PositionAlert>();
+        const nextMove = new Map<string, MoveRule>();
         for (const row of body.alerts) {
-          if (row.kind === "account") {
+          if (row.action) {
+            nextMove.set(row.id, rowToMoveRule(row));
+          } else if (row.kind === "account") {
             nextAcct.set(row.id, rowToAccountAlert(row));
           } else if (row.kind === "position") {
             nextPos.set(row.id, rowToPositionAlert(row));
@@ -664,6 +711,7 @@ export function hydrateAlerts(): Promise<void> {
           indicatorCache = nextInd;
           accountCache = nextAcct;
           positionCache = nextPos;
+          moveCache = nextMove;
         }
       }
       if (triggeredRes.ok) {
@@ -784,6 +832,7 @@ function firedRows(kind: string, epic: string, broker: string): Array<{ row: Ale
   for (const t of triggeredCache) {
     const a = t.alert;
     if (!a || typeof a !== "object" || !a.id || seen.has(a.id)) continue;
+    if (a.action) continue;
     seen.add(a.id);
     const k = a.kind ?? "price_level";
     if (!FIRED_KINDS.has(k) || k !== kind) continue;
@@ -917,6 +966,18 @@ export function loadPositionAlerts(account?: string): PositionAlert[] {
 
 export function findPositionAlert(dealId: string, side: "sl" | "tp"): PositionAlert | undefined {
   for (const a of positionCache.values()) if (a.dealId === dealId && a.side === side) return a;
+  return undefined;
+}
+
+export function loadMoveRules(filter?: { account?: string; epic?: string; dealId?: string }): MoveRule[] {
+  return [...moveCache.values()].filter((r) =>
+    (!filter?.account || r.action.account === filter.account)
+    && (!filter?.epic || r.epic === filter.epic)
+    && (!filter?.dealId || r.action.dealId === filter.dealId));
+}
+
+export function findMoveRule(dealId: string, field: "sl" | "tp"): MoveRule | undefined {
+  for (const r of moveCache.values()) if (r.action.dealId === dealId && r.action.field === field) return r;
   return undefined;
 }
 
@@ -1397,6 +1458,62 @@ export function deletePositionAlert(id: string): void {
   });
 }
 
+/** Create a move rule. null = saved, else the server's detail (no toast). */
+export async function addMoveRule(r: Omit<MoveRule, "id" | "notify"> & { id?: string }): Promise<string | null> {
+  const id = r.id ?? `al-${Math.random().toString(36).slice(2, 10)}`;
+  indWriteStart();
+  const res = await sendJson("/api/alerts", "POST", {
+    id, broker: r.broker, epic: r.epic, kind: r.triggerKind,
+    params: { ...r.params, trigger: "once" }, action: r.action, precision: r.precision,
+    ...(r.label ? { label: r.label } : {}),
+  });
+  indWriteSettled();
+  if (res?.ok) {
+    try {
+      moveCache.set(id, rowToMoveRule((await res.json()) as AlertRow));
+    } catch { void resyncAlerts(); }
+    bumpAlerts();
+    return null;
+  }
+  return failureDetail(res);
+}
+
+export async function patchMoveRule(
+  id: string, patch: { params?: Record<string, unknown>; target?: MoveTarget },
+): Promise<string | null> {
+  if (!moveCache.has(id)) return "Alert not found";
+  indWriteStart();
+  const res = await sendJson(`/api/alerts/${encodeURIComponent(id)}`, "PATCH", {
+    ...(patch.params ? { params: patch.params } : {}),
+    ...(patch.target ? { action: { target: patch.target } } : {}),
+  });
+  indWriteSettled();
+  if (res?.ok) {
+    try {
+      moveCache.set(id, rowToMoveRule((await res.json()) as AlertRow));
+    } catch { void resyncAlerts(); }
+    bumpAlerts();
+    return null;
+  }
+  return failureDetail(res);
+}
+
+/** Delete a move rule. null = deleted (or already gone), else the server's detail. */
+export async function deleteMoveRule(id: string): Promise<string | null> {
+  const prev = moveCache.get(id);
+  if (!prev) return null;
+  moveCache.delete(id);
+  bumpAlerts();
+  indWriteStart();
+  const res = await sendJson(`/api/alerts/${encodeURIComponent(id)}`, "DELETE", undefined);
+  indWriteSettled();
+  if (res && (res.ok || res.status === 404)) return null;
+  moveCache.set(id, prev);
+  bumpAlerts();
+  void resyncAlerts();
+  return failureDetail(res);
+}
+
 export interface AccountMetricsResponse {
   account: string;
   monitored: boolean;
@@ -1569,6 +1686,7 @@ export function triggeredLabel(t: TriggeredAlert, hp: number): string {
   // An account firing has no price axis: its text is the metric headline.
   if (t.kind === "account") return t.headline ?? "Account alert";
   if (t.kind === "position") return t.headline ?? "Position alert";
+  if (t.kind === "move") return t.headline ?? "Move rule";
   const level = levelText(t.target ?? "price", t.level, hp);
   return `${conditionPhrase(t.label, t.condition, t.target, level)} @ ${fmtPrice(t.price, hp)}`;
 }
