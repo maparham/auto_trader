@@ -16,6 +16,7 @@ from auto_trader.core.models import (
     OrderType,
     Side,
 )
+from auto_trader.core.move_rules import MOVE_RULES
 
 from ..deps import broker_blocked_http, broker_down_http, broker_error_http, get_exec, require_admin
 from ..schemas import (
@@ -213,15 +214,18 @@ async def modify_position(
     deal_id: str, req: LevelsRequest, account: str = Query("capital:paper")
 ) -> OrderResultDTO:
     # Edit an open position's SL/TP (the combined Apply after dragging lines).
+    # Under the move rules' per-deal lock: a broker modify may read and
+    # rewrite both levels, so an overlapping move would undo one change.
     broker = get_exec(account)
     try:
-        result = await broker.modify_position(
-            deal_id,
-            stop_level=req.stop_level,
-            take_profit_level=req.take_profit_level,
-            clear_stop=req.clear_stop,
-            clear_take_profit=req.clear_take_profit,
-        )
+        async with MOVE_RULES.deal_lock(account, deal_id):
+            result = await broker.modify_position(
+                deal_id,
+                stop_level=req.stop_level,
+                take_profit_level=req.take_profit_level,
+                clear_stop=req.clear_stop,
+                clear_take_profit=req.clear_take_profit,
+            )
     except BrokerBlocked as e:
         raise broker_blocked_http("modify failed", e) from e
     except BrokerDown as e:

@@ -541,3 +541,41 @@ def test_stop_unhooks_engine_so_rule_stays_stored(tmp_path):
         assert eng._action_handler == m.execute
         await m.stop()
     run(main())
+
+
+def test_manual_modify_is_serialized_with_a_move(tmp_path, monkeypatch):
+    """The PUT /api/positions route takes the same per-deal lock as a move,
+    so Capital's read-both/write-both modify cannot revert either change."""
+    from auto_trader.api.routers import trading
+    from auto_trader.api.schemas import LevelsRequest
+
+    async def main():
+        h = Harness(tmp_path)
+        orig = h.exec.modify_position
+
+        async def modify(deal_id, *, stop_level=None, take_profit_level=None,
+                         clear_stop=False, clear_take_profit=False):
+            return await orig(deal_id, stop_level=stop_level, take_profit_level=take_profit_level)
+        h.exec.modify_position = modify
+        monkeypatch.setattr(trading, "get_exec", lambda k: h.exec)
+        monkeypatch.setattr(trading, "MOVE_RULES", h.m)
+        row = await h.add(field="sl", target={"type": "breakeven", "offset": 0.001})
+        await h.store.delete("u1", row["id"])
+        out, _ = await asyncio.gather(
+            h.m.execute("u1", row, 1.01, 1.01),
+            trading.modify_position("D1", LevelsRequest(take_profit_level=1.05), account=ACCT))
+        assert out == "moved"
+        p = h.exec.positions["D1"]
+        assert p.stop_level == 1.001 and p.take_profit_level == 1.05
+        assert h.m._locks == {}
+    run(main())
+
+
+def test_deal_lock_refcount_cleans_up(tmp_path):
+    async def main():
+        h = Harness(tmp_path)
+        async with h.m.deal_lock(ACCT, "D1"):
+            assert (ACCT, "D1") in h.m._locks
+        assert h.m._locks == {}
+    run(main())
+

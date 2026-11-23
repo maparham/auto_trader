@@ -12,10 +12,11 @@ close sweep that removes rules whose position has closed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from auto_trader.core.alert_store import AlertStore
@@ -240,6 +241,22 @@ class MoveRules:
 
     # ---- execute ----
 
+    @contextlib.asynccontextmanager
+    async def deal_lock(self, account: str, deal_id: str) -> AsyncIterator[None]:
+        """Hold the per-(account, deal) lock. A move and a manual SL/TP edit
+        both take it, because a broker modify that reads and rewrites both
+        levels would otherwise revert the other change."""
+        key = (account, deal_id)
+        entry = self._locks.setdefault(key, [asyncio.Lock(), 0])
+        entry[1] += 1
+        try:
+            async with entry[0]:
+                yield
+        finally:
+            entry[1] -= 1
+            if entry[1] == 0 and self._locks.get(key) is entry:
+                del self._locks[key]
+
     async def execute(self, user_id: str, row: dict, price: float, level: float) -> str:
         """Act on one fire. Returns "moved", "skipped", "failed" or "gone".
         Never raises (except cancellation)."""
@@ -290,96 +307,88 @@ class MoveRules:
         if field not in FIELD_LABEL:
             return await report("failed", new=None, old=None, reason="bad field")
 
-        key = (account, deal)
-        entry = self._locks.setdefault(key, [asyncio.Lock(), 0])
-        entry[1] += 1
-        try:
-            async with entry[0]:
-                uncertain = False  # an earlier modify returned UNKNOWN or raised
-                old: float | None = None
-                target: float | None = None
-                reason = ""
+        async with self.deal_lock(account, deal):
+            uncertain = False  # an earlier modify returned UNKNOWN or raised
+            old: float | None = None
+            target: float | None = None
+            reason = ""
 
-                def remaining() -> float:
-                    return BUDGET_S - (self._clock() - fired_at)
+            def remaining() -> float:
+                return BUDGET_S - (self._clock() - fired_at)
 
-                def level_of(p: Any) -> float | None:
-                    return p.stop_level if field == "sl" else p.take_profit_level
+            def level_of(p: Any) -> float | None:
+                return p.stop_level if field == "sl" else p.take_profit_level
 
-                # Every read before a try and every modify ends by the budget;
-                # only the read-back after FILLED and the last check below may
-                # run past it, by at most FETCH_TIMEOUT_S.
-                while remaining() >= MIN_TRY_S:
+            # Every read before a try and every modify ends by the budget;
+            # only the read-back after FILLED and the last check below may
+            # run past it, by at most FETCH_TIMEOUT_S.
+            while remaining() >= MIN_TRY_S:
+                try:
+                    pos = await self._read(account, deal, min(FETCH_TIMEOUT_S, remaining()))
+                except BrokerBlocked as exc:
+                    return await report("failed", new=target, old=old, reason=_reason(exc))
+                except Exception as exc:
+                    reason = _reason(exc)
+                else:
+                    if pos is None:
+                        return "gone"
+                    if field == "sl" and getattr(pos, "trailing_stop", False):
+                        return await report("failed", new=target, old=old, reason="trailing stop")
+                    target = target_level(action["target"], direction, pos.open_level)
+                    current = level_of(pos)
+                    if uncertain and _same(current, target, precision):
+                        return await report("moved", new=target, old=old)
+                    if not uncertain:
+                        old = current
+                    if decide(field, direction, current, target) == "skip":
+                        return await report("skipped", new=target, old=current)
+                    if remaining() < MIN_TRY_S:
+                        break
+                    kw = {"stop_level": target} if field == "sl" else {"take_profit_level": target}
                     try:
-                        pos = await self._read(account, deal, min(FETCH_TIMEOUT_S, remaining()))
+                        result = await asyncio.wait_for(
+                            self._get_exec(account).modify_position(deal, **kw),
+                            timeout=min(BUDGET_S, remaining()))
                     except BrokerBlocked as exc:
                         return await report("failed", new=target, old=old, reason=_reason(exc))
                     except Exception as exc:
-                        reason = _reason(exc)
+                        uncertain = True
+                        reason = _reason(exc) if not isinstance(exc, TimeoutError) else "broker timed out"
                     else:
-                        if pos is None:
-                            return "gone"
-                        if field == "sl" and getattr(pos, "trailing_stop", False):
-                            return await report("failed", new=target, old=old, reason="trailing stop")
-                        target = target_level(action["target"], direction, pos.open_level)
-                        current = level_of(pos)
-                        if uncertain and _same(current, target, precision):
-                            return await report("moved", new=target, old=old)
-                        if not uncertain:
-                            old = current
-                        if decide(field, direction, current, target) == "skip":
-                            return await report("skipped", new=target, old=current)
-                        if remaining() < MIN_TRY_S:
-                            break
-                        kw = {"stop_level": target} if field == "sl" else {"take_profit_level": target}
-                        try:
-                            result = await asyncio.wait_for(
-                                self._get_exec(account).modify_position(deal, **kw),
-                                timeout=min(BUDGET_S, remaining()))
-                        except BrokerBlocked as exc:
-                            return await report("failed", new=target, old=old, reason=_reason(exc))
-                        except Exception as exc:
-                            uncertain = True
-                            reason = _reason(exc) if not isinstance(exc, TimeoutError) else "broker timed out"
-                        else:
-                            if result.status == OrderStatus.FILLED:
-                                try:
-                                    after = await self._read(account, deal)
-                                except Exception as exc:
-                                    # Filled but unverified: the next read decides.
-                                    uncertain = True
-                                    reason = _reason(exc)
-                                else:
-                                    if after is None:
-                                        return "gone"
-                                    if _same(level_of(after), target, precision):
-                                        return await report("moved", new=target, old=old)
-                                    return await report("failed", new=target, old=old,
-                                                        reason="broker did not keep the new level")
-                            elif result.status == OrderStatus.REJECTED:
-                                return await report("failed", new=target, old=old,
-                                                    reason=result.reason or "rejected by the broker")
-                            else:
+                        if result.status == OrderStatus.FILLED:
+                            try:
+                                after = await self._read(account, deal)
+                            except Exception as exc:
+                                # Filled but unverified: the next read decides.
                                 uncertain = True
-                                reason = result.reason or "broker did not confirm the change"
-                    if remaining() - RETRY_WAIT_S < MIN_TRY_S:
-                        break
-                    await self._sleep(RETRY_WAIT_S)
-                # Budget spent. After an unsure modify, one last read (never
-                # another modify), started no later than the budget's end.
-                if uncertain and target is not None:
-                    await self._sleep(max(0.0, min(RETRY_WAIT_S, remaining())))
-                    try:
-                        last = await self._read(account, deal)
-                    except Exception:
-                        last = None
-                    if last is not None and _same(level_of(last), target, precision):
-                        return await report("moved", new=target, old=old)
-                return await report("failed", new=target, old=old, reason=reason or "ran out of time")
-        finally:
-            entry[1] -= 1
-            if entry[1] == 0 and self._locks.get(key) is entry:
-                del self._locks[key]
+                                reason = _reason(exc)
+                            else:
+                                if after is None:
+                                    return "gone"
+                                if _same(level_of(after), target, precision):
+                                    return await report("moved", new=target, old=old)
+                                return await report("failed", new=target, old=old,
+                                                    reason="broker did not keep the new level")
+                        elif result.status == OrderStatus.REJECTED:
+                            return await report("failed", new=target, old=old,
+                                                reason=result.reason or "rejected by the broker")
+                        else:
+                            uncertain = True
+                            reason = result.reason or "broker did not confirm the change"
+                if remaining() - RETRY_WAIT_S < MIN_TRY_S:
+                    break
+                await self._sleep(RETRY_WAIT_S)
+            # Budget spent. After an unsure modify, one last read (never
+            # another modify), started no later than the budget's end.
+            if uncertain and target is not None:
+                await self._sleep(max(0.0, min(RETRY_WAIT_S, remaining())))
+                try:
+                    last = await self._read(account, deal)
+                except Exception:
+                    last = None
+                if last is not None and _same(level_of(last), target, precision):
+                    return await report("moved", new=target, old=old)
+            return await report("failed", new=target, old=old, reason=reason or "ran out of time")
 
     # ---- reporting ----
 
