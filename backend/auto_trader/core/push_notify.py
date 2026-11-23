@@ -123,6 +123,8 @@ class PushNotify:
                 ),
                 "critical": bool(payload.get("critical")),
                 "status": payload.get("status"),
+                "outcome": payload.get("outcome"),
+                "field": payload.get("field"),
                 "side": payload.get("side"),
             }
         )

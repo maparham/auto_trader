@@ -9,6 +9,17 @@ own broker feed, independent of any open UI. Run:
     cd backend && python3 -m scripts.alert_probe --indicator --epic BTCUSD --broker capital-live
     cd backend && python3 -m scripts.alert_probe --account capital:demo
     cd backend && python3 -m scripts.alert_probe --position capital:demo --deal DEAL --side sl
+    cd backend && python3 -m scripts.alert_probe --move capital:demo --deal DEAL --field sl
+
+--move ACCOUNT --deal DEAL --field sl|tp probes an SL/TP move rule (admin only).
+It looks the position up in GET /api/positions, reads the side price from the
+data broker's quote (bid for a long, offer for a short), creates a price_level
+rule 0.0001 past that price (a `greater` level just below it) so the next tick
+fires it, with target {"type": "breakeven", "offset": 0}, waits for the
+`__alerts__:fired` payload with kind "move" and prints its outcome and
+headline. THIS MODIFIES THE REAL POSITION (its SL or TP moves to breakeven if
+that tightens it), so use a demo account. Default --timeout 60 s. The rule is
+deleted at the end (a fired rule is already gone, 404 is fine).
 
 --position ACCOUNT --deal DEAL --side sl|tp probes a position alert on an open
 position (admin only; the deal must hold that level). It looks the epic up in
@@ -179,6 +190,102 @@ def main_position(url: str, account: str, deal: str, side: str, timeout: float) 
     return asyncio.run(run())
 
 
+def main_move(url: str, account: str, deal: str, field: str, timeout: float,
+              broker: str | None = None) -> int:
+    """Create a breakeven move rule one tick past the side price, wait for the
+    move fire on /ws/state, print the outcome and headline, delete the rule."""
+    import asyncio
+    import json
+
+    from websockets.asyncio.client import connect
+
+    alert_id = f"al-probe-{uuid.uuid4()}"
+    ws_url = url.replace("http", "ws", 1) + "/ws/state"
+    data_broker = broker or account.split(":")[0]
+
+    async def run() -> int:
+        with httpx.Client(base_url=url, timeout=10.0) as client:
+            try:
+                r = client.get("/api/positions", params={"account": account})
+                r.raise_for_status()
+            except httpx.HTTPError as e:
+                print(f"FAIL: could not list positions for {account}: {e}")
+                return 1
+            pos = next((p for p in r.json() if p.get("deal_id") == deal), None)
+            if pos is None:
+                print(f"FAIL: deal {deal} not found on {account}")
+                return 1
+            epic = pos["epic"]
+            is_long = str(pos.get("side", "")).upper().endswith("BUY")
+            try:
+                resp = client.get(f"/api/market/{epic}/details", params={"broker": data_broker})
+                resp.raise_for_status()
+                snap = resp.json().get("snapshot") or {}
+                price = snap.get("bid") if is_long else snap.get("offer")
+                if price is None:
+                    raise RuntimeError("no bid/offer in snapshot")
+            except (httpx.HTTPError, RuntimeError) as e:
+                print(f"FAIL: could not fetch quote for {data_broker}:{epic}: {e}")
+                return 1
+            # `greater` is a level check the current price already satisfies,
+            # so the next tick fires the rule.
+            level = price - 0.0001
+            print(f"{account}:{epic} deal {deal} {'long' if is_long else 'short'} "
+                  f"side price={price} -> rule level={level} field={field} target=breakeven")
+            body = {"id": alert_id, "broker": data_broker, "epic": epic, "kind": "price_level",
+                    "params": {"level": level, "condition": "greater", "trigger": "once"},
+                    "message": "alert_probe e2e check", "precision": 5,
+                    "action": {"account": account, "dealId": deal, "field": field,
+                               "target": {"type": "breakeven", "offset": 0}}}
+            created = False
+            try:
+                async with connect(ws_url) as ws:
+                    cr = client.post("/api/alerts", json=body)
+                    try:
+                        cr.raise_for_status()
+                    except httpx.HTTPStatusError as e:
+                        print(f"FAIL: create rule failed: {e}\n{cr.text}")
+                        return 1
+                    created = True
+                    print(f"created rule {alert_id}")
+                    deadline = time.monotonic() + timeout
+                    while True:
+                        left = deadline - time.monotonic()
+                        if left <= 0:
+                            break
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), timeout=left)
+                        except asyncio.TimeoutError:
+                            break
+                        try:
+                            msg = json.loads(raw)
+                        except ValueError:
+                            continue
+                        val = msg.get("value")
+                        if msg.get("key") == "__alerts__:fired" and isinstance(val, dict) \
+                                and val.get("kind") == "move" and val.get("id") == alert_id:
+                            print(f"outcome: {val.get('outcome')}")
+                            print(f"headline: {val.get('headline')}")
+                            ok = val.get("outcome") in ("moved", "skipped")
+                            print(f"{'PASS' if ok else 'FAIL'}: rule {alert_id} fired within {timeout:.0f}s")
+                            return 0 if ok else 1
+                print(f"TIMEOUT: rule {alert_id} did not fire within {timeout:.0f}s "
+                      "(quiet or closed market)")
+                return 1
+            except OSError as e:
+                print(f"FAIL: could not reach {ws_url}: {e}")
+                return 1
+            finally:
+                if created:
+                    d = client.delete(f"/api/alerts/{alert_id}")
+                    if d.status_code not in (204, 404):
+                        print(f"warning: cleanup delete returned {d.status_code}: {d.text}")
+                    else:
+                        print(f"cleaned up rule {alert_id}")
+
+    return asyncio.run(run())
+
+
 def main(url: str, epic: str, broker: str, timeout: float, indicator: bool = False,
          account: str | None = None) -> int:
     alert_id = f"al-probe-{uuid.uuid4()}"
@@ -337,7 +444,19 @@ if __name__ == "__main__":
                      help="probe a position alert on this dealing account key (needs --deal and --side)")
     ap.add_argument("--deal", default=None, help="deal id of the open position (with --position)")
     ap.add_argument("--side", choices=("sl", "tp"), default=None, help="level to watch (with --position)")
+    ap.add_argument("--move", default=None, metavar="ACCOUNT",
+                     help="probe an SL/TP move rule on this dealing account key (needs --deal and --field); "
+                          "moves the real position to breakeven, use a demo account")
+    ap.add_argument("--field", choices=("sl", "tp"), default=None, help="level to move (with --move)")
     ns = ap.parse_args()
+    if ns.move:
+        if ns.account or ns.indicator or ns.position:
+            ap.error("--move excludes --account, --indicator and --position")
+        if not ns.deal or not ns.field:
+            ap.error("--move needs --deal and --field")
+        sys.exit(main_move(ns.url, ns.move, ns.deal, ns.field,
+                           ns.timeout if ns.timeout is not None else 60.0,
+                           broker=ns.broker if ns.broker != "capital" else None))
     if ns.position:
         if ns.account or ns.indicator:
             ap.error("--position excludes --account and --indicator")

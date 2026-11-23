@@ -277,3 +277,11 @@ def test_position_removal_refused_by_the_dealing_gate(clerk, monkeypatch):
     r = client.get("/api/alerts/position-removal/good", headers=_auth("user_x"))
     assert r.status_code == 403
     assert "not allowed" in r.json()["detail"]
+
+
+def test_fcm_text_move():
+    base = {"kind": "move", "epic": "EURUSD", "headline": "Moved SL of EURUSD long to 1.0010 (was 0.9500)"}
+    assert fcm_text({**base, "outcome": "moved"}) == ("✅ EURUSD", base["headline"])
+    assert fcm_text({**base, "outcome": "skipped"})[0] == "ℹ️ EURUSD"
+    assert fcm_text({**base, "outcome": "failed", "message": "note"}) == (
+        "⚠️ EURUSD", f"{base['headline']} · note")

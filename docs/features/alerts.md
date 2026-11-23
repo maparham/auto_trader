@@ -177,3 +177,37 @@ orders only), a bell on the position row, `PositionAlertModal.tsx`, the
 default multiple). Probe: `python3 -m scripts.alert_probe --position
 capital:demo --deal DEAL --side sl` (60 s default timeout; it never taps
 Telegram). Spec: docs/superpowers/specs/2026-11-12-sl-tp-proximity-alerts-design.md.
+
+## Move rules
+
+A normal alert row (`price_level`, indicator or line kind) with an `action`:
+`{account, dealId, field: "sl"|"tp", direction, target}`. `target` is
+`{"type": "breakeven", "offset": n}` (n >= 0 in price units, in the trade's
+favor) or `{"type": "price", "value": p}`. `direction` is filled by the server from the
+position. When the rule fires, `core/move_rules.py` (`MOVE_RULES`) moves that
+one level on that one deal: a per-(account, deal) lock, a read-back of the
+position to verify the new level (never reports "moved" without it), retries,
+a 30 s budget per fire. On stop it unhooks from the engine and waits for late
+fires; a fire during a stop reports "failed" (server restarting). A price
+trigger uses the side price (bid for a long, offer for a short). `trigger` is
+always "once" and a rule is never re-armed.
+
+Tighten only: SL long only up, short only down; TP long only down, short only
+up. No current level means add it; an equal or looser level is skipped.
+Breakeven is the position's open level at fire time plus `offset`. Close
+sweep: when a position closes, its move rules are deleted with no
+notification. Each fire writes a triggered-history row, broadcasts
+`__alerts__:fired` with `kind: "move"` (`outcome` moved|skipped|failed,
+`field`, `headline`) and calls the notifiers. A failed move goes to toast,
+push and Telegram whatever the rule's notify says. Default notify is toast,
+push and Telegram on; browser and sound off. Telegram is text only, no buttons.
+
+Create and patch are admin-only. 422 codes: `move_kind`,
+`account_broker_mismatch` (the account key's broker must equal `broker`),
+`move_no_expiry`, `position_not_found`, `trailing_stop` (SL on a trailing
+stop), `action_locked` (a patch may change only `target`), `not_rearmable`.
+409 when a rule already exists for the same (account, dealId, field); move
+rules skip the plain alert `sig` duplicate check. Probe: `python3 -m
+scripts.alert_probe --move capital:demo --deal DEAL --field sl` (it really
+moves the position, so use a demo account). Spec:
+docs/superpowers/specs/2026-11-23-sl-tp-move-rules-design.md.

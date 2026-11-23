@@ -548,3 +548,39 @@ async def test_atr_sub1_caption_format(store):
     caption = await TELEGRAM._build_caption(payload)
     assert "🔔 US100 ATR 14 (1H) above 0.0015 · now 0.0015" in caption
     assert "🕒" in caption
+
+
+@respx.mock
+@pytest.mark.anyio
+@pytest.mark.parametrize("outcome,icon", [("moved", "✅"), ("skipped", "ℹ️"), ("failed", "⚠️")])
+async def test_move_notifier_sends_text_only(store, outcome, icon):
+    rec = _Recorder()
+    TELEGRAM.configure(TOKEN, store, hooks=rec.hooks())
+    await store.set_telegram("alice", "chat-1")
+    msg = respx.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {}})
+    )
+    photo = respx.post(f"https://api.telegram.org/bot{TOKEN}/sendPhoto").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {}})
+    )
+
+    await TELEGRAM.notifier("alice", _payload(kind="move", outcome=outcome, headline="Moved SL of EURUSD",
+                                              message="note"))
+
+    assert not photo.called
+    body = json.loads(msg.calls.last.request.content)
+    assert body["text"] == f"{icon} Moved SL of EURUSD\nnote"
+    assert "reply_markup" not in body
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_move_notifier_respects_telegram_off(store):
+    TELEGRAM.configure(TOKEN, store, hooks=_Recorder().hooks())
+    await store.set_telegram("alice", "chat-1")
+    msg = respx.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "result": {}})
+    )
+    await TELEGRAM.notifier("alice", _payload(kind="move", outcome="moved", headline="h",
+                                              notify={"telegram": False}))
+    assert not msg.called

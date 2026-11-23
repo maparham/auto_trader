@@ -63,6 +63,9 @@ def _fixed(v: Any, prec: int) -> str:
         return str(v)
 
 
+_MOVE_ICONS = {"moved": "✅", "skipped": "ℹ️", "failed": "⚠️"}
+
+
 def fcm_text(p: dict) -> tuple[str, str]:
     """(title, body) for one fire, worded as the Web Push service worker."""
     kind = p.get("kind")
@@ -74,6 +77,10 @@ def fcm_text(p: dict) -> tuple[str, str]:
         name = p.get("account") or p.get("broker") or "Account"
         head = p.get("headline") or ""
         return f"{icon} {name}", (f"{head} · {p['message']}" if p.get("message") else head)
+    if kind == "move":
+        icon = _MOVE_ICONS.get(p.get("outcome"), "⚠️")
+        head = p.get("headline") or ""
+        return f"{icon} {p.get('epic')}", (f"{head} · {p['message']}" if p.get("message") else head)
     if kind == "position":
         head = p.get("headline") or ""
         return f"🔔 {p.get('epic')}", (f"{head} · {p['message']}" if p.get("message") else head)
@@ -109,6 +116,9 @@ def _data(payload: dict) -> dict[str, str]:
             out["side"] = payload["side"]
         if payload.get("removeToken"):
             out["removeToken"] = str(payload["removeToken"])
+    if kind == "move":
+        out["outcome"] = str(payload.get("outcome") or "")
+        out["field"] = str(payload.get("field") or "")
     if payload.get("critical"):
         out["critical"] = "1"
     return out

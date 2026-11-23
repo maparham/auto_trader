@@ -19,6 +19,16 @@ self.addEventListener("push", (event) => {
       });
       return;
     }
+    if (p.kind === "move") {
+      // Move-rule outcome: icon by outcome, epic title, headline body.
+      const icon = p.outcome === "moved" ? "\u2705" : p.outcome === "skipped" ? "\u2139\uFE0F" : "\u26A0\uFE0F";
+      await self.registration.showNotification(`${icon} ${p.epic}`, {
+        body: p.message ? `${p.headline} · ${p.message}` : p.headline,
+        tag: `move|${p.id}`,
+        data: { id: p.id },
+      });
+      return;
+    }
     if (p.kind === "position") {
       // Position alerts title by epic, body is the headline.
       await self.registration.showNotification(`\u{1F514} ${p.epic}`, {

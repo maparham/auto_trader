@@ -104,6 +104,16 @@ def _account_text(payload: dict) -> str:
     return "\n".join(lines)
 
 
+_MOVE_ICONS = {"moved": "✅", "skipped": "ℹ️", "failed": "⚠️"}
+
+
+def _move_text(payload: dict) -> str:
+    lines = [f"{_MOVE_ICONS.get(payload.get('outcome'), '⚠️')} {payload.get('headline') or ''}"]
+    if payload.get("message"):
+        lines.append(str(payload["message"]))
+    return "\n".join(lines)
+
+
 # Broker `side` -> (icon, word) for the open-position caption lines.
 _SIDE_LABELS = {
     "BUY": ("🟢", "Long"),
@@ -309,6 +319,10 @@ class TelegramNotify:
         if payload.get("kind") in ("account", "account_status"):
             # Account alerts have no chart and no epic: text only, no buttons.
             await self.send(chat_id, _account_text(payload))
+            return
+        if payload.get("kind") == "move":
+            # Move-rule outcome: text only, no chart and no buttons.
+            await self.send(chat_id, _move_text(payload))
             return
         if payload.get("kind") == "position":
             # SL/TP proximity warning: the watch's headline, a 15m chart of
