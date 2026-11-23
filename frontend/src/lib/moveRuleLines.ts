@@ -123,7 +123,8 @@ export function moveLineSpecs(o: {
     if (r.epic !== o.epic || r.triggerKind !== "price_level") continue;
     const field = r.action.field;
     // The ticket is editing this rule's field: its draft line stands in for it.
-    if (d && d.dealId != null && d.dealId === r.action.dealId && d[field] != null) continue;
+    // A draft that is off draws nothing, so the saved (still active) rule stays.
+    if (d && d.dealId != null && d.dealId === r.action.dealId && d[field]?.on) continue;
     const level = Number(r.params.level);
     if (!Number.isFinite(level)) continue;
     specs.push(...lineSpecsFor({

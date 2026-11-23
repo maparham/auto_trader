@@ -98,6 +98,15 @@ describe("moveLineSpecs", () => {
     const specs = moveLineSpecs({ epic: "EURUSD", draft, saved: [rule()], precision: 4 });
     expect(specs.map((s) => [s.key, s.label])).toEqual([["move:draft:tp:trigger", "Move TP → BE ↕"]]);
   });
+  it("still draws the saved line when its draft is switched off", () => {
+    const draft = longDraft({
+      dealId: "D1",
+      sl: null,
+      tp: { on: false, level: 1.15, condition: "crossing", target: { type: "breakeven", offset: 0 } },
+    });
+    const specs = moveLineSpecs({ epic: "EURUSD", draft, saved: [rule()], precision: 4 });
+    expect(specs.map((s) => s.key)).toEqual(["move:R1:tp:trigger", "move:R1:tp:target"]);
+  });
   it("applies a drag override to a saved line", () => {
     moveLineOverrides.set({ "move:R1:tp:trigger": 1.21 });
     const specs = moveLineSpecs({ epic: "EURUSD", draft: null, saved: [rule()], precision: 4 });
