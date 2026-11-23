@@ -27,6 +27,8 @@ from auto_trader.core.alert_engine import ALERT_ENGINE
 from auto_trader.core.alert_kinds import INDICATOR, KINDS, carry_output, upgrade_params
 from auto_trader.core.alert_store import ALERT_STORE
 from auto_trader.core.candle_aggregate import resolution_seconds
+from auto_trader.core.move_rule import DIRECTIONS, action_sig, validate_action
+from auto_trader.core.move_rules import MOVE_RULES
 from auto_trader.core.position_alert_kind import POSITION_KIND
 from auto_trader.core.position_watch import POSITION_WATCH
 from auto_trader.core.push_notify import PUSH
@@ -149,7 +151,7 @@ async def _check_duplicate(
     sig = _sig(kind, params)
     existing = await ALERT_STORE.list_user(user)
     for row in existing:
-        if row["id"] == skip_id:
+        if row["id"] == skip_id or row.get("action"):
             continue
         if row["broker"] == broker and row["epic"] == epic and row["kind"] == kind:
             if _sig(kind, row["params"]) == sig:
@@ -187,6 +189,42 @@ async def _check_position(account: str, epic: str, params: dict[str, Any]) -> No
         raise HTTPException(422, "trailing_stop")
 
 
+_MOVE_KINDS = ("price_level", "indicator", "line")
+_MOVE_NOTIFY = {"toast": True, "browser": False, "sound": False, "push": True, "telegram": True}
+_FIELD_WORD = {"sl": "SL", "tp": "TP"}
+
+
+async def _check_move_duplicate(user: str, action: dict, *, skip_id: str | None = None) -> None:
+    """One move rule per (account, deal, field), whatever its trigger."""
+    sig = action_sig(action)
+    for row in await ALERT_STORE.list_user(user):
+        stored = row.get("action")
+        if row["id"] != skip_id and stored and action_sig(stored) == sig:
+            raise HTTPException(
+                409, f"A move rule for this position's {_FIELD_WORD[action['field']]} already exists")
+
+
+async def _check_move_position(epic: str, action: dict) -> None:
+    """The deal must exist now, on this epic; the server owns `direction`."""
+    try:
+        snap = await POSITION_WATCH.snapshot(action["account"], action["dealId"])
+    except Exception:
+        log.warning("move rule: snapshot failed for %s", action["account"], exc_info=True)
+        raise HTTPException(503, "Couldn't reach the broker; try again") from None
+    if snap is None or snap.epic != epic or snap.side not in DIRECTIONS:
+        raise HTTPException(422, "position_not_found")
+    if action["field"] == "sl" and snap.trailing:
+        raise HTTPException(422, "trailing_stop")
+    action["direction"] = snap.side
+
+
+def _validate_move_action(action: dict) -> None:
+    try:
+        validate_action(action)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+
+
 class CreateAlertBody(BaseModel):
     id: str
     broker: str
@@ -197,6 +235,7 @@ class CreateAlertBody(BaseModel):
     expires_at: int | None = None
     notify: dict[str, bool] | None = None
     precision: int = 2
+    action: dict[str, Any] | None = None
 
 
 class PatchAlertBody(BaseModel):
@@ -205,6 +244,7 @@ class PatchAlertBody(BaseModel):
     expires_at: int | None = None
     notify: dict[str, bool] | None = None
     precision: int | None = None
+    action: dict[str, Any] | None = None
 
 
 class TriggeredSeenBody(BaseModel):
@@ -236,6 +276,7 @@ async def _notify(
     request: Request, row: dict | None, alert_id: str, broker: str, epic: str, origin: str, kind: str,
 ) -> None:
     user = current_user(request)
+    MOVE_RULES.on_alert_changed(user, row, alert_id)
     # Account alerts belong to the monitor; the price engine must never see them.
     if kind == "account":
         ACCOUNT_MONITOR.on_alert_changed(user, row, alert_id)
@@ -274,19 +315,35 @@ async def list_alerts(request: Request) -> dict[str, Any]:
 async def create_alert(request: Request, body: CreateAlertBody, origin: str = Query("")) -> dict[str, Any]:
     _validate_id(body.id)
     _validate_kind(body.kind)
-    if body.kind in ("account", "position"):
+    if body.kind in ("account", "position") or body.action:
         deps.require_admin(request)
-    _validate_params(body.kind, body.params, body.broker)
+    action = dict(body.action) if body.action else None
+    params = body.params
+    if action is not None:
+        if body.kind not in _MOVE_KINDS:
+            raise HTTPException(422, "move_kind")
+        _validate_move_action(action)
+        if action["account"].split(":")[0] != body.broker:
+            raise HTTPException(422, "account_broker_mismatch")
+        if body.expires_at is not None:
+            raise HTTPException(422, "move_no_expiry")
+        params = {**params, "trigger": "once"}
+    _validate_params(body.kind, params, body.broker)
     _validate_precision(body.precision)
     _validate_expires_at(body.expires_at)
     user = current_user(request)
-    await _check_duplicate(user, body.broker, body.epic, body.kind, body.params)
+    if action is None:
+        await _check_duplicate(user, body.broker, body.epic, body.kind, params)
+    else:
+        await _check_move_duplicate(user, action)
     if body.kind == "line":
-        await _check_line_ref(body.broker, body.epic, body.params)
+        await _check_line_ref(body.broker, body.epic, params)
     if body.kind == "position":
-        await _check_position(body.broker, body.epic, body.params)
+        await _check_position(body.broker, body.epic, params)
+    if action is not None:
+        await _check_move_position(body.epic, action)
 
-    notify = {ch: True for ch in _NOTIFY_CHANNELS}
+    notify = dict(_MOVE_NOTIFY) if action is not None else {ch: True for ch in _NOTIFY_CHANNELS}
     if body.notify:
         notify.update(body.notify)
 
@@ -296,7 +353,7 @@ async def create_alert(request: Request, body: CreateAlertBody, origin: str = Qu
         "broker": body.broker,
         "epic": body.epic,
         "kind": body.kind,
-        "params": body.params,
+        "params": params,
         "message": body.message,
         "expires_at": body.expires_at,
         "notify": notify,
@@ -304,6 +361,7 @@ async def create_alert(request: Request, body: CreateAlertBody, origin: str = Qu
         "active": 1,
         "created_at": now,
         "updated_at": now,
+        "action": action,
     }
     try:
         saved = await ALERT_STORE.create(user, row)
@@ -371,6 +429,8 @@ async def rearm_alert(request: Request, alert_id: str, origin: str = Query("")) 
         raise HTTPException(404, "not_in_history")
     kind = row.get("kind", "price_level")
     params = row.get("params")
+    if row.get("action"):
+        raise HTTPException(422, "not_rearmable")
     if kind not in ("price_level", "indicator", "line") or not isinstance(params, dict) \
             or params.get("trigger") != "once":
         raise HTTPException(422, "not_rearmable")
@@ -579,8 +639,20 @@ async def patch_alert(
     current = next((r for r in existing if r["id"] == alert_id), None)
     if current is None:
         raise HTTPException(404, f"alert not found: {alert_id}")
-    if current.get("kind") in ("account", "position"):
+    move = bool(current.get("action"))
+    if current.get("kind") in ("account", "position") or move:
         deps.require_admin(request)
+    if "action" in patch:
+        if not move:
+            raise HTTPException(422, "action_locked")
+        stored = current["action"]
+        if any(k != "target" and v != stored.get(k) for k, v in patch["action"].items()):
+            raise HTTPException(422, "action_locked")
+        merged_action = {**stored, **patch["action"]}
+        _validate_move_action(merged_action)
+        patch["action"] = merged_action
+    if move and patch.get("expires_at") is not None:
+        raise HTTPException(422, "move_no_expiry")
     if "params" in patch:
         if current.get("kind") == "position" and any(
             k in patch["params"] and patch["params"][k] != current["params"].get(k) for k in ("dealId", "side")
@@ -592,10 +664,14 @@ async def patch_alert(
             # directly, never this route).
             raise HTTPException(422, "A line alert's geometry can't be changed")
         merged = {**current["params"], **patch["params"]}
+        if move:
+            merged["trigger"] = "once"
         if current.get("kind") == "indicator" and "output" not in patch["params"]:
             carry_output(current["params"], merged)
         _validate_params(current["kind"], merged, current["broker"])
-        await _check_duplicate(user, current["broker"], current["epic"], current["kind"], merged, skip_id=alert_id)
+        if not move:
+            await _check_duplicate(
+                user, current["broker"], current["epic"], current["kind"], merged, skip_id=alert_id)
         patch["params"] = merged
     if "precision" in patch:
         _validate_precision(patch["precision"])

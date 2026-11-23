@@ -90,6 +90,8 @@ async def _changed_broadcast(user_id: str, broker: str, epic: str) -> None:
 
 
 async def _rearm(user_id: str, row: dict) -> dict | None:
+    if row.get("action"):
+        return None  # a move rule acts once and is never re-armed
     if row.get("kind") == "indicator":
         try:
             row = {**row, "params": upgrade_params(row["params"])}

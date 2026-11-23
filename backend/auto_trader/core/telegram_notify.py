@@ -627,6 +627,8 @@ class TelegramNotify:
             alert_row = json.loads(row["alert_json"])
         except (TypeError, ValueError):
             return "Can't re-arm this alert any more.", False
+        if alert_row.get("action"):
+            return "This rule can't be re-armed", False
         expires_at = alert_row.get("expires_at")
         if expires_at is not None and expires_at <= int(time.time() * 1000):
             return "Alert already expired.", False
