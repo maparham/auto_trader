@@ -200,13 +200,16 @@ class MoveRules:
 
     async def poll_once(self, account: str) -> None:
         assert self._get_exec is not None
+        # Only rules that existed before the fetch: a rule created during it
+        # may be for a deal the fetched list predates.
+        rules = list(self._rules.get(account, []))
         try:
             positions = await asyncio.wait_for(self._get_exec(account).get_positions(), timeout=FETCH_TIMEOUT_S)
         except Exception as exc:
             log.warning("move rules: get_positions failed for %s: %s", account, exc)
             return
         deals = {p.deal_id for p in positions}
-        for user_id, row in list(self._rules.get(account, [])):
+        for user_id, row in rules:
             if row["action"]["dealId"] not in deals:
                 await self._delete(user_id, row, account)
 

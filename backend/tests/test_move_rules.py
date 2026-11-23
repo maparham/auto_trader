@@ -579,3 +579,29 @@ def test_deal_lock_refcount_cleans_up(tmp_path):
         assert h.m._locks == {}
     run(main())
 
+
+
+def test_sweep_keeps_rule_added_during_fetch(tmp_path):
+    """A rule created while get_positions is pending is judged by the next
+    poll, not against the stale list."""
+    async def main():
+        h = Harness(tmp_path)
+        await h.add()  # D1 is open
+        gate = asyncio.Event()
+        orig = h.exec.get_positions
+
+        async def slow(epic=None):
+            snapshot = await orig(epic)
+            await gate.wait()
+            return snapshot
+        h.exec.get_positions = slow
+        poll = asyncio.create_task(h.m.poll_once(ACCT))
+        await asyncio.sleep(0)
+        h.exec.positions["D2"] = pos(deal="D2")
+        new = await h.add(deal="D2")
+        gate.set()
+        await poll
+        ids = [r["id"] for r in await h.store.list_user("u1")]
+        assert new["id"] in ids
+        assert [r["id"] for _, r in h.m._rules[ACCT]] == ["mv-sl-D1", new["id"]]
+    run(main())
