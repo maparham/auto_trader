@@ -1408,7 +1408,8 @@ function IndicatorSettingsForm({
       // Draw-only; each key persists only when it differs from the default so
       // a plain instance carries none of them.
       Object.assign(extendData, trendlineExtendOf(trendlineStyle), trendlineHighlight);
-      if (logFollow) extendData.logFollow = true;
+      // Following L is the default, so only "off" is saved.
+      if (!logFollow) extendData.logFollow = false;
       // The ATR/% switch's memory (dualControl), only once the switch is used.
       if (Object.keys(dualCuts.units).length || Object.keys(dualCuts.memo).length)
         extendData.dualCuts = dualCuts;

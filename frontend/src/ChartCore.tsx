@@ -1573,6 +1573,17 @@ export default function ChartCore({
       }),
     [logScale, scalePriceOnly, priceFitMode, scope],
   );
+  // Log Scale follows L by default, so a Trendlines pane that is added,
+  // pasted or restored takes the L state at once. Subscribed before the
+  // chart init effect below, so the first hydrate is caught too.
+  useEffect(() => {
+    const sync = () => {
+      const c = chartRef.current;
+      if (c) syncLogFollow(c, { scope, epic: alertContext.current.epic, brokerId: alertContext.current.broker });
+    };
+    sync();
+    return controller.indicators.subscribe(sync);
+  }, [controller, scope]);
   // Flip "scale price chart only": persist it and swap the candle pane's
   // createRange override (candles-only vs the framework's default full-pane fit).
   // v10 replaced v9's cheap private scale-price-only flag with a supported createRange

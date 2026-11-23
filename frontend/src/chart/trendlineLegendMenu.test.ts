@@ -34,15 +34,15 @@ describe("trendlineMenuItems", () => {
     apply.mockClear();
   });
 
-  it("offers Log Scale and Debug mode, unchecked by default, and no layers", () => {
+  it("offers Log Scale (on by default) and Debug mode, and no layers", () => {
     const items = trendlineMenuItems(setup().ctx);
     expect(labels(items)).toEqual(["Log Scale", "Debug mode"]);
-    expect(items.map((i) => i.checked)).toEqual([false, false]);
+    expect(items.map((i) => i.checked)).toEqual([true, false]);
   });
 
   it("Log Scale starts following and takes the chart's L state at once", () => {
-    saved.TL = { calcParams: Object.values(TRENDLINES_DEFAULTS) };
-    const { ctx, chart } = setup();
+    saved.TL = { calcParams: Object.values(TRENDLINES_DEFAULTS), extendData: { logFollow: false } };
+    const { ctx, chart } = setup({ logFollow: false });
     setChartLogSource(chart, () => true);
     trendlineMenuItems(ctx)[0].onClick();
     expect(saved.TL.extendData).toEqual({ logFollow: true });
@@ -51,8 +51,8 @@ describe("trendlineMenuItems", () => {
   });
 
   it("while following with the L off, stays ticked and linear", () => {
-    saved.TL = { calcParams: Object.values(TRENDLINES_DEFAULTS) };
-    const { ctx, chart } = setup();
+    saved.TL = { calcParams: Object.values(TRENDLINES_DEFAULTS), extendData: { logFollow: false } };
+    const { ctx, chart } = setup({ logFollow: false });
     setChartLogSource(chart, () => false);
     trendlineMenuItems(ctx)[0].onClick();
     expect(saved.TL.calcParams?.[33]).toBe(0);
@@ -71,8 +71,8 @@ describe("trendlineMenuItems", () => {
 
   it("a fixed Log Scale shows ticked, and a click turns it off", () => {
     const on = Object.values({ ...TRENDLINES_DEFAULTS, logScale: 1 });
-    saved.TL = { calcParams: on };
-    const items = trendlineMenuItems(setup({}, on).ctx);
+    saved.TL = { calcParams: on, extendData: { logFollow: false } };
+    const items = trendlineMenuItems(setup({ logFollow: false }, on).ctx);
     expect(items[0].checked).toBe(true);
     items[0].onClick();
     expect(saved.TL.calcParams?.[33]).toBe(0);
@@ -107,14 +107,14 @@ describe("syncLogFollow", () => {
   it("moves only following panes, and only when they differ", () => {
     const base = { scope: "s", epic: "E", brokerId: "b" };
     saved.TL = { calcParams: Object.values(TRENDLINES_DEFAULTS) };
-    const follow = setup({ logFollow: true });
+    const follow = setup();
     setChartLogSource(follow.chart, () => true);
     syncLogFollow(follow.chart, base);
     expect(saved.TL.calcParams?.[33]).toBe(1);
     expect(apply).toHaveBeenCalledTimes(1);
 
     apply.mockClear();
-    const fixed = setup({});
+    const fixed = setup({ logFollow: false });
     setChartLogSource(fixed.chart, () => true);
     syncLogFollow(fixed.chart, base);
     expect(apply).not.toHaveBeenCalled();

@@ -1,11 +1,12 @@
 // "Follow chart's L button" for Trendlines: a pane with extendData.logFollow
-// has its Log Scale (calcParams slot 33) set by the chart's L toggle. Opt-in
-// per pane, because Log Scale changes the lines rules and alerts read, so one
-// toolbar click must never move a pane that did not ask for it.
+// has its Log Scale (calcParams slot 33) set by the chart's L toggle. On by
+// default: only an explicit logFollow: false (the user unticked Log Scale)
+// stops a pane from following.
 //
 // The calc never reads logFollow: slot 33 stays the one value the backend
 // sees, written here through the Settings form's own path (applyDebugChanges).
-// Synced on an L toggle and when a pane starts following, never on a timer,
+// Synced on an L toggle, when panes are added or restored, and when a pane
+// starts following, never on a timer,
 // so two cells sharing one saved config cannot fight over it.
 import type { Chart } from "klinecharts";
 import { indTypeOf } from "../lib/customIndicators";
@@ -26,7 +27,7 @@ export function chartLogOn(chart: object): boolean {
 }
 
 export function followsChartLog(ext: unknown): boolean {
-  return (ext as TrendlinesExtend | undefined)?.logFollow === true;
+  return (ext as TrendlinesExtend | undefined)?.logFollow !== false;
 }
 
 export interface LogFollowBase {
