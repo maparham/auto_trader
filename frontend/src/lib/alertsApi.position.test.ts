@@ -59,12 +59,12 @@ describe("position alerts client", () => {
     expect(api.findPositionAlert("d2", "tp")?.atrMult).toBe(1);
   });
 
-  it("a 422 returns its detail and leaves no cached row", async () => {
+  it("a 422 returns its detail in words and leaves no cached row", async () => {
     fetchMock.mockResolvedValue(res(422, { detail: "trailing_stop" }));
     const r = await api.addPositionAlert({
       id: "al-p3", account: "capital-live:live", epic: "US100", dealId: "d3", side: "sl", atrMult: 0.5, precision: 1,
     });
-    expect(r).toBe("trailing_stop");
+    expect(r).toBe("The position has a trailing stop");
     expect(api.findPositionAlert("d3", "sl")).toBeUndefined();
   });
 

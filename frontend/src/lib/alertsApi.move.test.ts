@@ -86,6 +86,32 @@ describe("move rules client", () => {
     expect(api.findMoveRule("dx", "sl")).toBeUndefined();
   });
 
+  it.each([
+    ["position_not_found", "Position not found"],
+    ["trailing_stop", "The position has a trailing stop"],
+    ["no_level", "The position has no level on that side"],
+    ["account_broker_mismatch", "This chart's data broker does not match the trading account"],
+    ["move_no_expiry", "Move rules can't expire"],
+    ["action_locked", "Only the target can change"],
+    ["move_kind", "This alert type can't move a level"],
+    ["not_rearmable", "This rule can't be re-armed"],
+    ["account_not_watchable", "This account can't be watched"],
+    ["A move rule for this position's stop loss already exists", "A move rule for this position's stop loss already exists"],
+  ])("a failed add maps %s to plain words", async (code, text) => {
+    fetchMock.mockResolvedValue(res(422, { detail: code }));
+    const r = await api.addMoveRule({
+      id: "al-m4", broker: "b", epic: "E", triggerKind: "price_level", params: {}, action: { ...action, dealId: "dy" } as never, precision: 1,
+    });
+    expect(r).toBe(text);
+  });
+
+  it("a failed patch maps the code too", async () => {
+    serve([row]);
+    await api.hydrateAlerts();
+    fetchMock.mockResolvedValue(res(422, { detail: "action_locked" }));
+    expect(await api.patchMoveRule("al-m1", { target: { type: "price", value: 1 } })).toBe("Only the target can change");
+  });
+
   it("patchMoveRule sends only the action target", async () => {
     serve([row]);
     await api.hydrateAlerts();

@@ -1410,12 +1410,26 @@ export function deleteAccountAlert(id: string): void {
   });
 }
 
+// The alert routes' refusal codes, in words. Other text passes through.
+const FAILURE_TEXT: Record<string, string> = {
+  position_not_found: "Position not found",
+  trailing_stop: "The position has a trailing stop",
+  no_level: "The position has no level on that side",
+  account_broker_mismatch: "This chart's data broker does not match the trading account",
+  move_no_expiry: "Move rules can't expire",
+  action_locked: "Only the target can change",
+  move_kind: "This alert type can't move a level",
+  not_rearmable: "This rule can't be re-armed",
+  account_not_watchable: "This account can't be watched",
+};
+
 async function failureDetail(res: Response | null): Promise<string> {
   let detail = "";
   try {
     detail = res ? ((await res.json()) as { detail?: string }).detail ?? "" : "";
   } catch { /* non-JSON error body */ }
-  return detail || "Alert save failed";
+  if (!detail) return "Alert save failed";
+  return (Object.hasOwn(FAILURE_TEXT, detail) ? FAILURE_TEXT[detail] : undefined) ?? detail;
 }
 
 /** Create an SL/TP alert. null = saved, else the server's detail (no toast). */
