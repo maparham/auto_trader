@@ -3,7 +3,7 @@
 //
 // Layout (matches TV): a Sell/Buy quote strip that SELECTS the side and colours
 // the action button; Market / Limit / Stop tabs (Stop disabled for now); a Units
-// row with a value readout; a collapsible Exits section with Take-profit / Stop-
+// row with a value readout; Take-profit / Stop-
 // loss toggles (price + % distance, never ticks); an Order info block (margin /
 // leverage / trade value / reward, from the paper account — approximate); and one
 // big side-coloured action button that commits.
@@ -162,7 +162,6 @@ export default function OrderTicket({
     seededDraft?.type === "limit" ? "limit" : "market",
   );
   const [quantity, setQuantity] = useState("1");
-  const [exitsOpen, setExitsOpen] = useState(true);
   // Warn-near switches ride along with the exits: spent with the draft after an order.
   const [warnTp, setWarnTp] = useState(false);
   const [warnSl, setWarnSl] = useState(false);
@@ -708,60 +707,52 @@ export default function OrderTicket({
 
       {/* Exits. */}
       <div className="ot-exits">
-        <button className="ot-exits-head" onClick={() => setExitsOpen((o) => !o)}>
-          <span>Exits</span>
-          <span className={`ot-chevron${exitsOpen ? " open" : ""}`}>⌄</span>
-        </button>
-        {exitsOpen && (
-          <>
-            <ExitRow
-              label="Take profit"
-              on={tpOn}
-              value={tpVal}
-              pct={pct(tpVal)}
-              invalid={!tpValid}
-              onToggle={(on) => toggleExit("tp", on)}
-              onChange={(v) => setExit("tp", v)}
-              atr={exitAtrView(atrPrefs, setAtrPrefs, "tp", atrValue, entryPrice, side === "buy", precision, resolution)}
-            />
-            <ProximityWarn
-              label="Warn near TP"
-              on={warnTp}
-              mult={warnTpMult}
-              disabled={!tpOn || isLimit}
-              disabledReason={
-                isLimit
-                  ? LIMIT_WARN_TIP
-                  : "Set a take profit first"
-              }
-              onToggle={setWarnTp}
-              onMult={setWarnTpMult}
-            />
-            <ExitRow
-              label="Stop loss"
-              on={slOn}
-              value={slVal}
-              pct={pct(slVal)}
-              invalid={!slValid}
-              onToggle={(on) => toggleExit("sl", on)}
-              onChange={(v) => setExit("sl", v)}
-              atr={exitAtrView(atrPrefs, setAtrPrefs, "sl", atrValue, entryPrice, side === "buy", precision, resolution)}
-            />
-            <ProximityWarn
-              label="Warn near SL"
-              on={warnSl}
-              mult={warnSlMult}
-              disabled={!slOn || isLimit}
-              disabledReason={
-                isLimit
-                  ? LIMIT_WARN_TIP
-                  : "Set a stop loss first"
-              }
-              onToggle={setWarnSl}
-              onMult={setWarnSlMult}
-            />
-          </>
-        )}
+        <ExitRow
+          label="Take profit"
+          on={tpOn}
+          value={tpVal}
+          pct={pct(tpVal)}
+          invalid={!tpValid}
+          onToggle={(on) => toggleExit("tp", on)}
+          onChange={(v) => setExit("tp", v)}
+          atr={exitAtrView(atrPrefs, setAtrPrefs, "tp", atrValue, entryPrice, side === "buy", precision, resolution)}
+        />
+        <ProximityWarn
+          label="Warn near TP"
+          on={warnTp}
+          mult={warnTpMult}
+          disabled={!tpOn || isLimit}
+          disabledReason={
+            isLimit
+              ? LIMIT_WARN_TIP
+              : "Set a take profit first"
+          }
+          onToggle={setWarnTp}
+          onMult={setWarnTpMult}
+        />
+        <ExitRow
+          label="Stop loss"
+          on={slOn}
+          value={slVal}
+          pct={pct(slVal)}
+          invalid={!slValid}
+          onToggle={(on) => toggleExit("sl", on)}
+          onChange={(v) => setExit("sl", v)}
+          atr={exitAtrView(atrPrefs, setAtrPrefs, "sl", atrValue, entryPrice, side === "buy", precision, resolution)}
+        />
+        <ProximityWarn
+          label="Warn near SL"
+          on={warnSl}
+          mult={warnSlMult}
+          disabled={!slOn || isLimit}
+          disabledReason={
+            isLimit
+              ? LIMIT_WARN_TIP
+              : "Set a stop loss first"
+          }
+          onToggle={setWarnSl}
+          onMult={setWarnSlMult}
+        />
       </div>
 
       {/* Order info (approximate, paper account). */}
@@ -1244,7 +1235,7 @@ function ExitRow({
     <div className="ot-exit">
       <div className="ot-exit-head">
         <span className="ot-flabel ot-exit-label">
-          {label},{" "}
+          <span className="ot-exit-name">{label}</span>,{" "}
           {atr ? (
             <>
               <SelectMenu
