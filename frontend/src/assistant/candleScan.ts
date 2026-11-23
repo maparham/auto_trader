@@ -2,6 +2,8 @@
 // chart. Pure parts (derived fields, filter, result) plus the fetch that waits
 // out the backend's partial fill.
 import type { KLineData } from "klinecharts";
+import { fetchRangeWithStatus } from "../lib/feed/candles";
+import type { PriceSide } from "../theme";
 
 export const SCAN_FIELDS = [
   "time", "weekday", "open", "high", "low", "close", "change%", "gap%", "afterWeekend",
@@ -111,4 +113,31 @@ export function formatResult(
   // Drop the oldest 10% per pass rather than let the cap cut the JSON mid-row.
   while (out.length > 0 && body().length > cap - 64) out = out.slice(Math.max(1, Math.ceil(out.length / 10)));
   return body();
+}
+
+export interface FetchArgs {
+  epic: string;
+  resolution: string;
+  fromMs: number;
+  toMs: number;
+  priceSide: PriceSide;
+  broker: string;
+  signal: AbortSignal;
+  budgetMs?: number;
+  now?: () => number;
+}
+
+/** One window read, asked again while the backend reports X-Candles-Partial
+ * (its fill budget ran out), until it completes or `budgetMs` passes. */
+export async function fetchFilled(a: FetchArgs): Promise<{ bars: KLineData[]; partial: boolean; degraded: string | null }> {
+  const now = a.now ?? Date.now;
+  const deadline = now() + (a.budgetMs ?? 30_000);
+  for (;;) {
+    a.signal.throwIfAborted();
+    const r = await fetchRangeWithStatus(
+      a.epic, a.resolution, Math.floor(a.fromMs / 1000), Math.ceil(a.toMs / 1000), a.priceSide, a.broker, a.signal,
+    );
+    a.signal.throwIfAborted();
+    if (!r.partial || now() >= deadline) return { bars: r.bars, partial: r.partial != null, degraded: r.degraded };
+  }
 }
