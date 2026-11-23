@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # Deploy the authenticated hosted app (https://chartkar.app) in one go:
-#   backend  -> Iran VPS 95.38.187.63 (systemd auto-trader-demo as user chartkar,
-#               uvicorn on 127.0.0.1:8010, Caddy serves api.chartkar.app with a
-#               DNS-only A record). Moved off the AWS Lightsail box 2026-11-18
-#               (CPU credits exhausted). The box cannot reach Capital/Telegram
-#               directly (Capital geo-blocks Iran), so demo.env sets HTTP(S)_PROXY
-#               to Xray on 127.0.0.1:18483, which exits on the claude-gateway
-#               Lightsail box through a domain allowlist in ITS Xray config. A new
-#               external host the backend calls must be added to that allowlist.
+#   backend  -> Lightsail box chartkar-api 3.129.38.165 (us-east-2, 1 GB,
+#               Debian 13; systemd auto-trader-demo as user chartkar, uvicorn
+#               on 127.0.0.1:8010, Caddy serves api.chartkar.app with a DNS-only
+#               A record). Moved here from the Iran VPS on 2026-11-23, when Iran
+#               started dropping the Xray link that box used for all foreign
+#               traffic. This box reaches brokers and Telegram directly, no proxy.
 #   frontend -> Cloudflare Pages project auto-trader-demo (chartkar.app,
 #               www.chartkar.app + auto-trader-demo.pages.dev; the old
 #               trader.rahkar.pro 301s to chartkar.app via a Cloudflare
@@ -63,7 +61,7 @@
 
 set -euo pipefail
 
-HOST="root@95.38.187.63"
+HOST="root@3.129.38.165"
 SSH_KEY="$HOME/.ssh/id_ed25519"
 SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes)
 PAGES_PROJECT="auto-trader-demo"

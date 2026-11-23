@@ -45,31 +45,29 @@ both are saved open, live wins and backtest just starts closed.
 
 ## Hosting
 
-The hosted API (`api.chartkar.app`) runs on the Iran VPS 95.38.187.63, not
-AWS (moved 2026-11-18). The frontend stays on Cloudflare Pages. Caddy on the
-box terminates TLS for a DNS-only A record. A Cloudflare Tunnel was tried and
-rejected: traffic from Iran to Cloudflare stalls after a few KB. Deploy with
-`scripts/deploy-demo.sh` (root@95.38.187.63, service user `chartkar`, same
-unit names as before).
+The hosted API (`api.chartkar.app`) runs on the Lightsail box `chartkar-api`
+(3.129.38.165, us-east-2, micro 1 GB + 2 GB swap, Debian 13), since
+2026-11-23. The frontend stays on Cloudflare Pages. Caddy on the box
+terminates TLS for a DNS-only A record. Deploy with `scripts/deploy-demo.sh`
+(root@3.129.38.165, service user `chartkar`, same unit names as before). The
+box is outside Iran, so it reaches brokers and Telegram directly: no proxy,
+no egress drop-in. It runs with `SNAPSHOT_DISABLED=1` (1 GB is too small for
+Chromium next to the API), so alert photos use matplotlib.
 
-Foreign brokers (Capital, IG, AvaTrade via MT5) must NEVER be reached
-from the Iranian IP: they geo-block it and may flag the accounts. This is
-enforced, not just configured. `auto-trader-demo` may only reach loopback
-(`IPAddressDeny=any` in the box-only drop-in `no-direct-egress.conf`), and
-`demo.env` points HTTP(S)_PROXY at Xray on 127.0.0.1:18483. Xray sends `.ir`
-domains (Nobitex) out directly and everything else to the `claude-gateway`
-Lightsail box, whose Xray passes only an allowlist of domains. A new
-external host the backend needs goes in that allowlist; never add a
-`NO_PROXY` exception. The snapshot renderer's Chromium uses the same proxy
-(chartkar.app is allowlisted) and reaches `api.chartkar.app` directly via
-`/etc/auto-trader/renderer.env`.
+Why it moved: from 2026-11-18 the API ran on the Iran VPS 95.38.187.63,
+sending all foreign traffic through Xray to the `claude-gateway` box
+(REALITY, cover site www.microsoft.com). On 2026-11-23 about 19:30 UTC Iran
+began dropping the gateway's replies on 443 (TCP connects, data never comes
+back), so Capital, Telegram and MT5 all failed. Foreign brokers must NEVER be
+reached from the Iranian IP. The Iran box keeps the old API stopped and
+disabled (`auto-trader-demo`, renderer, watchdog) with its data as the
+rollback copy; its `no-direct-egress.conf` drop-in still blocks direct
+egress there.
 
-The MT5 Wine terminal stays on the AWS box (3.139.146.5). The box-only unit
-`mt5-forward` forwards 127.0.0.1:22346 to it over SSH, with a key limited to
-that one port. Iran filters direct SSH to that IP (since 2026-11-21), so a
-`via-xray.conf` drop-in on `mt5-forward` and `aws-relay` sends it through Xray (`nc -X connect` to
-127.0.0.1:18483), and the gateway allowlist has an IP rule for 3.139.146.5:22. The API on AWS is disabled by the drop-in `moved-to-iran.conf`.
-Delete it to roll back.
+The MT5 Wine terminal stays on the AWS box (3.139.146.5). The unit
+`mt5-forward` on `chartkar-api` forwards 127.0.0.1:22346 to it over plain SSH,
+with a key limited to that one port. The API on AWS is disabled by the
+drop-in `moved-to-iran.conf`.
 
 The AWS box stays up. Besides MT5 it runs a WireGuard VPN exit outside Iran
 (`wg-noniran-exit` over `wstunnel-wg`, plus `wg-intranet`/`wg-aws-iran`) with
@@ -78,8 +76,8 @@ live peers, and the `aws-vps` Cloudflare tunnel (ssh, vnc, wgeasy, grafana).
 2026-11-19); the box's `aws-relay` reverse SSH to AWS still runs as a backup
 way in. The stopped API and its 2.2 GB data dir are the rollback copy.
 
-Monitoring: the Iran box's `egress-check` timer (every 2 min) reaches Telegram
-and Capital through the proxy, checks the `mt5-forward` port, and writes the result, which Caddy serves at
+Monitoring: the `chartkar-api` box's `egress-check` timer (every 2 min) reaches Telegram
+and Capital directly, checks the `mt5-forward` port, and writes the result, which Caddy serves at
 `https://api.chartkar.app/egress-status`. The AWS box's `chartkar-watch` timer
 (every 5 min, outside Iran so Telegram works when the gateway does not) reads
 `/health` and that status and messages the admin through @ChartkarBot after
