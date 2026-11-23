@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   addMoveRule: vi.fn(async () => null as string | null),
   patchMoveRule: vi.fn(async () => null as string | null),
   deleteMoveRule: vi.fn(async () => null as string | null),
-  findMoveRule: vi.fn((): unknown => undefined),
+  findMoveRule: vi.fn((_id: unknown, _f: unknown): unknown => undefined),
   subscribeTrades: vi.fn((_cb: (t: unknown[]) => void) => () => {}),
 }));
 vi.mock("./lib/trading", async (importOriginal) => ({
