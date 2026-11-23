@@ -66,8 +66,8 @@ export interface LineSpec {
 // green = target. Colour carries only profit/loss meaning; the entry is de-hued (its side is
 // conveyed by the label — Long / Short / Limit buy…) so it stops competing with the red/green.
 const PRICE_COLOR = "#6b7280";
-const STOP_COLOR = "#f23645";
-const TP_COLOR = "#089981";
+export const STOP_COLOR = "#f23645";
+export const TP_COLOR = "#089981";
 
 const PILL_FAMILY = "-apple-system, system-ui, sans-serif";
 // Side marker prefixed INSIDE the entry/limit pill: an up chevron for buy/long, a

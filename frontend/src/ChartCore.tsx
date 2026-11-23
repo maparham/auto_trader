@@ -77,7 +77,9 @@ import {
 import BacktestAggMarkers, { type BacktestAggMarkersHandle } from "./BacktestAggMarkers";
 import BacktestTradeDashes, { type BacktestTradeDashesHandle } from "./BacktestTradeDashes";
 import { requestAlertEdit } from "./lib/alertEdit";
-import { deleteIndicatorAlert, firedIndicatorAlerts, hideFiredAlert, loadIndicatorAlerts, rearmAlert } from "./lib/alertsApi";
+import { deleteIndicatorAlert, firedIndicatorAlerts, hideFiredAlert, loadIndicatorAlerts, loadMoveRules, rearmAlert } from "./lib/alertsApi";
+import { moveDraftSignal } from "./lib/moveRuleDraft";
+import { MOVE_PREFIX, moveLineOverrides, moveLineSpecs, parseTradeLineKey } from "./lib/moveRuleLines";
 import {
   Signal,
   alertEditRequest,
@@ -191,7 +193,7 @@ import HistoryJumpPill from "./chart/HistoryJumpPill";
 import { beginHistoryJump } from "./lib/historyJump";
 import { chartSync, rangeSync, readVisibleRange, readExactAnchor, applyVisibleRange, applyVisibleRangeExact, setAlignAnchor, getAlignAnchor, setGestureCell, isGestureCell, releaseGestureCell, setCellReplaying, scrollTsToCenter } from "./lib/chartSync";
 import { fetchBrokerDayWeekStarts, refreshMtfIndicators, refreshMtfOnVisibilityChange, setChartIntervalMs, setViewportReader, stampTrendlinesFloors } from "./lib/mtfCoordinator";
-import { PositionLines, tradeLineSpecs, DRAFT_ID, tradeLineSpanX, tradeLineAnchorTs } from "./lib/positionLines";
+import { PositionLines, tradeLineSpecs, DRAFT_ID, tradeLineSpanX, tradeLineAnchorTs, type LineSpec } from "./lib/positionLines";
 import {
   TradeMarkers,
   entryMarkerSpecs,
@@ -1292,6 +1294,26 @@ export default function ChartCore({
     if (mainW > 0) draftLabelXRef.current = draftLabelX(mainW);
     return draftLabelXRef.current || undefined;
   };
+  // Move SL / Move TP lines (lib/moveRuleLines): the ticket's draft plus the saved
+  // price rules of this cell's open positions. Shared by the drawing pass and the
+  // pixel pass behind the drag hit-test so the two always agree. None on a
+  // replaying cell (real rules over a hidden past) or while lines are hidden.
+  const moveSpecs = (replaying: boolean): LineSpec[] => {
+    try {
+      if (replaying || positionsHiddenRef.current || snapViewRef.current || isSynthetic(epicRef.current)) return [];
+      const epic = epicRef.current;
+      const open = new Set(tradesRef.current.filter((t) => t.kind === "position").map((t) => t.id));
+      return moveLineSpecs({
+        epic,
+        draft: moveDraftSignal.value,
+        saved: loadMoveRules({ epic }).filter((r) => open.has(r.action.dealId)),
+        precision: precisionRef.current,
+        labelX: currentDraftLabelX(),
+      });
+    } catch {
+      return []; // never let a throw reach a draw / hit-test path
+    }
+  };
   // Last measured pill-face widths, keyed like the nodes — so a re-render that
   // leaves every face the same width skips the bracket repaint.
   const pillFaceWidthsRef = useRef(new Map<string, number>());
@@ -2363,17 +2385,18 @@ export default function ChartCore({
         selected: tradeUiRef.current.selected,
         dragging: draggingTradeRef.current,
         snappedKey: snapTradeKeyRef.current,
-      });
+      }).concat(moveSpecs(handle.replayRef.current?.isActive() ?? false));
       // The entry candle's pixel-x per anchored line (null = left edge). Uses the
       // SAME clamp as the drawn point (tradeLineAnchorTs) so the click hit-test
       // gates on exactly the span the overlay draws.
       const lastBarTs = c.getDataList()?.at(-1)?.timestamp;
       return specs.map((s) => {
-        const sep = s.key.lastIndexOf(":");
+        // "price" | "stop" | "tp"; a move line keeps its full key as the id.
+        const { id, field } = parseTradeLineKey(s.key);
         const anchorTs = tradeLineAnchorTs(s.openedAt, lastBarTs);
         return {
-          id: s.key.slice(0, sep),
-          field: s.key.slice(sep + 1) as TradeLineField, // "price" | "stop" | "tp"
+          id,
+          field,
           level: s.level,
           draggable: s.draggable,
           dragField: s.dragField,
@@ -2420,7 +2443,8 @@ export default function ChartCore({
       if (x > mainW) return null;
       let best: { id: string; field: TradeLineField; d: number } | null = null;
       for (const t of tradeLinePixels()) {
-        if (t.id === DRAFT_ID || t.y == null) continue;
+        // Draft and move lines have no dock row and no pill: not click-selectable.
+        if (t.id === DRAFT_ID || t.id.startsWith(MOVE_PREFIX) || t.y == null) continue;
         const d = Math.abs(t.y - y);
         if (d > HIT_TOLERANCE_PX || (best && d >= best.d)) continue;
         // No line is drawn for a trade at rest, so there is nothing to click there
@@ -3802,7 +3826,7 @@ export default function ChartCore({
                 // Always-on DOM pills carry the labels now — blank the canvas text so the
                 // two don't double up; just the bare lines are drawn here.
                 hideTradeLabels: true,
-              }),
+              }).concat(moveSpecs(handle.replayRef.current?.isActive() ?? false)),
         );
       };
       handle.posDrawRef.current = drawPositions;
@@ -3913,6 +3937,11 @@ export default function ChartCore({
         drawPositions();
         handle.paintBracketRef.current(); // the bracket follows the draft's SL/TP too
       });
+      // Move SL / Move TP lines follow the ticket's draft, a saved line's drag
+      // override, and the saved rules (alerts bump).
+      const unsubMoveDraft = moveDraftSignal.subscribe(() => drawPositions());
+      const unsubMoveOverrides = moveLineOverrides.subscribe(() => drawPositions());
+      const unsubMoveRules = alertsChanged.subscribe(() => drawPositions());
       const unsubConfirm = confirmLineEditsSignal.subscribe((v) => {
         confirmLineEditsRef.current = v;
       });
@@ -3964,6 +3993,9 @@ export default function ChartCore({
         historyBoxRef.current = null;
         unsubPending();
         unsubDraft();
+        unsubMoveDraft();
+        unsubMoveOverrides();
+        unsubMoveRules();
         unsubConfirm();
         unsubTradeUi();
         unsubEditOpen();

@@ -27,6 +27,7 @@
 import { useEffect } from "react";
 import { type Chart, type Indicator } from "klinecharts";
 import { DRAFT_ID } from "../lib/positionLines";
+import { MOVE_PREFIX, abortMoveLineDrag, applyMoveLineDrag, endMoveLineDrag } from "../lib/moveRuleLines";
 import {
   draggingLineSignal,
   pendingEditsSignal,
@@ -352,6 +353,13 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
           hit.armed = true;
         }
         let level = Number(value.toFixed(precisionRef.current));
+        // A Move SL / Move TP line (lib/moveRuleLines) moves its draft or saved rule,
+        // not a trade: no reveal bookkeeping, no clamp, no pending edit.
+        if (hit.id.startsWith(MOVE_PREFIX)) {
+          if (handle.replayRef.current?.isActive() ?? false) return;
+          applyMoveLineDrag(hit.id, level);
+          return;
+        }
         // Reveal this trade's lines full-width for the duration of the drag (below,
         // drawPositions reads draggingTradeRef) so a stub SL/TP doesn't jump mid-drag.
         // Draft lines are already full-width, so skip the reveal bookkeeping for them.
@@ -436,6 +444,8 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
           return false;
         }
         draggingLineSignal.set(false); // let no-confirm auto-apply commit the final level
+        // A dropped move line saves a saved rule's new level (a draft is already set).
+        if (hit.id.startsWith(MOVE_PREFIX)) void endMoveLineDrag(hit.id);
         // Drop done: drop the drag-reveal and retract the line to its resting extent
         // (unless still hovered/selected, which drawPositions re-derives). Only when a
         // real trade was revealed — a draft never sets the ref, so skip its redundant redraw.
@@ -450,8 +460,9 @@ export function useLineDrag(handle: ChartHandle, deps: LineDragDeps): void {
       // draggingLineSignal is a GLOBAL signal (pauses no-confirm auto-apply across every
       // cell). If this cell unmounts mid-drag, onCommit never runs — reset it here so it
       // can't stay paused forever. Idempotent: harmless if the drag never moved.
-      onAbort: () => {
+      onAbort: (hit) => {
         draggingLineSignal.set(false);
+        if (hit.id.startsWith(MOVE_PREFIX)) abortMoveLineDrag(hit.id);
         if (draggingTradeRef.current != null) {
           draggingTradeRef.current = null;
           handle.posDrawRef.current();

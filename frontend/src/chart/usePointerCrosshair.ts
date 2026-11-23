@@ -35,6 +35,7 @@
 // useLineDrag's effect and let the crosshair observe an in-flight line drag.
 import { useEffect } from "react";
 import { DRAFT_ID } from "../lib/positionLines";
+import { MOVE_PREFIX } from "../lib/moveRuleLines";
 import { Signal, setTradeHovered, type TradeLineField } from "../lib/signals";
 import {
   HIT_TOLERANCE_PX,
@@ -347,7 +348,8 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
         } else {
           let bestD = Infinity;
           for (const t of tlp) {
-            if (t.id === DRAFT_ID || t.y == null) continue; // the draft has no dock row
+            // The draft and move lines have no dock row.
+            if (t.id === DRAFT_ID || t.id.startsWith(MOVE_PREFIX) || t.y == null) continue;
             const d = Math.abs(t.y - y);
             if (d <= HIT_TOLERANCE_PX && d < bestD) { bestD = d; hoverTradeId = t.id; hoverField = t.field; }
           }
@@ -407,8 +409,9 @@ export function usePointerCrosshair(handle: ChartHandle, deps: PointerCrosshairD
       }
       // Trade lines reuse tlp's already-resolved pixel-y (no re-convert). Hidden,
       // un-revealed lines are absent from tlp, so the magnet won't lock onto them.
+      // Move SL / Move TP lines are not snap targets (their key is not a trade line's).
       for (const t of tlp) {
-        if (t.y != null) {
+        if (t.y != null && !t.id.startsWith(MOVE_PREFIX)) {
           snapTargets.push({
             y: t.y, level: t.level, draggable: t.draggable, isTrade: true, tradeKey: `${t.id}:${t.field}`,
           });
