@@ -98,12 +98,22 @@ class MoveRules:
             if row.get("action"):
                 self._rules.setdefault(row["action"]["account"], []).append((user_id, row))
         self._stopping = False
+        if self._engine is not None:
+            self._engine.set_action_handler(self.execute)
         self._started = True
         self._reconcile()
 
     async def stop(self) -> None:
         """Let running moves finish (they change real stops), up to
         STOP_WAIT_S, then cancel the sweep loops."""
+        # First, unhook from the engine: with no handler it neither fires nor
+        # deletes move rows, so a crossing during shutdown leaves the rule
+        # stored and it acts after the restart.
+        if self._engine is not None:
+            try:
+                self._engine.set_action_handler(None)
+            except Exception:
+                log.warning("move rules: clearing the engine handler failed", exc_info=True)
         self._started = False
         # From here a new execute reports "server restarting" and never
         # touches the broker.

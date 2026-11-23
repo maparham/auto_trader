@@ -502,3 +502,42 @@ def test_alert_engine_pending_action_tasks():
         await t
         assert eng.pending_action_tasks() == set()
     run(main())
+
+
+def test_stop_unhooks_engine_so_rule_stays_stored(tmp_path):
+    async def main():
+        from auto_trader.core.alert_engine import AlertEngine
+        store = AlertStore(str(tmp_path / "alerts.db"))
+
+        async def bcast(uid, msg):
+            pass
+        eng = AlertEngine()
+        eng.configure(store=store, get_broker=lambda b: None, broadcast=bcast, notifiers=[])
+        m = MoveRules()
+        calls = []
+        m.configure(store, lambda k: FakeExec(), bcast, [], eng)
+        orig = m.execute
+
+        async def spy(*a):
+            calls.append(a)
+            return await orig(*a)
+        m.execute = spy  # start() hooks self.execute, so the spy
+        await m.start()
+        row = {"id": "mv-1", "broker": "capital", "epic": "US100", "kind": "price_level",
+               "params": {"level": 1.10, "condition": "crossing_up", "trigger": "once"},
+               "message": "", "expires_at": None, "notify": {}, "precision": 2, "active": 1,
+               "action": {"account": ACCT, "dealId": "D1", "field": "sl", "direction": "BUY",
+                          "target": {"type": "breakeven", "offset": 0}}}
+        created = await store.create("u1", row)
+        eng.on_alert_changed("u1", created, "mv-1")
+        await eng.on_tick("capital", "US100", 1.09, 1.09, 1.092)
+        await m.stop()
+        await eng.on_tick("capital", "US100", 1.11, 1.11, 1.112)  # crosses after stop began
+        await asyncio.sleep(0)
+        assert calls == []
+        assert eng.pending_action_tasks() == set()
+        assert [r["id"] for r in await store.list_user("u1")] == ["mv-1"]
+        await m.start()  # a new lifespan hooks the handler back
+        assert eng._action_handler == m.execute
+        await m.stop()
+    run(main())
