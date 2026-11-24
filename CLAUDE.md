@@ -45,14 +45,24 @@ both are saved open, live wins and backtest just starts closed.
 
 ## Hosting
 
-The hosted API (`api.chartkar.app`) runs on the Lightsail box `chartkar-api`
-(3.129.38.165, us-east-2, micro 1 GB + 2 GB swap, Debian 13), since
-2026-11-23. The frontend stays on Cloudflare Pages. Caddy on the box
-terminates TLS for a DNS-only A record. Deploy with `scripts/deploy-demo.sh`
-(root@3.129.38.165, service user `chartkar`, same unit names as before). The
-box is outside Iran, so it reaches brokers and Telegram directly: no proxy,
-no egress drop-in. It runs with `SNAPSHOT_DISABLED=1` (1 GB is too small for
-Chromium next to the API), so alert photos use matplotlib.
+The hosted API (`api.chartkar.app`) runs on the Lightsail box `aws-vps-2`
+(3.139.146.5, us-east-2, small 2 GB + 2 GB swap, Amazon Linux 2023), since
+2026-11-23. The frontend stays on Cloudflare Pages. The same box runs the MT5
+Wine terminal, the WireGuard VPN exit (`wg-noniran-exit` over `wstunnel-wg`,
+plus `wg-intranet`/`wg-aws-iran`), the `aws-vps` Cloudflare tunnel (ssh, vnc,
+wgeasy, grafana) and `chartkar-watch`. It was made from a snapshot of the old
+box (`aws-vps-2026-11-23`), so those kept their keys and settings. The old
+instance `Amazon_Linux_2023-1` is stopped, as a rollback copy.
+
+nginx terminates TLS for the DNS-only A record. `api.chartkar.app` is its own
+site chosen by SNI (`conf.d/zz-chartkar-api.conf`, certbot cert, renewed by
+`certbot-renew.timer`). The default 443 site is `cvlator-api.conf` (wstunnel
+for WireGuard); keep the `zz-` prefix so the API site never becomes the
+default. Deploy with `scripts/deploy-demo.sh` (ec2-user@3.139.146.5 with sudo:
+root SSH is off by the box's sshd hardening; service user `chartkar`). The
+box is outside Iran, so the API reaches brokers, Telegram and MT5
+(127.0.0.1:22346) directly: no proxy, no egress drop-in. It runs with
+`SNAPSHOT_DISABLED=1`, so alert photos use matplotlib.
 
 Why it moved: from 2026-11-18 the API ran on the Iran VPS 95.38.187.63,
 sending all foreign traffic through Xray to the `claude-gateway` box
@@ -60,31 +70,17 @@ sending all foreign traffic through Xray to the `claude-gateway` box
 began dropping the gateway's replies on 443 (TCP connects, data never comes
 back), so Capital, Telegram and MT5 all failed. Foreign brokers must NEVER be
 reached from the Iranian IP. The Iran box keeps the old API stopped and
-disabled (`auto-trader-demo`, renderer, watchdog) with its data as the
-rollback copy; its `no-direct-egress.conf` drop-in still blocks direct
-egress there.
+disabled (`auto-trader-demo`, renderer, watchdog) with its data as a rollback
+copy. The ArvanCloud box also gets no TLS reply from AWS IPs, but Iranian
+home connections reach the API fine.
 
-The MT5 Wine terminal stays on the AWS box (3.139.146.5). The unit
-`mt5-forward` on `chartkar-api` forwards 127.0.0.1:22346 to it over plain SSH,
-with a key limited to that one port. The API on AWS is disabled by the
-drop-in `moved-to-iran.conf`.
-
-The AWS box stays up. Besides MT5 it runs a WireGuard VPN exit outside Iran
-(`wg-noniran-exit` over `wstunnel-wg`, plus `wg-intranet`/`wg-aws-iran`) with
-live peers, and the `aws-vps` Cloudflare tunnel (ssh, vnc, wgeasy, grafana).
-`iran-vps.rahkar.pro` is a DNS-only A record to the Iran box (since
-2026-11-19); the box's `aws-relay` reverse SSH to AWS still runs as a backup
-way in. The stopped API and its 2.2 GB data dir are the rollback copy.
-
-Monitoring: the `chartkar-api` box's `egress-check` timer (every 2 min) reaches Telegram
-and Capital directly, checks the `mt5-forward` port, and writes the result, which Caddy serves at
-`https://api.chartkar.app/egress-status`. The AWS box's `chartkar-watch` timer
-(every 5 min, outside Iran so Telegram works when the gateway does not) reads
-`/health` and that status and messages the admin through @ChartkarBot after
-two failed runs, every 6 h while failing, and on recovery. Config:
-`/etc/chartkar-watch.env` (CHAT_ID, TELEGRAM_BOT_TOKEN). To
-retire the box, MT5 and the VPN exit need a non-Iran host with about 1 GB of
-RAM (the claude-gateway box is too small).
+Monitoring: `egress-check` (every 2 min) reaches Telegram and Capital
+directly, checks the MT5 port, and writes the result, which nginx serves at
+`https://api.chartkar.app/egress-status`. `chartkar-watch` (every 5 min)
+reads `/health` and that status and messages the admin through @ChartkarBot
+after two failed runs, every 6 h while failing, and on recovery. Config:
+`/etc/chartkar-watch.env` (CHAT_ID, TELEGRAM_BOT_TOKEN). It now runs on the
+same box as the API, so it does not catch the whole box going down.
 
 ## Feature notes
 

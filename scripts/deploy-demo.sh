@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Deploy the authenticated hosted app (https://chartkar.app) in one go:
-#   backend  -> Lightsail box chartkar-api 3.129.38.165 (us-east-2, 1 GB,
-#               Debian 13; systemd auto-trader-demo as user chartkar, uvicorn
-#               on 127.0.0.1:8010, Caddy serves api.chartkar.app with a DNS-only
-#               A record). Moved here from the Iran VPS on 2026-11-23, when Iran
+#   backend  -> Lightsail box aws-vps-2 3.139.146.5 (us-east-2, 2 GB, Amazon
+#               Linux 2023; it also runs MT5, the WireGuard exit and the aws-vps
+#               tunnel). systemd auto-trader-demo as user chartkar, uvicorn on
+#               127.0.0.1:8010, nginx serves api.chartkar.app by SNI on 443
+#               (conf.d/zz-chartkar-api.conf, certbot cert) with a DNS-only A
+#               record. Moved here from the Iran VPS on 2026-11-23, when Iran
 #               started dropping the Xray link that box used for all foreign
 #               traffic. This box reaches brokers and Telegram directly, no proxy.
+#               Root SSH is off on this box (sshd hardening), so the script logs
+#               in as ec2-user and uses sudo; MT5 also runs as ec2-user.
 #   frontend -> Cloudflare Pages project auto-trader-demo (chartkar.app,
 #               www.chartkar.app + auto-trader-demo.pages.dev; the old
 #               trader.rahkar.pro 301s to chartkar.app via a Cloudflare
@@ -61,7 +65,7 @@
 
 set -euo pipefail
 
-HOST="root@3.129.38.165"
+HOST="ec2-user@3.139.146.5"
 SSH_KEY="$HOME/.ssh/id_ed25519"
 SSH=(ssh -i "$SSH_KEY" -o BatchMode=yes)
 PAGES_PROJECT="auto-trader-demo"
@@ -153,10 +157,10 @@ if [ "$DO_BACKEND" = 1 ]; then
   echo "==> backend: rsync -> $HOST:/opt/auto-trader/backend"
   rsync -az --delete \
     --exclude '__pycache__' --exclude '*.db' --exclude '.pytest_cache' \
-    -e "ssh -i $SSH_KEY -o BatchMode=yes" \
+    -e "ssh -i $SSH_KEY -o BatchMode=yes" --rsync-path="sudo rsync" \
     "$WT/backend/" "$HOST:/opt/auto-trader/backend/"
   # Not rsync --chown: macOS ships openrsync, which lacks it.
-  "${SSH[@]}" "$HOST" 'chown -R chartkar:chartkar /opt/auto-trader/backend'
+  "${SSH[@]}" "$HOST" 'sudo chown -R chartkar:chartkar /opt/auto-trader/backend'
 
   if [ "$DO_SYNC" = 1 ]; then
     echo "==> backend: sync credentials -> $HOST:/etc/auto-trader/demo.env"
@@ -349,7 +353,7 @@ SITE="$(curl -s -m 15 -o /dev/null -w '%{http_code}' https://chartkar.app/)"
 # Outside backend/, which rsync --delete would wipe; written only after the
 # smoke test, so a failed deploy never claims to be live.
 if [ "$DO_BACKEND" = 1 ]; then
-  "${SSH[@]}" "$HOST" "echo $(git -C "$ROOT" rev-parse HEAD) > /opt/auto-trader/.deployed-backend-sha"
+  "${SSH[@]}" "$HOST" "echo $(git -C "$ROOT" rev-parse HEAD) | sudo tee /opt/auto-trader/.deployed-backend-sha >/dev/null"
 fi
 
 echo "==> deployed $HEAD_SHA — https://chartkar.app"
