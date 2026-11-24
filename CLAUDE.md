@@ -61,8 +61,8 @@ for WireGuard); keep the `zz-` prefix so the API site never becomes the
 default. Deploy with `scripts/deploy-demo.sh` (ec2-user@3.139.146.5 with sudo:
 root SSH is off by the box's sshd hardening; service user `chartkar`). The
 box is outside Iran, so the API reaches brokers, Telegram and MT5
-(127.0.0.1:22346) directly: no proxy, no egress drop-in. It runs with
-`SNAPSHOT_DISABLED=1`, so alert photos use matplotlib.
+(127.0.0.1:22346) directly: no proxy, no egress drop-in. Alert chart photos
+are on (`chartkar-snapshot-renderer`, Chromium installed for `chartkar`).
 
 Why it moved: from 2026-11-18 the API ran on the Iran VPS 95.38.187.63,
 sending all foreign traffic through Xray to the `claude-gateway` box
