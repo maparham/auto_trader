@@ -346,6 +346,10 @@ export const pendingEditsSignal = new Signal<Record<string, PendingEdit>>({});
 // ALL epics, so it works even when the clicked row's instrument isn't the chart
 // symbol). null = not editing.
 export const editTradeSignal = new Signal<string | null>(null);
+// Which tab the edit ticket opens on for one trade (the row bell asks for
+// Alerts, the move marker for Automation). The ticket consumes and clears it.
+export type EditTicketTab = "position" | "automation" | "alerts";
+export const editTicketTabSignal = new Signal<{ id: string; tab: EditTicketTab } | null>(null);
 
 // Mirrors settings.trading.confirmLineEdits so the chart — which doesn't receive the
 // settings prop — can decide what a line drag does: in confirm mode a drag SELECTS
@@ -474,7 +478,8 @@ export function selectTradeLine(id: string, field: TradeLineField, openPanel = t
 // Double-click-to-edit: force the panel open regardless of current selection state.
 // A dblclick is preceded by two clicks (which may have toggled selection back and
 // forth), so we can't rely on the current state — unconditionally set selected + open.
-export function openTradeEditor(id: string, field: TradeLineField): void {
+export function openTradeEditor(id: string, field: TradeLineField, tab?: EditTicketTab): void {
+  if (tab) editTicketTabSignal.set({ id, tab });
   setTradeSelected(id, field, true);
   // Force open even if setTradeSelected's early-return or openPanel=false left it closed.
   editTradeSignal.set(id);

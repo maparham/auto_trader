@@ -1222,7 +1222,6 @@ export default function App() {
               epic={symbol.epic}
               account={activeAccount}
               precision={symbol.pricePrecision ?? 2}
-              proximityAtrMult={settings.proximityAtrMult}
               instrumentType={symbol.type}
               trading={settings.trading}
               accountSummary={accountSummary}

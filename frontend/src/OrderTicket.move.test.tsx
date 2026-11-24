@@ -1,13 +1,12 @@
 // @vitest-environment jsdom
 //
-// "Move SL / Move TP" controls on the new-order form: disabled for limit orders;
-// after a filled market order each switched-on side creates a move rule for the
-// new deal; a failed create is reported on the form.
+// "Move SL / Move TP" controls live on the edit ticket's Automation tab; the
+// new-order form has none. The Position tab holds only the broker's fields.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import OrderTicket from "./OrderTicket";
 import type { TradingSettings } from "./theme";
-import { draftOrderSignal, indicatorAlertRequest, lineAlertRequest, setTradeSelected } from "./lib/signals";
+import { draftOrderSignal, editTicketTabSignal, indicatorAlertRequest, lineAlertRequest, setTradeSelected } from "./lib/signals";
 import { moveDraftSignal } from "./lib/moveRuleDraft";
 
 const mocks = vi.hoisted(() => ({
@@ -56,48 +55,13 @@ afterEach(() => {
   moveDraftSignal.set(null);
 });
 
-async function renderTicket() {
-  render(<OrderTicket epic="US100" trading={trading} account="capital:paper" precision={1} />);
-  await waitFor(() => expect(draftOrderSignal.value).not.toBeNull());
-}
-const moveSl = () => screen.getByLabelText("Move SL") as HTMLButtonElement;
-const fill = () => act(async () => fireEvent.click(document.querySelector(".ot-action")!));
-
-describe("OrderTicket move rules", () => {
-  it("posts a rule for the filled deal", async () => {
-    mocks.placeOrder.mockResolvedValue({ status: "filled", deal_id: "D1", fill_price: 100, filled_quantity: 1 });
-    await renderTicket();
-    await act(async () => fireEvent.click(moveSl()));
-    expect(moveDraftSignal.value?.sl).toMatchObject({ on: true, condition: "crossing_up" });
-    await fill();
-    await waitFor(() => expect(mocks.addMoveRule).toHaveBeenCalledTimes(1));
-    expect(mocks.addMoveRule).toHaveBeenCalledWith(
-      expect.objectContaining({
-        broker: "capital",
-        epic: "US100",
-        triggerKind: "price_level",
-        precision: 1,
-        params: expect.objectContaining({ condition: "crossing_up" }),
-        action: expect.objectContaining({ dealId: "D1", account: "capital:paper", field: "sl", target: { type: "breakeven", offset: 0 } }),
-      }),
-    );
-    expect(moveDraftSignal.value).toBeNull();
-  });
-
-  it("shows the reason when the server refuses", async () => {
-    mocks.placeOrder.mockResolvedValue({ status: "filled", deal_id: "D2", fill_price: 100, filled_quantity: 1 });
-    mocks.addMoveRule.mockResolvedValue("A move rule already exists");
-    await renderTicket();
-    await act(async () => fireEvent.click(moveSl()));
-    await fill();
-    expect(await screen.findByText("Order filled. Move SL not set: A move rule already exists")).toBeTruthy();
-  });
-
-  it("disables the switch for a limit order", async () => {
-    await renderTicket();
-    fireEvent.click(screen.getByRole("button", { name: /limit/i }));
-    await waitFor(() => expect(moveSl().disabled).toBe(true));
-    expect((screen.getByLabelText("Move TP") as HTMLButtonElement).disabled).toBe(true);
+describe("OrderTicket new-order form", () => {
+  it("has no Move or Warn switches (they live on the position)", async () => {
+    render(<OrderTicket epic="US100" trading={trading} account="capital:paper" precision={1} />);
+    await waitFor(() => expect(draftOrderSignal.value).not.toBeNull());
+    expect(screen.queryByLabelText("Move SL")).toBeNull();
+    expect(screen.queryByLabelText("Warn near SL")).toBeNull();
+    expect(screen.queryByRole("tablist")).toBeNull();
   });
 });
 
@@ -122,6 +86,7 @@ describe("OrderTicket move rules in edit mode", () => {
     setTradeSelected("P1", "stop", true);
     render(<OrderTicket epic="US100" trading={trading} account="capital:paper" precision={1} />);
     await screen.findByText(/Update position/);
+    await act(async () => fireEvent.click(screen.getByRole("tab", { name: /Automation/ })));
   }
   const btn = (name: string) => screen.getByRole("button", { name }) as HTMLButtonElement;
 
@@ -196,5 +161,35 @@ describe("OrderTicket move rules in edit mode", () => {
     await openEditor(rule({ triggerKind: "line", label: "Trendline", params: {} }));
     await act(async () => fireEvent.click(btn("Edit")));
     expect(lineAlertRequest.value).toEqual({ mode: "edit", id: "r1" });
+  });
+
+  it("keeps the Position tab to broker fields only", async () => {
+    await openEditor(rule({}));
+    await act(async () => fireEvent.click(screen.getByRole("tab", { name: /Position/ })));
+    expect(screen.queryByLabelText("Move SL")).toBeNull();
+    expect(screen.getByText(/Update position/)).toBeTruthy();
+  });
+
+  it("opens on the tab the row asked for", async () => {
+    mocks.subscribeTrades.mockImplementation((cb: (t: unknown[]) => void) => {
+      cb([POS]);
+      return () => {};
+    });
+    editTicketTabSignal.set({ id: "P1", tab: "alerts" });
+    setTradeSelected("P1", "stop", true);
+    render(<OrderTicket epic="US100" trading={trading} account="capital:paper" precision={1} />);
+    expect(await screen.findByRole("button", { name: "Save alerts" })).toBeTruthy();
+    expect(screen.getByLabelText("Warn near SL")).toBeTruthy();
+    expect(editTicketTabSignal.value).toBeNull();
+  });
+
+  it("switches to Automation when a move line is dragged", async () => {
+    await openEditor();
+    await act(async () => fireEvent.click(screen.getByRole("tab", { name: /Position/ })));
+    act(() => moveDraftSignal.set({
+      epic: "US100", dealId: "P1", side: "buy", tp: null,
+      sl: { on: true, level: 104, condition: "crossing_up", target: { type: "breakeven", offset: 0 } },
+    }));
+    expect((await screen.findByLabelText("Move SL trigger price") as HTMLInputElement).value).toBe("104");
   });
 });

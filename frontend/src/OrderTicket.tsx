@@ -36,6 +36,7 @@ import {
 } from "./lib/trading";
 import {
   draftOrderSignal,
+  editTicketTabSignal,
   editTradeSignal,
   indicatorAlertRequest,
   lineAlertRequest,
@@ -43,6 +44,7 @@ import {
   setTradeSelected,
   tradeLineUiSignal,
   type DraftOrder,
+  type EditTicketTab,
   type PendingEdit,
 } from "./lib/signals";
 import { computeOrderInfo, usedMargin } from "./lib/orderInfo";
@@ -62,8 +64,8 @@ import Tooltip from "./components/Tooltip";
 import NumberField from "./components/NumberField";
 import SelectMenu from "./components/SelectMenu";
 import ExpirySelect from "./components/ExpirySelect";
-import ProximityWarn from "./components/ProximityWarn";
-import { addMoveRule, addPositionAlert, deleteMoveRule, findMoveRule, patchMoveRule, type MoveRule } from "./lib/alertsApi";
+import { addMoveRule, deleteMoveRule, findMoveRule, findPositionAlert, patchMoveRule, type MoveRule } from "./lib/alertsApi";
+import { usePositionAlertsForm } from "./usePositionAlertsForm";
 import MoveRuleControl from "./components/MoveRuleControl";
 import {
   defaultCondition,
@@ -81,8 +83,6 @@ interface Props {
   epic: string;
   account?: TradeAccount;
   precision?: number;
-  // Default ATR multiple for the Warn near SL/TP switches (Settings).
-  proximityAtrMult?: number;
   instrumentType?: string | null;
   trading: TradingSettings;
   // The active account's real balance/available/currency for a live account
@@ -140,10 +140,6 @@ function seedExit(ref: number, up: boolean, atr: number | null, precision: numbe
   if (atr != null) return levelFromAtr(ref, 1, atr, up, precision);
   return Number((up ? ref * (1 + DEFAULT_BRACKET) : ref * (1 - DEFAULT_BRACKET)).toFixed(precision));
 }
-// Sticky: a real-money warning or move rule that did not get set stays until the form changes.
-const STICKY_PREFIX = "Order filled. ";
-const LIMIT_WARN_TIP = "Available for market orders. Turn it on from the position once filled.";
-const LIMIT_MOVE_TIP = "Available for market orders. Set it on the position once filled.";
 
 /** Move-draft state with `field` replaced (creating the state when absent). */
 function withMoveField(
@@ -171,7 +167,6 @@ export default function OrderTicket({
   epic,
   account = "capital:paper",
   precision = 2,
-  proximityAtrMult = 0.5,
   instrumentType,
   trading,
   accountSummary,
@@ -194,15 +189,6 @@ export default function OrderTicket({
     seededDraft?.type === "limit" ? "limit" : "market",
   );
   const [quantity, setQuantity] = useState("1");
-  // Warn-near switches ride along with the exits: spent with the draft after an order.
-  const [warnTp, setWarnTp] = useState(false);
-  const [warnSl, setWarnSl] = useState(false);
-  const [warnTpMult, setWarnTpMult] = useState(proximityAtrMult);
-  const [warnSlMult, setWarnSlMult] = useState(proximityAtrMult);
-  useEffect(() => {
-    setWarnTpMult(proximityAtrMult);
-    setWarnSlMult(proximityAtrMult);
-  }, [proximityAtrMult]);
   const [busy, setBusy] = useState(false);
   // Synchronous in-flight guard. `disabled={busy}` only blocks the button after a
   // re-render, so a fast double-click can fire submit() twice (and double-fill)
@@ -214,14 +200,6 @@ export default function OrderTicket({
   const doneTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(doneTimer.current), []);
   const [quote, setQuote] = useState<Quote | null>(null);
-  // Move SL / Move TP drafts live in moveDraftSignal (the chart draws from it).
-  const [moveDraft, setMoveDraft] = useState<MoveDraftState | null>(moveDraftSignal.value);
-  useEffect(() => moveDraftSignal.subscribe(setMoveDraft), []);
-  // A draft is for one epic / side / order type; any change drops it, as does leaving.
-  useEffect(() => {
-    moveDraftSignal.set(null);
-  }, [epic, side, orderType]);
-  useEffect(() => () => moveDraftSignal.set(null), []);
   const [draft, setDraft] = useState<DraftOrder | null>(draftOrderSignal.value);
   const [positions, setPositions] = useState<TradeView[]>([]);
   const [editId, setEditId] = useState<string | null>(editTradeSignal.value);
@@ -262,8 +240,6 @@ export default function OrderTicket({
   // A broker account margins at the leverage its broker states; the Settings
   // figure is only the fallback (and what the paper sim uses).
   const brokerLev = useBrokerLeverage(epic, brokerOf(account), !replaying && !account.endsWith(":paper"));
-  // The sticky warning leaves on the user's next interaction with the form.
-  const dropStickyMsg = () => setMsg((m) => (m?.startsWith(STICKY_PREFIX) ? null : m));
   const round = (n: number) => Number(n.toFixed(precision));
   const fmt = (v: number | null | undefined) => (v == null ? "—" : v.toFixed(precision));
 
@@ -396,7 +372,7 @@ export default function OrderTicket({
   }, [epic, account, replaying]);
 
   useEffect(() => {
-    if (!msg || msg.startsWith(STICKY_PREFIX)) return;
+    if (!msg) return;
     window.clearTimeout(flash.current);
     flash.current = window.setTimeout(() => setMsg(null), 4000);
     return () => window.clearTimeout(flash.current);
@@ -483,16 +459,6 @@ export default function OrderTicket({
   const pct = (level: number | null) =>
     level != null && entryPrice ? ((level - entryPrice) / entryPrice) * 100 : null;
 
-  const myMove = moveDraft && moveDraft.epic === epic && moveDraft.dealId == null ? moveDraft : null;
-  function setMove(field: "sl" | "tp", d: MoveRuleDraft | null) {
-    moveDraftSignal.set(withMoveField(moveDraftSignal.value, epic, null, side, field, d));
-  }
-  function toggleMove(field: "sl" | "tp", on: boolean) {
-    const ref = mid ?? entryPrice;
-    if (!on || ref == null) return setMove(field, null);
-    setMove(field, seedMoveDraft(field, side, ref, slVal, tpVal, precision));
-  }
-
   // An exit on the wrong side of the entry (a sell's stop below it, its target
   // above) is refused by the broker with a raw code. Flag the field and block
   // the order here instead.
@@ -545,13 +511,6 @@ export default function OrderTicket({
       return;
     }
     disarm();
-    const warnSides: ("sl" | "tp")[] = [];
-    if (!isLimit && tpOn && warnTp) warnSides.push("tp");
-    if (!isLimit && slOn && warnSl) warnSides.push("sl");
-    const moveSides: ("sl" | "tp")[] = [];
-    if (!isLimit && myMove?.sl?.on) moveSides.push("sl");
-    if (!isLimit && myMove?.tp?.on) moveSides.push("tp");
-    const moveDrafts = { sl: myMove?.sl ?? null, tp: myMove?.tp ?? null };
     submittingRef.current = true;
     setBusy(true);
     setMsg(null);
@@ -589,9 +548,6 @@ export default function OrderTicket({
         // form reads as spent rather than ready to fire the same order again.
         draftOrderSignal.set(null);
         setQuantity("1");
-        setWarnTp(false);
-        setWarnSl(false);
-        moveDraftSignal.set(null);
         const px = result.fill_price != null ? result.fill_price.toFixed(precision) : "?";
         setDone(isLimit ? "Limit order placed" : `Filled ${result.filled_quantity} @ ${px}`);
         window.clearTimeout(doneTimer.current);
@@ -600,40 +556,6 @@ export default function OrderTicket({
           onDone?.();
         }, DONE_FLASH_MS);
         refreshTrades();
-        const failures: string[] = [];
-        if (!isLimit && warnSides.length) {
-          let reason: string | null = null;
-          if (!result.deal_id) reason = "no deal id from the broker";
-          else {
-            for (const sd of warnSides) {
-              const d = await addPositionAlert({
-                account, epic, dealId: result.deal_id, side: sd, atrMult: sd === "tp" ? warnTpMult : warnSlMult, precision,
-              });
-              if (d && !reason) reason = d;
-            }
-          }
-          if (reason) failures.push(`Warning not set: ${reason}`);
-        }
-        for (const sd of moveSides) {
-          const d = moveDrafts[sd]!;
-          const word = sd === "sl" ? "Move SL" : "Move TP";
-          if (!result.deal_id) {
-            failures.push(`${word} not set: no deal id from the broker`);
-            continue;
-          }
-          const reason = await addMoveRule({
-            broker: account.split(":")[0],
-            epic,
-            triggerKind: "price_level",
-            params: moveRuleFields(d),
-            action: {
-              account, dealId: result.deal_id, field: sd, direction: side === "buy" ? "BUY" : "SELL", target: d.target,
-            },
-            precision,
-          });
-          if (reason) failures.push(`${word} not set: ${reason}`);
-        }
-        if (failures.length) setMsg(`${STICKY_PREFIX}${failures.join(". ")}`);
       }
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Order failed.");
@@ -692,11 +614,7 @@ export default function OrderTicket({
   }
 
   return (
-    <div
-      className="ot"
-      onChangeCapture={dropStickyMsg}
-      onClickCapture={dropStickyMsg}
-    >
+    <div className="ot">
       {/* Sell / Buy quote strip — selects the side. */}
       <div className="ot-strip">
         <button
@@ -796,19 +714,6 @@ export default function OrderTicket({
           onChange={(v) => setExit("tp", v)}
           atr={exitAtrView(atrPrefs, setAtrPrefs, "tp", atrValue, entryPrice, side === "buy", precision, resolution)}
         />
-        <ProximityWarn
-          label="Warn near TP"
-          on={warnTp}
-          mult={warnTpMult}
-          disabled={!tpOn || isLimit}
-          disabledReason={
-            isLimit
-              ? LIMIT_WARN_TIP
-              : "Set a take profit first"
-          }
-          onToggle={setWarnTp}
-          onMult={setWarnTpMult}
-        />
         <ExitRow
           label="Stop loss"
           on={slOn}
@@ -818,37 +723,6 @@ export default function OrderTicket({
           onToggle={(on) => toggleExit("sl", on)}
           onChange={(v) => setExit("sl", v)}
           atr={exitAtrView(atrPrefs, setAtrPrefs, "sl", atrValue, entryPrice, side === "buy", precision, resolution)}
-        />
-        <ProximityWarn
-          label="Warn near SL"
-          on={warnSl}
-          mult={warnSlMult}
-          disabled={!slOn || isLimit}
-          disabledReason={
-            isLimit
-              ? LIMIT_WARN_TIP
-              : "Set a stop loss first"
-          }
-          onToggle={setWarnSl}
-          onMult={setWarnSlMult}
-        />
-        <MoveRuleControl
-          field="tp"
-          draft={myMove?.tp ?? null}
-          precision={precision}
-          disabled={isLimit}
-          disabledReason={LIMIT_MOVE_TIP}
-          onChange={(d) => setMove("tp", d)}
-          onToggle={(on) => toggleMove("tp", on)}
-        />
-        <MoveRuleControl
-          field="sl"
-          draft={myMove?.sl ?? null}
-          precision={precision}
-          disabled={isLimit}
-          disabledReason={LIMIT_MOVE_TIP}
-          onChange={(d) => setMove("sl", d)}
-          onToggle={(on) => toggleMove("sl", on)}
         />
       </div>
 
@@ -980,6 +854,26 @@ function EditTicket({
   useEffect(() => () => moveDraftSignal.set(null), [trade.id]);
   const [, setRev] = useState(0);
   const bump = () => setRev((n) => n + 1);
+
+  // Tabs (open positions only): Position holds the broker's fields and Update;
+  // Automation and Alerts run on Chartkar and save on their own buttons.
+  const [tab, setTab] = useState<EditTicketTab>(() => {
+    const req = editTicketTabSignal.value;
+    return req?.id === trade.id ? req.tab : "position";
+  });
+  useEffect(() => {
+    const take = (req: { id: string; tab: EditTicketTab } | null) => {
+      if (req?.id !== trade.id) return;
+      setTab(req.tab);
+      editTicketTabSignal.set(null);
+    };
+    take(editTicketTabSignal.value);
+    return editTicketTabSignal.subscribe(take);
+  }, [trade.id]);
+  // Dragging a move line on the chart edits the Automation draft: show it.
+  useEffect(() => {
+    if (moveDraft?.dealId === trade.id) setTab("automation");
+  }, [moveDraft, trade.id]);
 
   const round = (n: number) => Number(n.toFixed(precision));
   const isOrder = trade.kind === "order";
@@ -1229,6 +1123,45 @@ function EditTicket({
         </Tooltip>
       </div>
 
+      {!isOrder && (
+        <div className="seg ot-tabs" role="tablist" aria-label="Edit">
+          {(
+            [
+              ["position", "Position", false],
+              ["automation", "Automation", !!(savedMove("sl") || savedMove("tp"))],
+              ["alerts", "Alerts", !!(findPositionAlert(trade.id, "sl") || findPositionAlert(trade.id, "tp"))],
+            ] as const
+          ).map(([id, label, active]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={tab === id}
+              className={tab === id ? "seg-on" : ""}
+              onClick={() => setTab(id)}
+            >
+              {label}
+              {active && <span className="ot-tab-dot" aria-label="active" />}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!isOrder && tab === "automation" && (
+        <div className="ot-tab-pane">
+          <p className="ot-tab-note">Runs on Chartkar, not at the broker.</p>
+          <div className="ot-exits">
+            {moveControl("tp")}
+            {moveControl("sl")}
+          </div>
+          <div className={`ot-msg${msg ? " show ot-msg-err" : ""}`}>{msg ?? ""}</div>
+        </div>
+      )}
+
+      {!isOrder && tab === "alerts" && (
+        <AlertsPane account={account} epic={trade.epic} dealId={trade.id} precision={precision} onSaved={bump} />
+      )}
+
+      {(isOrder || tab === "position") && (<>
       {/* Entry price — repriceable for a resting order, fixed for a fill. */}
       <label className="ot-field-block">
         <span className="ot-flabel">{isOrder ? "Limit price" : "Entry"}</span>
@@ -1282,8 +1215,6 @@ function EditTicket({
           breakevenTip="Move the stop-loss to your entry price, so the trade can't turn into a loss from here."
           atr={exitAtrView(atrPrefs, setAtrPrefs, "sl", atrValue, ref, long, precision, resolution, !isOrder)}
         />
-        {!isOrder && moveControl("tp")}
-        {!isOrder && moveControl("sl")}
       </div>
 
       <div className="ot-edit-actions">
@@ -1301,6 +1232,30 @@ function EditTicket({
 
       <div className={`ot-msg${msg || levelError || expiryError ? " show ot-msg-err" : ""}`}>
         {msg ?? levelError ?? expiryError ?? ""}
+      </div>
+      </>)}
+    </div>
+  );
+}
+
+// The edit ticket's Alerts tab. Mounted only while shown, so it reads the
+// position's current alerts each time the tab opens.
+function AlertsPane({
+  account, epic, dealId, precision, onSaved,
+}: { account: TradeAccount; epic: string; dealId: string; precision: number; onSaved: () => void }) {
+  const form = usePositionAlertsForm({ account, epic, dealId, precision });
+  return (
+    <div className="ot-tab-pane">
+      <p className="ot-tab-note">Runs on Chartkar, not at the broker.</p>
+      <div className="ot-exits">{form.body}</div>
+      <div className="ot-edit-actions">
+        <button
+          className="ot-action ot-edit-update"
+          disabled={form.busy || !form.dirty}
+          onClick={() => void form.save().then(onSaved)}
+        >
+          Save alerts
+        </button>
       </div>
     </div>
   );

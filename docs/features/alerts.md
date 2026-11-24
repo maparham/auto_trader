@@ -171,8 +171,8 @@ not deal from Telegram (`can_deal_from_telegram`: dev mode or the id in
 
 Create and patch are admin-only; 422 codes are `position_not_found`,
 `no_level`, `trailing_stop` and `account_not_watchable`; a patch cannot change
-the deal or side. Frontend: the order ticket's proximity switches (market
-orders only), a bell on the position row, `PositionAlertModal.tsx`, the
+the deal or side. Frontend: the edit ticket's Alerts tab (the position row's
+bell opens it), `PositionAlertModal.tsx` (its form, also used as a dialog), the
 "Positions" group in `AlertsSidebar.tsx`, and `Settings.proximityAtrMult` (the
 default multiple). Probe: `python3 -m scripts.alert_probe --position
 capital:demo --deal DEAL --side sl` (60 s default timeout; it never taps
@@ -209,5 +209,13 @@ stop), `action_locked` (a patch may change only `target`), `not_rearmable`.
 409 when a rule already exists for the same (account, dealId, field); move
 rules skip the plain alert `sig` duplicate check. Probe: `python3 -m
 scripts.alert_probe --move capital:demo --deal DEAL --field sl` (it really
-moves the position, so use a demo account). Spec:
+moves the position, so use a demo account).
+
+Frontend: the edit ticket of an open position has three tabs. Position holds
+only the broker's fields and "Update position". Automation holds Move SL /
+Move TP with their own Save rule / Remove rule; Alerts holds Warn near SL/TP
+with its own Save. Move rules and warnings are not broker features, so the
+new-order ticket has neither; set them on the position after the fill. The
+row's move marker opens Automation, the bell opens Alerts
+(`editTicketTabSignal`), and dragging a move line switches to Automation. Spec:
 docs/superpowers/specs/2026-11-23-sl-tp-move-rules-design.md.

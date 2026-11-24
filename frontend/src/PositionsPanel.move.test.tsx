@@ -35,7 +35,7 @@ const rule = {
 };
 const mount = () => render(<PositionsPanel account="capital:paper" trading={DEFAULT_SETTINGS.trading} />);
 
-afterEach(() => { cleanup(); state.rules = []; });
+afterEach(() => { cleanup(); state.rules = []; signals.editTicketTabSignal.set(null); });
 
 describe("PositionsPanel move-rule marker", () => {
   it("is absent without a rule", () => {
@@ -48,5 +48,17 @@ describe("PositionsPanel move-rule marker", () => {
     fireEvent.click(screen.getByRole("button", { name: "Move rules" }));
     expect(signals.editTradeSignal.value).toBe("d1");
     expect(signals.tradeLineUiSignal.value.selectedField).toBe("tp");
+  });
+  it("opens the ticket on the Automation tab", () => {
+    state.rules = [rule];
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Move rules" }));
+    expect(signals.editTicketTabSignal.value).toEqual({ id: "d1", tab: "automation" });
+  });
+  it("the bell opens the ticket on the Alerts tab", () => {
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Warn near SL/TP" }));
+    expect(signals.editTradeSignal.value).toBe("d1");
+    expect(signals.editTicketTabSignal.value).toEqual({ id: "d1", tab: "alerts" });
   });
 });

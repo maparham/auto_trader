@@ -48,7 +48,6 @@ import {
   setTradeSelected,
   draggingLineSignal,
   accountAlertRequest,
-  positionAlertRequest,
   openTradeEditor,
   alertsChanged,
   requestConfirm,
@@ -427,7 +426,8 @@ export default function PositionsPanel({
                       aria-pressed={warnOn}
                       onClick={(e) => {
                         e.stopPropagation();
-                        positionAlertRequest.set({ account, epic: t.epic, dealId: t.id, precision: prec });
+                        onJumpToEpic?.(t.epic);
+                        openTradeEditor(t.id, "price", "alerts");
                       }}
                     >
                       <BellIcon filled={warnOn} />
@@ -445,7 +445,8 @@ export default function PositionsPanel({
                       aria-label="Move rules"
                       onClick={(e) => {
                         e.stopPropagation();
-                        openTradeEditor(t.id, rules[0].action.field === "sl" ? "stop" : "tp");
+                        onJumpToEpic?.(t.epic);
+                        openTradeEditor(t.id, rules[0].action.field === "sl" ? "stop" : "tp", "automation");
                       }}
                     >
                       <MoveRuleIcon />

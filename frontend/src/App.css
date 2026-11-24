@@ -5761,6 +5761,13 @@ body.pp-resizing { cursor: row-resize; user-select: none; }
 }
 .ot-edit-x:hover { color: var(--text); }
 .ot-edit-actions { display: flex; gap: 6px; }
+/* Edit ticket tabs: Position (broker fields) / Automation / Alerts (Chartkar). */
+.ot-tabs { display: flex; width: 100%; }
+.ot-tabs button { flex: 1; padding: 6px 0; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.ot-tabs button:not(.seg-on) { color: var(--text-dim); }
+.ot-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.6; }
+.ot-tab-pane { display: flex; flex-direction: column; gap: 10px; }
+.ot-tab-note { margin: 0; font-size: 11px; color: var(--text-faint); }
 .ot-edit-update {
   flex: 1; padding: 10px 0; font-size: 13px; font-weight: 600;
   background: var(--accent);

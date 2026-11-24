@@ -155,6 +155,12 @@ the price, which is reported as a failure.
 
 ## Order ticket and chart
 
+**Changed 2026-11-24:** move rules are not a broker feature, and "Update
+position" must update only the position. The controls moved to an
+"Automation" tab of the edit ticket (with "Alerts" for Warn near SL/TP next to
+it); the new-order ticket has no Move or Warn switches. The text below is the
+original design.
+
 - In `OrderTicket.tsx`, under the TP and SL fields, a "Move SL" and a "Move TP"
   switch, next to the existing "Warn near" switches. Turning one on shows:
   target (number field, or a Breakeven preset with an offset field), trigger
