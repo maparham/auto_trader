@@ -40,6 +40,10 @@ log = logging.getLogger(__name__)
 
 RETENTION_MS = 48 * 3600 * 1000  # keep ~2 days of ticks
 FLUSH_INTERVAL = 3.0  # seconds between batch writes
+# The prune DELETE filters on ts alone, which the (broker, epic, ts) index
+# can't serve, so it reads the whole table. Run it at most this often, not on
+# every 3 s flush (it was a third of the API's idle CPU on the hosted box).
+PRUNE_INTERVAL = 600.0
 
 
 def aggregate_ticks(ticks: Iterable[tuple[int, float]], bucket_seconds: int) -> list[Candle]:
@@ -98,6 +102,7 @@ class TickStore:
         # the migration only ever needs to happen once per process lifetime; redoing
         # its PRAGMA table_info + ALTER/DROP INDEX on every flush/read is pure waste.
         self._schema_migrated = False
+        self._last_prune = 0.0  # monotonic time of the last retention prune
         self._connect().close()  # create the db file + schema up front
 
     def _connect(self) -> sqlite3.Connection:
@@ -161,8 +166,11 @@ class TickStore:
             conn.executemany(
                 "INSERT INTO ticks (broker, epic, ts, price) VALUES (?, ?, ?, ?)", batch
             )
-            cutoff = int(time.time() * 1000) - RETENTION_MS
-            conn.execute("DELETE FROM ticks WHERE ts < ?", (cutoff,))
+            now = time.monotonic()
+            if self._last_prune == 0.0 or now - self._last_prune >= PRUNE_INTERVAL:
+                cutoff = int(time.time() * 1000) - RETENTION_MS
+                conn.execute("DELETE FROM ticks WHERE ts < ?", (cutoff,))
+                self._last_prune = now
             conn.commit()
         finally:
             conn.close()

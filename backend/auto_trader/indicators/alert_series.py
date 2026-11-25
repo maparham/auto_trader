@@ -3,6 +3,7 @@ seed/readiness numbers. Values come from SERIES_INDICATORS (or, for the
 Trendlines nearest line, ALERT_SPECS' side series); nothing is computed here."""
 from __future__ import annotations
 
+import bisect
 import dataclasses
 import json
 import typing
@@ -95,12 +96,14 @@ def compute(key: IndicatorKey, candles: Sequence[Candle]) -> dict[str, list[floa
     if key.indicator == "LINE":
         t_ref, p_ref, slope = key.calc[:3]
         log = len(key.calc) > 3 and key.calc[3] == 1.0
-        times = [candle_ms(c) for c in candles]
-        try:
-            j = times.index(int(t_ref))
-        except ValueError:
-            return {"value": [None] * len(candles)}
-        return {"value": [None if k < j else line_level(p_ref, slope, k - j, log) for k in range(len(candles))]}
+        # Bars are time-ascending: a binary search, not a candle_ms pass over
+        # every bar on each tick.
+        t = int(t_ref)
+        j = bisect.bisect_left(candles, t, key=candle_ms)
+        n = len(candles)
+        if j >= n or candle_ms(candles[j]) != t:
+            return {"value": [None] * n}
+        return {"value": [None] * j + [line_level(p_ref, slope, k, log) for k in range(n - j)]}
     cfg = config_of(key.indicator, key.config)
     side = ALERT_SPECS[key.indicator].side_series
     if side is not None:

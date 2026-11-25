@@ -84,6 +84,9 @@ class BarSeries:
         # seeded in (stream minutes up to and including it are inside it).
         self._base_vol = 0.0
         self._base_minute: int | None = None
+        # Running sum of the _minute_vol entries after _base_minute, so a tick
+        # doesn't re-add up to 1440 minutes of a daily bar.
+        self._vol_sum = 0.0
 
     def keep_closed(self, bars: list[Candle], now_ms: int) -> list[Candle]:
         # A full resolution must have elapsed since the bar's OWN open, not
@@ -124,6 +127,7 @@ class BarSeries:
             )
         self.forming_open_ms = open_ms
         self._minute_vol = {}
+        self._vol_sum = 0.0
         self._base_vol = self.forming.volume or 0.0
         self._base_minute = now_ms - now_ms % 60_000
 
@@ -152,6 +156,7 @@ class BarSeries:
             roll = Roll.GAP if open_ms > nxt else Roll.CLOSED
             self.forming = None
             self._minute_vol = {}
+            self._vol_sum = 0.0
             self._base_vol, self._base_minute = 0.0, None
         self.forming_open_ms = open_ms
 
@@ -159,13 +164,14 @@ class BarSeries:
         if s.bar is not None:
             b = s.bar
             o, h, l, c = b.open + shift, b.high + shift, b.low + shift, b.close + shift
-            self._minute_vol[candle_ms(b)] = b.volume or 0.0
+            m, v = candle_ms(b), b.volume or 0.0
+            base = self._base_minute
+            if base is None or m > base:
+                self._vol_sum += v - self._minute_vol.get(m, 0.0)
+            self._minute_vol[m] = v
         else:
             o = h = l = c = s.mid + shift
-        base = self._base_minute
-        vol = self._base_vol + sum(
-            v for m, v in self._minute_vol.items() if base is None or m > base
-        )
+        vol = self._base_vol + self._vol_sum
         f = self.forming
         t = datetime.fromtimestamp(open_ms / 1000, tz=timezone.utc)
         if f is None:
