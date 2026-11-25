@@ -3950,6 +3950,7 @@ export default function ChartCore({
         const prevField = tradeUiRef.current.selectedField;
         const selectedChanged = ui.selected !== prevSelected;
         const fieldChanged = ui.selectedField !== prevField;
+        const hoverChanged = ui.hovered !== tradeUiRef.current.hovered;
         tradeUiRef.current = ui;
         // Trade selection is mutually exclusive with this cell's alert/drawing/
         // indicator selection. We clear here (not only in onClick) so selecting a
@@ -3962,7 +3963,8 @@ export default function ChartCore({
           if (selectedIndicator.value) selectedIndicator.set(null);
         }
         drawPositions();
-        if (selectedChanged || fieldChanged) handle.redrawRef.current();
+        // Hover too: SL/TP pills show only for the selected or hovered trade.
+        if (selectedChanged || fieldChanged || hoverChanged) handle.redrawRef.current();
         // Keep the focused pill (z-order) in sync when selection changes without a mouse
         // move — e.g. selecting a trade from its dock row. Selected line wins, else hover.
         {

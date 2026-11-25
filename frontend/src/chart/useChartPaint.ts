@@ -1010,8 +1010,8 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
     const act = tags.find((t) => t.active);
     if (act) lastActivePillIdRef.current = act.id;
 
-    // Always-on clean pills: one per line (entry always; SL/TP when set) for EVERY
-    // position/order on this cell's epic — identical whether selected or not. Levels
+    // Clean pills: an entry pill for EVERY position/order on this cell's epic, plus
+    // SL/TP pills (when set) for the selected or hovered trade only. Levels
     // merge pending over server (so a dragged line is tracked); recomputed here so pills
     // follow their lines through scroll/zoom/live ticks. Hidden trades (eye icon) are
     // skipped unless hovered/selected; the master-hide toggle drops them all.
@@ -1056,11 +1056,15 @@ export function useChartPaint(handle: ChartHandle, deps: ChartPaintDeps) {
         // affordance must surface here, or a dragged-to-entry SL/TP would strand un-commit-able.
         if (yP != null)
           pills.push({ ...common, field: "price", y: yP, level: priceLvl, pl: t.kind === "position" ? t.upnl : null, pct: null, atr: null, changed: pend.price !== undefined || (beField != null && pend[beField] !== undefined), breakevenField: beField });
-        if (merged.stop != null && !stopBE) {
+        // SL/TP pills only for the trade in focus (selected or hovered, on the chart
+        // or its dock row): on every trade at once they bury the entry pills. A
+        // staged drag keeps its pill so Apply/Discard stays reachable.
+        const exitsShown = t.id === uiSel || t.id === uiHov;
+        if (merged.stop != null && !stopBE && (exitsShown || pend.stop !== undefined)) {
           const y = yOf(merged.stop);
           if (y != null) pills.push({ ...common, field: "stop", y, level: merged.stop, pl: plAt(merged.stop), pct: pctAt(merged.stop), atr: atrAt(t.priceLevel, merged.stop), changed: pend.stop !== undefined });
         }
-        if (merged.takeProfit != null && !tpBE) {
+        if (merged.takeProfit != null && !tpBE && (exitsShown || pend.takeProfit !== undefined)) {
           const y = yOf(merged.takeProfit);
           if (y != null) pills.push({ ...common, field: "tp", y, level: merged.takeProfit, pl: plAt(merged.takeProfit), pct: pctAt(merged.takeProfit), atr: atrAt(t.priceLevel, merged.takeProfit), changed: pend.takeProfit !== undefined });
         }
