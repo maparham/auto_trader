@@ -180,10 +180,9 @@ export default function TradePills({
   const leaderNodesRef = useRef(new Map<string, HTMLDivElement>());
   // A pill is ENGAGED — its cluster expands into the spread column — only while
   // it is hovered or a drag is staged on its line (Apply/Discard must stay
-  // reachable without a hover). Selection/focus deliberately do NOT engage:
-  // pills hold their exact price levels at rest, so a selected trade inside a
-  // cluster stays merged in the aggregate until the pointer visits it; the
-  // aggregate carries the selected style instead (see the summary below).
+  // reachable without a hover). Selection/focus do NOT engage: pills
+  // hold their exact price levels at rest. The selected trade's own pills are
+  // pinned outside the clusters instead (see isPinned below).
   const pillEngaged = (p: TradePillItem) => {
     const key = `${p.tradeId}:${p.field}`;
     return key === hoveredPillKey || p.changed;
@@ -192,11 +191,16 @@ export default function TradePills({
   // cluster is engaged — then its members render individually and the layout pass
   // spreads them. Clustered at render (not in the effect) because collapsing
   // changes WHAT renders, not just where.
-  const renderClusters = chainClusters([...pills].sort((a, b) => a.y - b.y));
+  // The selected trade's pills stay out of the clusters: they sit at their exact
+  // levels, expanded and raised above the rest, so the selection stays visible
+  // after the pointer leaves instead of folding into a "2×" aggregate.
+  const isPinned = (p: TradePillItem) => selectedTradeId != null && p.tradeId === selectedTradeId;
+  const renderClusters = chainClusters(pills.filter((p) => !isPinned(p)).sort((a, b) => a.y - b.y));
   const visible: Array<
     | { kind: "pill"; pill: TradePillItem }
     | { kind: "summary"; members: TradePillItem[]; key: string; y: number }
   > = [];
+  for (const p of pills) if (isPinned(p)) visible.push({ kind: "pill", pill: p });
   for (const c of renderClusters) {
     if (c.length > 1 && !c.some(pillEngaged)) {
       const mean = c.reduce((s2, e) => s2 + e.y, 0) / c.length;
@@ -218,8 +222,21 @@ export default function TradePills({
     type Entry = { key: string; y: number };
     // Already y-sorted: `visible` is built from y-sorted render clusters, and a
     // collapsed summary's mean lies inside its members' span.
-    const sorted: Entry[] = visible.map((v) =>
-      v.kind === "pill" ? { key: `${v.pill.tradeId}:${v.pill.field}`, y: v.pill.y } : { key: v.key, y: v.y },
+    // Pinned (selected) pills skip the spread: they sit at their own line y (written
+    // here too: a pill that was spread a moment ago keeps that stale `top`, since
+    // React only rewrites a style prop that changed) and need no leader tick.
+    for (const v of visible) {
+      if (v.kind !== "pill" || !isPinned(v.pill)) continue;
+      const key = `${v.pill.tradeId}:${v.pill.field}`;
+      const node = tradePillNodesRef.current.get(key);
+      if (node) node.style.top = `${v.pill.y}px`;
+      const leader = leaderNodesRef.current.get(key);
+      if (leader) leader.style.display = "none";
+    }
+    const sorted: Entry[] = visible.flatMap((v) =>
+      v.kind === "pill"
+        ? isPinned(v.pill) ? [] : [{ key: `${v.pill.tradeId}:${v.pill.field}`, y: v.pill.y }]
+        : [{ key: v.key, y: v.y }],
     );
     const clusters = chainClusters(sorted);
     // Keep the column on the pane: clamp its top edge, and its bottom edge when the
@@ -296,11 +313,8 @@ export default function TradePills({
           // adding it to the entry's uPnL gives a number that means nothing.
           const withPl = v.members.filter((m) => m.field === "price" && m.pl != null);
           const net = withPl.length ? withPl.reduce((s2, m) => s2 + (m.pl as number), 0) : null;
-          // Selection no longer expands the cluster, so the aggregate itself wears
-          // the selected style when it holds the selected trade's pill — the bracket
-          // spine has to visibly tie to SOMETHING while the group is merged. Other
-          // trades' aggregates dim like resting pills do.
-          const holdsSelected = selectedTradeId != null && v.members.some((m) => m.tradeId === selectedTradeId);
+          // A summary never holds the selected trade (its pills are pinned
+          // outside), so while a trade is selected every summary dims.
           const allPending = v.members.every((m) => m.kind === "order");
           return (
             <div
@@ -312,7 +326,7 @@ export default function TradePills({
                 if (node) tradePillNodesRef.current.set(v.key, node);
                 else tradePillNodesRef.current.delete(v.key);
               }}
-              className={`trade-pill tp-cluster${allPending ? " tp-pending" : ""}${holdsSelected ? " selected raised" : selectedTradeId != null ? " dimmed" : ""}`}
+              className={`trade-pill tp-cluster${allPending ? " tp-pending" : ""}${selectedTradeId != null ? " dimmed" : ""}`}
               style={{
                 top: v.y,
                 right: axisWidth,

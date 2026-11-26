@@ -434,22 +434,24 @@ describe("TradePills cluster collapse", () => {
     expect(summary.textContent).toBe("2×");
   });
 
-  it("stays collapsed while the cluster holds the selected trade, carrying the selected style", () => {
-    // Selection no longer forces a spread: pills hold their exact levels at rest,
-    // and the aggregate wears the selected border so the bracket spine still reads
-    // as tied to something.
+  it("pins the selected trade's pills at their exact level, outside the cluster", () => {
+    // The others still merge; the selected pill stays expanded and raised on top,
+    // also after the pointer leaves.
     const container = cascadeRender(
       [
         { ...pill("A", "price"), y: 100 },
-        { ...pill("B", "price"), y: 110 },
+        { ...pill("B", "price"), y: 105 },
+        { ...pill("C", "price"), y: 110 },
       ],
       { selectedTradeId: "A", focusedPillKey: "A:price" },
     );
     const summary = container.querySelector<HTMLElement>(".tp-cluster")!;
-    expect(summary).not.toBeNull();
-    expect(summary.className).toContain("selected");
-    expect(summary.className).not.toContain("dimmed");
-    expect(summary.style.top).toBe("105px"); // still at the cluster mean y
+    expect(summary.textContent).toContain("2×");
+    expect(summary.className).not.toContain("selected");
+    const a = container.querySelector<HTMLElement>(".trade-pill.selected")!;
+    expect(a.className).toContain("raised");
+    expect(a.className).not.toContain("compact");
+    expect(a.style.top).toBe("100px");
   });
 
   it("expands into individual pills only while a member is hovered", () => {
@@ -458,7 +460,7 @@ describe("TradePills cluster collapse", () => {
         { ...pill("A", "price"), y: 100 },
         { ...pill("B", "price"), y: 110 },
       ],
-      { selectedTradeId: "A", hoveredPillKey: "A:price" },
+      { hoveredPillKey: "A:price" },
     );
     expect(container.querySelector(".tp-cluster")).toBeNull();
     const tops = Array.from(container.querySelectorAll<HTMLElement>(".trade-pill")).map((n) => n.style.top);
